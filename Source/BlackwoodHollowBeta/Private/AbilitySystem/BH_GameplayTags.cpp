@@ -24,6 +24,7 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Overloading, "State.Combat.Overloading")
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Dead, "State.Combat.Dead");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Attacking, "State.Combat.Attacking");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_ComboWindow, "State.Combat.ComboWindow");
+UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_PostureRegenDelayed, "State.Combat.PostureRegenDelayed");
 
 // Event.Combat.*
 UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Combat_Hit, "Event.Combat.Hit");
@@ -46,6 +47,19 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Combat_Parry, "Ability.Combat.Parry");
 UE_DEFINE_GAMEPLAY_TAG(TAG_Damage_Type_Melee, "Damage.Type.Melee");
 UE_DEFINE_GAMEPLAY_TAG(TAG_Data_Damage, "Data.Damage");
 UE_DEFINE_GAMEPLAY_TAG(TAG_Data_PostureDamage, "Data.PostureDamage");
+UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Combat_BlockImpact, "Event.Combat.BlockImpact");
+UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Combat_Block, "Ability.Combat.Block");
+UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Combat_HitReaction, "Ability.Combat.HitReaction");
+UE_DEFINE_GAMEPLAY_TAG(TAG_Ability_Combat_PostureBreak, "Ability.Combat.PostureBreak");
+
+// Phase 6
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Combat_Flurry, "State.Combat.Flurry", "Dual-sword momentum: AttackSpeed stacks from UAH_GE_Flurry are active.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Combat_RiposteReady, "State.Combat.RiposteReady", "A perfect parry just landed: the next melee hit deals RiposteDamageMultiplier damage.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Ability_Combat_ShieldBash, "Ability.Combat.ShieldBash", "Identifies the shield bash (guard-breaker) ability.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Cooldown_Combat_ShieldBash, "Cooldown.Combat.ShieldBash", "Shield bash is on cooldown.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_Hit, "GameplayCue.Combat.Hit", "Cosmetic cue: a melee hit connected (hit-stop + camera shake).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_ParrySuccess, "GameplayCue.Combat.ParrySuccess", "Cosmetic cue: a parry deflected a hit (heavy hit-stop + camera punch).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_PostureBroken, "GameplayCue.Combat.PostureBroken", "Cosmetic cue: a target's posture broke (shatter VFX/SFX).");
 
 void FBH_GameplayTags::InitializeNativeTags()
 {
@@ -70,6 +84,7 @@ void FBH_GameplayTags::AddAllTags()
 	AddTag(State_Combat_Dead, "State.Combat.Dead", "Actor has died.");
 	AddTag(State_Combat_Attacking, "State.Combat.Attacking", "A melee attack ability is active.");
 	AddTag(State_Combat_ComboWindow, "State.Combat.ComboWindow", "Inside a UANS_ComboWindow: combo input will be accepted.");
+	AddTag(State_Combat_PostureRegenDelayed, "State.Combat.PostureRegenDelayed", "Posture was just damaged: passive posture regen is paused for bh.Combat.PostureRegenDelay seconds (server-only loose tag).");
 
 	// Event.Combat
 	AddTag(Event_Combat_Hit, "Event.Combat.Hit", "Sent to the victim by UANS_MeleeHitbox when a melee sweep connects, BEFORE damage is applied (parry hooks here).");
@@ -92,4 +107,8 @@ void FBH_GameplayTags::AddAllTags()
 	AddTag(Damage_Type_Melee, "Damage.Type.Melee", "Damage spec came from a melee hit (parryable).");
 	AddTag(Data_Damage, "Data.Damage", "SetByCaller key: damage routed into IncomingDamage.");
 	AddTag(Data_PostureDamage, "Data.PostureDamage", "SetByCaller key: posture delta (negative = damage).");
+	AddTag(Event_Combat_BlockImpact, "Event.Combat.BlockImpact", "Sent to the blocker (instead of DamageReceived) when a hit is blocked. EventMagnitude = posture cost.");
+	AddTag(Ability_Combat_Block, "Ability.Combat.Block", "Identifies the hold-to-block ability.");
+	AddTag(Ability_Combat_HitReaction, "Ability.Combat.HitReaction", "Identifies the hit reaction ability.");
+	AddTag(Ability_Combat_PostureBreak, "Ability.Combat.PostureBreak", "Identifies the posture break ability.");
 }

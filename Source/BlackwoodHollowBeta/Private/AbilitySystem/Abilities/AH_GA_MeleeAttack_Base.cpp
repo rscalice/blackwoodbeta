@@ -1,11 +1,14 @@
 // Blackwood Hollow - Melee combo attack ability base (implementation)
 
 #include "AbilitySystem/Abilities/AH_GA_MeleeAttack_Base.h"
+#include "AbilitySystem/Abilities/AH_GA_Block.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
+#include "GameplayEffectTypes.h"
+#include "GameplayEffect.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimMontage.h"
@@ -57,10 +60,11 @@ void UAH_GA_MeleeAttack_Base::ActivateAbility(const FGameplayAbilitySpecHandle H
 	bInputBuffered = false;
 	bWindowClosedThisStep = false;
 	bIgnoreNextWindowClose = false;
+	bInRecoil = false;
 
 	const FName StartSection = ComboSectionNames[0];
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, AttackMontage, MontagePlayRate, StartSection);
+	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, AttackMontage, GetEffectivePlayRate(MontagePlayRate), StartSection);
 	MontageTask->OnCompleted.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageCompleted);
 	MontageTask->OnBlendOut.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageBlendOut);
 	MontageTask->OnInterrupted.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageInterrupted);
@@ -110,6 +114,7 @@ void UAH_GA_MeleeAttack_Base::EndAbility(const FGameplayAbilitySpecHandle Handle
 	bInputBuffered = false;
 	bWindowClosedThisStep = false;
 	bIgnoreNextWindowClose = false;
+	bInRecoil = false;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
@@ -185,6 +190,11 @@ bool UAH_GA_MeleeAttack_Base::AdvanceCombo()
 
 void UAH_GA_MeleeAttack_Base::OnComboWindowOpened(FGameplayEventData Payload)
 {
+	if (bInRecoil)
+	{
+		return;
+	}
+
 	bComboWindowOpen = true;
 	bWindowClosedThisStep = false;
 
@@ -196,6 +206,11 @@ void UAH_GA_MeleeAttack_Base::OnComboWindowOpened(FGameplayEventData Payload)
 
 void UAH_GA_MeleeAttack_Base::OnComboWindowClosed(FGameplayEventData Payload)
 {
+	if (bInRecoil)
+	{
+		return;
+	}
+
 	if (bIgnoreNextWindowClose)
 	{
 		bIgnoreNextWindowClose = false;
@@ -217,6 +232,11 @@ void UAH_GA_MeleeAttack_Base::OnComboWindowClosed(FGameplayEventData Payload)
 
 void UAH_GA_MeleeAttack_Base::OnAttackInput(FGameplayEventData Payload)
 {
+	if (bInRecoil)
+	{
+		return;
+	}
+
 	if (bWindowClosedThisStep)
 	{
 		return;
@@ -248,6 +268,19 @@ float UAH_GA_MeleeAttack_Base::GetStepDamageMultiplier(int32 ComboStep) const
 	return ComboStepDamageMultipliers.IsValidIndex(ComboStep) ? ComboStepDamageMultipliers[ComboStep] : 1.f;
 }
 
+float UAH_GA_MeleeAttack_Base::GetEffectivePlayRate(float BaseRate) const
+{
+	float Speed = 1.f;
+	if (const UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		if (ASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetAttackSpeedAttribute()))
+		{
+			Speed = ASC->GetNumericAttribute(UAH_AttributeSet::GetAttackSpeedAttribute());
+		}
+	}
+	return FMath::Max(BaseRate * Speed, 0.1f);
+}
+
 float UAH_GA_MeleeAttack_Base::CalculateDamage_Implementation(AActor* Target, int32 ComboStep, float HitboxMultiplier) const
 {
 	float Damage = BaseDamage;
@@ -270,11 +303,27 @@ float UAH_GA_MeleeAttack_Base::CalculateDamage_Implementation(AActor* Target, in
 		}
 	}
 
-	return FMath::Max(Damage, MinimumDamage);
+	Damage = FMath::Max(Damage, MinimumDamage);
+
+	// Riposte: the first hit after a perfect parry hits harder (OnHitDealt consumes the window afterwards).
+	if (const UAbilitySystemComponent* RiposteASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		if (RiposteASC->HasMatchingGameplayTag(TAG_State_Combat_RiposteReady))
+		{
+			Damage *= RiposteDamageMultiplier;
+		}
+	}
+
+	return Damage;
 }
 
 void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 {
+	if (bInRecoil)
+	{
+		return;
+	}
+
 	// Damage is server-authoritative; clients' own hitbox sweeps are ignored here.
 	if (!K2_HasAuthority())
 	{
@@ -297,6 +346,21 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 		return;
 	}
 
+	// Blocked: UAH_AttributeSet converts the hit into chip damage + the block's
+	// own posture cost, so the attack's direct posture damage is skipped below.
+	// Evaluated before damage is applied (a posture break would drop the guard).
+	bool bBlockedByTarget = false;
+	if (TargetASC->HasMatchingGameplayTag(TAG_State_Combat_Blocking))
+	{
+		if (const UAH_GA_Block* ActiveBlock = UAH_GA_Block::FindActiveBlock(TargetASC))
+		{
+			bBlockedByTarget = ActiveBlock->IsAttackInBlockArc(GetAvatarActorFromActorInfo());
+		}
+	}
+
+	// Evaluated once, before damage: CalculateDamage reads the same tag.
+	const bool bRiposte = SourceASC->HasMatchingGameplayTag(TAG_State_Combat_RiposteReady);
+
 	const int32 ComboStep = GetCurrentComboStep();
 	const float HitboxMultiplier = Payload.EventMagnitude > 0.f ? Payload.EventMagnitude : 1.f;
 	const FHitResult HitResult = UAbilitySystemBlueprintLibrary::GetHitResultFromTargetData(Payload.TargetData, 0);
@@ -316,9 +380,9 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 		}
 	}
 
-	if (PostureDamageEffectClass && BasePostureDamage > 0.f)
+	if ((!bBlockedByTarget || bIgnoreBlockForPosture) && PostureDamageEffectClass && BasePostureDamage > 0.f)
 	{
-		const float PostureDamage = BasePostureDamage * GetStepDamageMultiplier(ComboStep) * HitboxMultiplier;
+		const float PostureDamage = BasePostureDamage * GetStepDamageMultiplier(ComboStep) * HitboxMultiplier * (bRiposte ? RiposteDamageMultiplier : 1.f);
 
 		FGameplayEffectSpecHandle PostureSpec = MakeOutgoingGameplayEffectSpec(PostureDamageEffectClass, GetAbilityLevel());
 		if (PostureSpec.IsValid())
@@ -327,6 +391,37 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 			PostureSpec.Data->AddDynamicAssetTag(TAG_Damage_Type_Melee);
 			SourceASC->ApplyGameplayEffectSpecToTarget(*PostureSpec.Data.Get(), TargetASC);
 		}
+	}
+
+	// Riposte is consumed by the first hit of the counterattack.
+	if (bRiposte)
+	{
+		SourceASC->RemoveActiveGameplayEffectBySourceEffect(UAH_GE_RiposteWindow::StaticClass(), SourceASC);
+	}
+
+	// Momentum (e.g. dual-sword Flurry): applied to the attacker on every successful hit.
+	if (OnHitSelfEffectClass)
+	{
+		FGameplayEffectSpecHandle SelfSpec = MakeOutgoingGameplayEffectSpec(OnHitSelfEffectClass, GetAbilityLevel());
+		if (SelfSpec.IsValid())
+		{
+			SourceASC->ApplyGameplayEffectSpecToSelf(*SelfSpec.Data.Get());
+		}
+	}
+
+	// Cosmetic cue (replicated to every machine): hit-stop + camera shake. Target of the cue is the attacker;
+	// the victim travels in SourceObject so the cue knows both actors.
+	if (AActor* AttackerActor = GetAvatarActorFromActorInfo())
+	{
+		FGameplayCueParameters CueParams;
+		CueParams.Instigator = AttackerActor;
+		CueParams.EffectCauser = AttackerActor;
+		CueParams.SourceObject = Target;
+		CueParams.RawMagnitude = DamageApplied;
+		CueParams.Location = HitResult.bBlockingHit || !HitResult.ImpactPoint.IsZero() ? FVector(HitResult.ImpactPoint) : Target->GetActorLocation();
+		CueParams.Normal = (Target->GetActorLocation() - AttackerActor->GetActorLocation()).GetSafeNormal();
+		CueParams.TargetAttachComponent = Target->GetRootComponent();
+		SourceASC->ExecuteGameplayCue(TAG_GameplayCue_Combat_Hit, CueParams);
 	}
 
 	K2_OnHitConfirmed(Target, HitResult, DamageApplied);
@@ -340,12 +435,53 @@ void UAH_GA_MeleeAttack_Base::OnParried(FGameplayEventData Payload)
 		return;
 	}
 
+	if (bInRecoil)
+	{
+		return;
+	}
+
 	K2_OnAttackParried(const_cast<AActor*>(Payload.Instigator.Get()));
 
-	if (bEndComboWhenParried)
+	if (RecoilMontage)
+	{
+		PlayRecoil();
+	}
+	else if (bEndComboWhenParried)
 	{
 		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 	}
+}
+
+void UAH_GA_MeleeAttack_Base::PlayRecoil()
+{
+	bInRecoil = true;
+	bInputBuffered = false;
+	bComboWindowOpen = false;
+
+	// Detach from the attack montage task first so its interruption (caused by
+	// the recoil replacing it) doesn't end the ability.
+	if (MontageTask)
+	{
+		MontageTask->OnCompleted.RemoveAll(this);
+		MontageTask->OnBlendOut.RemoveAll(this);
+		MontageTask->OnInterrupted.RemoveAll(this);
+		MontageTask->OnCancelled.RemoveAll(this);
+		MontageTask->EndTask();
+		MontageTask = nullptr;
+	}
+
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		ASC->SetLooseGameplayTagCount(TAG_State_Combat_ComboWindow, 0);
+	}
+
+	UAbilityTask_PlayMontageAndWait* RecoilTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, RecoilMontage, GetEffectivePlayRate(RecoilPlayRate));
+	RecoilTask->OnCompleted.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageCompleted);
+	RecoilTask->OnBlendOut.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageBlendOut);
+	RecoilTask->OnInterrupted.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageInterrupted);
+	RecoilTask->OnCancelled.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageCancelled);
+	RecoilTask->ReadyForActivation();
+	MontageTask = RecoilTask;
 }
 
 // ============================================================================

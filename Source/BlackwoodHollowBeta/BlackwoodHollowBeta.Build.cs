@@ -18,9 +18,13 @@ public class BlackwoodHollowBeta : ModuleRules
 			"GameplayAbilities",
 			"GameplayTags",
 			"GameplayTasks",
+			"UMG",               // HUD widgets (UBH_HUDWidget)
+			"AIModule",          // IGenericTeamAgentInterface / FGenericTeamId (combat team filtering)
 			"LevelSequence",
 			"MovieScene",
 			"MovieSceneTracks",
+			"Niagara",           // GameplayCue shatter VFX (UBH_GCN_PostureBroken)
+			"EngineCameras",     // code-only camera shakes (UWaveOscillatorCameraShakePattern)
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]

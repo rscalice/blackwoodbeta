@@ -54,6 +54,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Combo")
 	TArray<FName> ComboSectionNames;
 
+	/** Base montage play rate. The effective rate is MontagePlayRate * the owner's AttackSpeed attribute, sampled at activation (and for recoil). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Combo", meta = (ClampMin = "0.1"))
 	float MontagePlayRate = 1.f;
 
@@ -105,9 +106,38 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Posture", meta = (ClampMin = "0.0"))
 	float BasePostureDamage = 10.f;
 
-	/** End (cancel) the combo when the target parries this attack. Otherwise only the BP event fires. */
+	/**
+	 * Played on the attacker when the target parries (Event.Combat.Parry.Success):
+	 * the attack montage is cut and this recoil plays; the ability ends when it finishes.
+	 * Leave empty to keep swinging (only K2_OnAttackParried fires, or the combo ends if bEndComboWhenParried).
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Parry")
+	TObjectPtr<UAnimMontage> RecoilMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Parry", meta = (ClampMin = "0.1"))
+	float RecoilPlayRate = 1.f;
+
+	/** Only used when RecoilMontage is empty: end (cancel) the combo when parried. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Parry")
 	bool bEndComboWhenParried = false;
+
+	/**
+	 * true = this attack's posture damage is applied even when the target is blocking (guard-breaker,
+	 * e.g. shield bash). The block still mitigates the health damage as usual.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Posture")
+	bool bIgnoreBlockForPosture = false;
+
+	/** Damage AND posture damage multiplier while the attacker has State.Combat.RiposteReady (consumed by the first hit). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Damage", meta = (ClampMin = "1.0"))
+	float RiposteDamageMultiplier = 2.5f;
+
+	/**
+	 * Optional effect applied to the ATTACKER (self) on every successful hit (not parried, damage applied; authority only).
+	 * Dual swords set this to UAH_GE_Flurry for attack-speed momentum. Null = none.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Momentum")
+	TSubclassOf<UGameplayEffect> OnHitSelfEffectClass;
 
 	/** Current combo step (0-based). On the server this is derived from the playing montage section. */
 	UFUNCTION(BlueprintPure, Category = "Melee|Combo")
@@ -145,10 +175,16 @@ private:
 	/** Jumps the montage to the next combo step. Returns false at the end of a non-looping combo. */
 	bool AdvanceCombo();
 
+	/** Cuts the attack montage and plays RecoilMontage (parried). */
+	void PlayRecoil();
+
 	/** Makes the montage stop at the end of SectionName instead of flowing into the next section. */
 	void UnlinkSection(FName SectionName) const;
 
 	float GetStepDamageMultiplier(int32 ComboStep) const;
+
+	/** BaseRate * owner's AttackSpeed attribute (1.0 if the owner has no UAH_AttributeSet). Never below 0.1. */
+	float GetEffectivePlayRate(float BaseRate) const;
 
 	UPROPERTY()
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
@@ -162,4 +198,7 @@ private:
 
 	/** Set when we jump mid-window; the stale Close event from the old step's window is skipped. */
 	bool bIgnoreNextWindowClose = false;
+
+	/** Recoiling from a parry: combo input, windows and hits are ignored. */
+	bool bInRecoil = false;
 };

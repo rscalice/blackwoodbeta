@@ -3,7 +3,9 @@
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "AbilitySystem/Abilities/AH_GA_Block.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
+#include "Combat/BH_StanceWatcherComponent.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemInterface.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -12,10 +14,31 @@
 #include "UObject/UnrealType.h"
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimClassInterface.h"
+#include "Animation/AnimNode_LinkedAnimGraph.h"
+#include "Animation/AnimMontage.h"
+#include "Animation/AnimSequenceBase.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/SkeletalMeshSocket.h"
+#include "Engine/World.h"
 #include "Animation/AnimInstance.h"
+#include "Animation/Skeleton.h"
+#include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/Controller.h"
+#include "GameFramework/PlayerState.h"
+#include "Kismet/GameplayStatics.h"
+#include "HAL/IConsoleManager.h"
+#include "UObject/UObjectIterator.h"
+#include "UI/BH_HUDWidget.h"
+#include "UI/BH_HUDSubsystem.h"
+#include "Engine/LocalPlayer.h"
+#include "Engine/GameInstance.h"
+#include "GameFramework/PlayerController.h"
+#include "TimerManager.h"
 
 namespace BH_CombatFunctionLibrary_Private
 {
@@ -108,6 +131,9 @@ bool UBH_CombatFunctionLibrary::SetupCombatCharacter(AActor* OwningActor, TSubcl
 		ASC->AddAttributeSetSubobject(NewAttributeSet);
 	}
 
+	// Passive posture / stamina regeneration (server-side periodic GEs).
+	ApplyPassiveRegenEffects(OwningActor);
+
 	if (OverloadBurstAbilityClass && OwningActor->HasAuthority())
 	{
 		if (!ASC->FindAbilitySpecFromClass(OverloadBurstAbilityClass))
@@ -174,6 +200,222 @@ bool UBH_CombatFunctionLibrary::HandleMeleeAttackInput(AActor* OwningActor, TSub
 	}
 
 	return ASC->TryActivateAbility(Spec->Handle);
+}
+
+bool UBH_CombatFunctionLibrary::HandleBlockInput(AActor* OwningActor, TSubclassOf<UGameplayAbility> BlockAbilityClass, bool bPressed)
+{
+	using namespace BH_CombatFunctionLibrary_Private;
+
+	UAbilitySystemComponent* ASC = ResolveAbilitySystemComponent(OwningActor);
+	if (!ASC || !BlockAbilityClass)
+	{
+		return false;
+	}
+
+	const FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromClass(BlockAbilityClass);
+	if (!Spec)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HandleBlockInput: '%s' has not been granted %s."), *OwningActor->GetName(), *BlockAbilityClass->GetName());
+		return false;
+	}
+
+	if (bPressed)
+	{
+		return Spec->IsActive() || ASC->TryActivateAbility(Spec->Handle);
+	}
+
+	if (Spec->IsActive())
+	{
+		// End (rather than cancel) a block so its "End" (lower guard) section can
+		// play: cancelling makes PlayMontageAndWait stop the montage immediately.
+		UAH_GA_Block* ActiveBlock = UAH_GA_Block::FindActiveBlock(ASC);
+		if (ActiveBlock && ActiveBlock->GetClass()->IsChildOf(BlockAbilityClass) && ActiveBlock->IsActive())
+		{
+			ActiveBlock->EndAbility(ActiveBlock->GetCurrentAbilitySpecHandle(), ActiveBlock->GetCurrentActorInfo(),
+				ActiveBlock->GetCurrentActivationInfo(), /*bReplicateEndAbility*/ true, /*bWasCancelled*/ false);
+		}
+		else
+		{
+			ASC->CancelAbilityHandle(Spec->Handle);
+		}
+	}
+	return true;
+}
+
+void UBH_CombatFunctionLibrary::ApplyPassiveRegenEffects(AActor* OwningActor)
+{
+	using namespace BH_CombatFunctionLibrary_Private;
+
+	if (!OwningActor || !OwningActor->HasAuthority())
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* ASC = ResolveAbilitySystemComponent(OwningActor);
+	if (!ASC || !ASC->GetSet<UAH_AttributeSet>())
+	{
+		return;
+	}
+
+	const TSubclassOf<UGameplayEffect> RegenEffects[] = { UAH_GE_PostureRegen::StaticClass(), UAH_GE_StaminaRegen::StaticClass() };
+	for (const TSubclassOf<UGameplayEffect>& EffectClass : RegenEffects)
+	{
+		FGameplayEffectQuery AlreadyActive;
+		AlreadyActive.EffectDefinition = EffectClass;
+		if (ASC->GetActiveEffects(AlreadyActive).Num() > 0)
+		{
+			continue;
+		}
+
+		FGameplayEffectContextHandle Context = ASC->MakeEffectContext();
+		Context.AddSourceObject(OwningActor);
+		const FGameplayEffectSpecHandle Spec = ASC->MakeOutgoingSpec(EffectClass, 1.f, Context);
+		if (Spec.IsValid())
+		{
+			ASC->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+		}
+	}
+}
+
+// ============================================================================
+// HUD
+// ============================================================================
+
+namespace BH_CombatFunctionLibrary_Private
+{
+	static bool TrySetupPlayerHUDNow(APawn* Pawn, TSubclassOf<UBH_HUDWidget> MainHUDClass, TSubclassOf<UUserWidget> DebugHUDClass)
+	{
+		if (!Pawn || !Pawn->IsLocallyControlled())
+		{
+			return false;
+		}
+		const APlayerController* PC = Cast<APlayerController>(Pawn->GetController());
+		ULocalPlayer* LocalPlayer = PC ? PC->GetLocalPlayer() : nullptr;
+		UBH_HUDSubsystem* HUD = LocalPlayer ? LocalPlayer->GetSubsystem<UBH_HUDSubsystem>() : nullptr;
+		return HUD && HUD->SetupHUD(Pawn, MainHUDClass, DebugHUDClass);
+	}
+}
+
+void UBH_CombatFunctionLibrary::SetupPlayerHUD(APawn* Pawn, TSubclassOf<UBH_HUDWidget> MainHUDClass, TSubclassOf<UUserWidget> DebugHUDClass)
+{
+	using namespace BH_CombatFunctionLibrary_Private;
+
+	UWorld* World = Pawn ? Pawn->GetWorld() : nullptr;
+	if (!World || World->GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+	if (TrySetupPlayerHUDNow(Pawn, MainHUDClass, DebugHUDClass))
+	{
+		return;
+	}
+
+	// BeginPlay can run before possession (and on clients before the controller replicates):
+	// retry for up to 5 s. Pawns that are never locally controlled here simply time out.
+	TSharedRef<FTimerHandle> Handle = MakeShared<FTimerHandle>();
+	TSharedRef<int32> Attempts = MakeShared<int32>(0);
+	TWeakObjectPtr<APawn> WeakPawn(Pawn);
+	TWeakObjectPtr<UWorld> WeakWorld(World);
+	World->GetTimerManager().SetTimer(*Handle, FTimerDelegate::CreateLambda(
+		[WeakPawn, WeakWorld, MainHUDClass, DebugHUDClass, Handle, Attempts]()
+		{
+			UWorld* TimerWorld = WeakWorld.Get();
+			APawn* TimerPawn = WeakPawn.Get();
+			const bool bDone = !TimerPawn || TrySetupPlayerHUDNow(TimerPawn, MainHUDClass, DebugHUDClass) || ++(*Attempts) >= 25;
+			if (bDone && TimerWorld)
+			{
+				TimerWorld->GetTimerManager().ClearTimer(*Handle);
+			}
+		}), 0.2f, true);
+}
+
+void UBH_CombatFunctionLibrary::ToggleDebugHUD(const UObject* WorldContextObject)
+{
+	const UWorld* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
+	const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	if (!GameInstance)
+	{
+		return;
+	}
+	for (ULocalPlayer* LocalPlayer : GameInstance->GetLocalPlayers())
+	{
+		if (UBH_HUDSubsystem* HUD = LocalPlayer ? LocalPlayer->GetSubsystem<UBH_HUDSubsystem>() : nullptr)
+		{
+			HUD->ToggleDebugHUD();
+		}
+	}
+}
+
+// ============================================================================
+// Teams / friendly fire
+// ============================================================================
+
+FGenericTeamId UBH_CombatFunctionLibrary::GetCombatTeamId(const AActor* Actor)
+{
+	if (!Actor)
+	{
+		return FGenericTeamId::NoTeam;
+	}
+
+	// Projectiles / traps / spawned hitboxes fight for whoever instigated them.
+	const AActor* TeamSource = Actor;
+	if (!Actor->IsA<APawn>())
+	{
+		if (const APawn* InstigatorPawn = Actor->GetInstigator())
+		{
+			TeamSource = InstigatorPawn;
+		}
+	}
+
+	// 1) Explicit team on the actor (ABH_EnemyBase implements IGenericTeamAgentInterface).
+	if (const IGenericTeamAgentInterface* Agent = Cast<const IGenericTeamAgentInterface>(TeamSource))
+	{
+		const FGenericTeamId TeamId = Agent->GetGenericTeamId();
+		if (TeamId != FGenericTeamId::NoTeam)
+		{
+			return TeamId;
+		}
+	}
+
+	if (const APawn* Pawn = Cast<APawn>(TeamSource))
+	{
+		// 2) Explicit team on the controller (AAIController implements the interface).
+		//    Controllers only exist on the server / owning client, hence step 3.
+		if (const IGenericTeamAgentInterface* ControllerAgent = Cast<const IGenericTeamAgentInterface>(Pawn->GetController()))
+		{
+			const FGenericTeamId TeamId = ControllerAgent->GetGenericTeamId();
+			if (TeamId != FGenericTeamId::NoTeam)
+			{
+				return TeamId;
+			}
+		}
+
+		// 3) Human-controlled pawn. PlayerState replicates to everyone, so this resolves the
+		//    same way on the server, the owning client and other clients.
+		const APlayerState* PlayerState = Pawn->GetPlayerState();
+		if (PlayerState && !PlayerState->IsABot())
+		{
+			return BH_CombatTeam::ToGenericTeamId(EBH_CombatTeam::Players);
+		}
+	}
+
+	// 4) Unaffiliated: hittable by everyone.
+	return FGenericTeamId::NoTeam;
+}
+
+EBH_CombatTeam UBH_CombatFunctionLibrary::GetCombatTeam(const AActor* Actor)
+{
+	return BH_CombatTeam::FromGenericTeamId(GetCombatTeamId(Actor));
+}
+
+bool UBH_CombatFunctionLibrary::AreCombatAllies(const AActor* A, const AActor* B)
+{
+	if (!A || !B)
+	{
+		return false;
+	}
+	const FGenericTeamId TeamA = GetCombatTeamId(A);
+	return TeamA != FGenericTeamId::NoTeam && TeamA == GetCombatTeamId(B);
 }
 
 // ============================================================================
@@ -271,7 +513,49 @@ bool UBH_CombatFunctionLibrary::ApplyOverlayPoseByDisplayName(AActor* TargetChar
 	}
 	TargetCharacter->ProcessEvent(UpdateOverlayPoseFunction, nullptr);
 
+	// Tell any HUD bound to this character (K2_OnStanceUpdated). Remote clients that only
+	// receive the pose by replication are covered by the HUD's own OverlayPose poll.
+	UBH_HUDWidget::BroadcastStanceChanged(TargetCharacter, OverlayPoseEnum->GetDisplayNameTextByIndex(FoundIndex).ToString());
+
+	// Re-attach the weapons for the new pose right away on this machine (other machines follow via the watcher's poll).
+	if (UBH_StanceWatcherComponent* Watcher = UBH_StanceWatcherComponent::FindStanceWatcher(TargetCharacter))
+	{
+		Watcher->SyncWeapons();
+	}
+
 	return true;
+}
+
+int32 UBH_CombatFunctionLibrary::GetNextStanceIndex(const AActor* TargetCharacter, const TArray<FString>& StanceCycle)
+{
+	if (StanceCycle.Num() == 0)
+	{
+		return INDEX_NONE;
+	}
+	const FString Current = GetCurrentOverlayPoseDisplayName(TargetCharacter);
+	for (int32 Index = 0; Index < StanceCycle.Num(); ++Index)
+	{
+		if (StanceCycle[Index].Equals(Current, ESearchCase::IgnoreCase))
+		{
+			return (Index + 1) % StanceCycle.Num();
+		}
+	}
+	return 0;
+}
+
+bool UBH_CombatFunctionLibrary::RequestStanceByName(AActor* TargetCharacter, const FString& OverlayPoseDisplayName)
+{
+	if (!TargetCharacter)
+	{
+		return false;
+	}
+	if (UBH_StanceWatcherComponent* Watcher = UBH_StanceWatcherComponent::FindStanceWatcher(TargetCharacter))
+	{
+		Watcher->RequestStance(OverlayPoseDisplayName);
+		return true;
+	}
+	// No watcher on this character: only the authority can apply the pose.
+	return TargetCharacter->HasAuthority() && ApplyOverlayPoseByDisplayName(TargetCharacter, OverlayPoseDisplayName);
 }
 
 FString UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(const AActor* TargetCharacter)
@@ -495,4 +779,404 @@ bool UBH_CombatFunctionLibrary::EquipWeaponsForCurrentOverlayPose(ACharacter* Ch
 		return false;
 	}
 	return EquipWeaponsForOverlayPose(Character, Loadouts, CurrentPose, OutAttachedComponents);
+}
+
+// ============================================================================
+// Weapon socket / grip tuning
+// ============================================================================
+
+namespace BH_CombatFunctionLibrary_Private
+{
+	/** Re-evaluates attachments on every live component that uses the socket's mesh (or skeleton, for skeleton sockets). */
+	static void RefreshSocketUsers(const USkeletalMeshSocket* Socket, const USkeletalMesh* Mesh)
+	{
+		const USkeleton* SocketSkeleton = Socket ? Cast<USkeleton>(Socket->GetOuter()) : nullptr;
+		for (TObjectIterator<USkeletalMeshComponent> It; It; ++It)
+		{
+			USkeletalMeshComponent* Component = *It;
+			if (!Component || !Component->IsRegistered())
+			{
+				continue;
+			}
+			const USkeletalMesh* ComponentMesh = Component->GetSkeletalMeshAsset();
+			const bool bUsesSocket = ComponentMesh == Mesh || (SocketSkeleton && ComponentMesh && ComponentMesh->GetSkeleton() == SocketSkeleton);
+			if (bUsesSocket)
+			{
+				Component->UpdateChildTransforms();
+			}
+		}
+	}
+
+	/** The skeletal mesh component + socket the weapon in Slot is (or would be) attached to. */
+	static USkeletalMeshComponent* ResolveWeaponSocket(ACharacter* Character, EBH_WeaponSlot Slot, FName& OutSocketName)
+	{
+		if (!Character)
+		{
+			return nullptr;
+		}
+		if (UMeshComponent* Weapon = UBH_CombatFunctionLibrary::GetEquippedWeaponComponent(Character, Slot))
+		{
+			if (USkeletalMeshComponent* Parent = Cast<USkeletalMeshComponent>(Weapon->GetAttachParent()))
+			{
+				OutSocketName = Weapon->GetAttachSocketName();
+				return Parent;
+			}
+		}
+		OutSocketName = UBH_CombatFunctionLibrary::GetWeaponSocketForSlot(Slot);
+		return UBH_CombatFunctionLibrary::FindWeaponAttachMesh(Character, OutSocketName);
+	}
+
+	static bool ParseSlotArg(const FString& Arg, EBH_WeaponSlot& OutSlot)
+	{
+		if (Arg.StartsWith(TEXT("Main"), ESearchCase::IgnoreCase) || Arg.Equals(TEXT("R"), ESearchCase::IgnoreCase))
+		{
+			OutSlot = EBH_WeaponSlot::MainHand;
+			return true;
+		}
+		if (Arg.StartsWith(TEXT("Off"), ESearchCase::IgnoreCase) || Arg.StartsWith(TEXT("Shield"), ESearchCase::IgnoreCase) || Arg.Equals(TEXT("L"), ESearchCase::IgnoreCase))
+		{
+			OutSlot = EBH_WeaponSlot::OffHand;
+			return true;
+		}
+		return false;
+	}
+
+	/** Args: <Main|Off> dx dy dz [pitch yaw roll] */
+	static bool ParseNudgeArgs(const TArray<FString>& Args, EBH_WeaponSlot& OutSlot, FVector& OutDelta, FRotator& OutRot)
+	{
+		if (Args.Num() < 4 || !ParseSlotArg(Args[0], OutSlot))
+		{
+			return false;
+		}
+		OutDelta = FVector(FCString::Atod(*Args[1]), FCString::Atod(*Args[2]), FCString::Atod(*Args[3]));
+		OutRot = FRotator::ZeroRotator;
+		if (Args.Num() >= 7)
+		{
+			OutRot = FRotator(FCString::Atod(*Args[4]), FCString::Atod(*Args[5]), FCString::Atod(*Args[6]));
+		}
+		return true;
+	}
+
+	static ACharacter* GetTuningCharacter(UWorld* World)
+	{
+		return World ? UGameplayStatics::GetPlayerCharacter(World, 0) : nullptr;
+	}
+
+	static void PrintTuning(ACharacter* Character)
+	{
+		for (const EBH_WeaponSlot Slot : { EBH_WeaponSlot::MainHand, EBH_WeaponSlot::OffHand })
+		{
+			const TCHAR* SlotLabel = Slot == EBH_WeaponSlot::MainHand ? TEXT("Main") : TEXT("Off");
+			FName SocketName;
+			USkeletalMeshComponent* Parent = ResolveWeaponSocket(Character, Slot, SocketName);
+			FTransform SocketTransform;
+			FName BoneName;
+			if (Parent && UBH_CombatFunctionLibrary::GetMeshSocketTransform(Parent->GetSkeletalMeshAsset(), SocketName, SocketTransform, BoneName))
+			{
+				UE_LOG(LogTemp, Display, TEXT("[BH Tuning] %s socket %s on %s (bone %s): Loc %s Rot %s"), SlotLabel, *SocketName.ToString(),
+					*GetNameSafe(Parent->GetSkeletalMeshAsset()), *BoneName.ToString(),
+					*SocketTransform.GetLocation().ToString(), *SocketTransform.Rotator().ToString());
+			}
+			if (const UMeshComponent* Weapon = UBH_CombatFunctionLibrary::GetEquippedWeaponComponent(Character, Slot))
+			{
+				UE_LOG(LogTemp, Display, TEXT("[BH Tuning] %s grip offset (%s): Loc %s Rot %s Scale %s"), SlotLabel, *GetNameSafe(Weapon),
+					*Weapon->GetRelativeLocation().ToString(), *Weapon->GetRelativeRotation().ToString(), *Weapon->GetRelativeScale3D().ToString());
+			}
+		}
+	}
+
+	static FAutoConsoleCommandWithWorldAndArgs CmdNudgeSocket(
+		TEXT("BH.Weapon.NudgeSocket"),
+		TEXT("BH.Weapon.NudgeSocket <Main|Off> dx dy dz [pitch yaw roll] -- nudge player 0's weapon_r_socket / shield_l_socket on its character mesh (live, not saved)."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			EBH_WeaponSlot Slot;
+			FVector Delta;
+			FRotator Rot;
+			if (!ParseNudgeArgs(Args, Slot, Delta, Rot))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Usage: BH.Weapon.NudgeSocket <Main|Off> dx dy dz [pitch yaw roll]"));
+				return;
+			}
+			UBH_CombatFunctionLibrary::NudgeWeaponSocket(GetTuningCharacter(World), Slot, Delta, Rot, false);
+		}));
+
+	static FAutoConsoleCommandWithWorldAndArgs CmdNudgeGrip(
+		TEXT("BH.Weapon.NudgeGrip"),
+		TEXT("BH.Weapon.NudgeGrip <Main|Off> dx dy dz [pitch yaw roll] -- nudge player 0's equipped weapon offset relative to its socket (socket-local space)."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			EBH_WeaponSlot Slot;
+			FVector Delta;
+			FRotator Rot;
+			ACharacter* Character = GetTuningCharacter(World);
+			if (!ParseNudgeArgs(Args, Slot, Delta, Rot))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Usage: BH.Weapon.NudgeGrip <Main|Off> dx dy dz [pitch yaw roll]"));
+				return;
+			}
+			const UMeshComponent* Weapon = Character ? UBH_CombatFunctionLibrary::GetEquippedWeaponComponent(Character, Slot) : nullptr;
+			if (!Weapon)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("BH.Weapon.NudgeGrip: no weapon equipped in that slot."));
+				return;
+			}
+			const FTransform Current = Weapon->GetRelativeTransform();
+			const FTransform Updated(Current.GetRotation() * Rot.Quaternion(), Current.GetLocation() + Delta, Current.GetScale3D());
+			UBH_CombatFunctionLibrary::SetEquippedWeaponOffset(Character, Slot, Updated);
+			PrintTuning(Character);
+		}));
+
+	static FAutoConsoleCommandWithWorld CmdPrintTuning(
+		TEXT("BH.Weapon.PrintTuning"),
+		TEXT("Logs player 0's weapon socket transforms and grip offsets."),
+		FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+		{
+			PrintTuning(GetTuningCharacter(World));
+		}));
+}
+
+bool UBH_CombatFunctionLibrary::GetMeshSocketTransform(const USkeletalMesh* Mesh, FName SocketName, FTransform& OutRelativeTransform, FName& OutBoneName)
+{
+	const USkeletalMeshSocket* Socket = Mesh ? Mesh->FindSocket(SocketName) : nullptr;
+	if (!Socket)
+	{
+		OutRelativeTransform = FTransform::Identity;
+		OutBoneName = NAME_None;
+		return false;
+	}
+	OutRelativeTransform = FTransform(Socket->RelativeRotation, Socket->RelativeLocation, Socket->RelativeScale);
+	OutBoneName = Socket->BoneName;
+	return true;
+}
+
+bool UBH_CombatFunctionLibrary::SetMeshSocketTransform(USkeletalMesh* Mesh, FName SocketName, const FTransform& RelativeTransform, bool bMarkAssetDirty)
+{
+	using namespace BH_CombatFunctionLibrary_Private;
+
+	USkeletalMeshSocket* Socket = Mesh ? Mesh->FindSocket(SocketName) : nullptr;
+	if (!Socket)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetMeshSocketTransform: '%s' has no socket '%s'."), *GetNameSafe(Mesh), *SocketName.ToString());
+		return false;
+	}
+
+#if WITH_EDITOR
+	if (bMarkAssetDirty)
+	{
+		Socket->Modify();
+	}
+#endif
+
+	Socket->RelativeLocation = RelativeTransform.GetLocation();
+	Socket->RelativeRotation = RelativeTransform.Rotator();
+	Socket->RelativeScale = RelativeTransform.GetScale3D();
+
+	if (bMarkAssetDirty)
+	{
+		Socket->MarkPackageDirty();
+	}
+
+	RefreshSocketUsers(Socket, Mesh);
+	return true;
+}
+
+bool UBH_CombatFunctionLibrary::NudgeWeaponSocket(ACharacter* Character, EBH_WeaponSlot Slot, FVector DeltaLocation, FRotator DeltaRotation, bool bMarkAssetDirty)
+{
+	using namespace BH_CombatFunctionLibrary_Private;
+
+	FName SocketName;
+	USkeletalMeshComponent* Parent = ResolveWeaponSocket(Character, Slot, SocketName);
+	USkeletalMesh* Mesh = Parent ? Parent->GetSkeletalMeshAsset() : nullptr;
+
+	FTransform Current;
+	FName BoneName;
+	if (!GetMeshSocketTransform(Mesh, SocketName, Current, BoneName))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("NudgeWeaponSocket: no socket '%s' on %s's weapon mesh (%s)."),
+			*SocketName.ToString(), *GetNameSafe(Character), *GetNameSafe(Mesh));
+		return false;
+	}
+
+	// Location delta in the bone's space; rotation delta in the socket's own local space.
+	const FTransform Updated(Current.GetRotation() * DeltaRotation.Quaternion(), Current.GetLocation() + DeltaLocation, Current.GetScale3D());
+	if (!SetMeshSocketTransform(Mesh, SocketName, Updated, bMarkAssetDirty))
+	{
+		return false;
+	}
+
+	UE_LOG(LogTemp, Display, TEXT("[BH Tuning] %s on %s -> Loc %s Rot %s"), *SocketName.ToString(), *GetNameSafe(Mesh),
+		*Updated.GetLocation().ToString(), *Updated.Rotator().ToString());
+	return true;
+}
+
+bool UBH_CombatFunctionLibrary::SetEquippedWeaponOffset(ACharacter* Character, EBH_WeaponSlot Slot, const FTransform& RelativeTransform)
+{
+	UMeshComponent* Weapon = GetEquippedWeaponComponent(Character, Slot);
+	if (!Weapon)
+	{
+		return false;
+	}
+	Weapon->SetRelativeTransform(RelativeTransform);
+	return true;
+}
+
+bool UBH_CombatFunctionLibrary::StoreEquippedWeaponOffsetInLoadout(ACharacter* Character, EBH_WeaponSlot Slot, UBH_WeaponLoadoutDataAsset* Loadouts)
+{
+	const UMeshComponent* Weapon = GetEquippedWeaponComponent(Character, Slot);
+	const FString PoseName = GetCurrentOverlayPoseDisplayName(Character);
+	if (!Weapon || !Loadouts || PoseName.IsEmpty())
+	{
+		return false;
+	}
+
+	FBH_OverlayWeaponLoadout* Entry = Loadouts->LoadoutsByOverlayPose.Find(FName(*PoseName));
+	if (!Entry)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("StoreEquippedWeaponOffsetInLoadout: %s has no entry for overlay pose '%s'."), *Loadouts->GetName(), *PoseName);
+		return false;
+	}
+
+#if WITH_EDITOR
+	Loadouts->Modify();
+#endif
+	FBH_WeaponMeshSlot& MeshSlot = Slot == EBH_WeaponSlot::OffHand ? Entry->OffHand : Entry->MainHand;
+	MeshSlot.RelativeTransform = Weapon->GetRelativeTransform();
+	Loadouts->MarkPackageDirty();
+	return true;
+}
+
+// ============================================================================
+// Animation
+// ============================================================================
+
+int32 UBH_CombatFunctionLibrary::ReplaceLinkedAnimGraphClass(USkeletalMeshComponent* Mesh, TSubclassOf<UAnimInstance> FromClass, TSubclassOf<UAnimInstance> ToClass)
+{
+	UAnimInstance* MainInstance = Mesh ? Mesh->GetAnimInstance() : nullptr;
+	if (!MainInstance || !ToClass)
+	{
+		return 0;
+	}
+
+	const IAnimClassInterface* AnimClassInterface = IAnimClassInterface::GetFromClass(MainInstance->GetClass());
+	if (!AnimClassInterface)
+	{
+		return 0;
+	}
+
+	int32 NumSwitched = 0;
+	for (const FStructProperty* NodeProperty : AnimClassInterface->GetLinkedAnimGraphNodeProperties())
+	{
+		// Exact struct match: linked anim LAYER nodes derive from FAnimNode_LinkedAnimGraph and must be left alone.
+		if (!NodeProperty || NodeProperty->Struct != FAnimNode_LinkedAnimGraph::StaticStruct())
+		{
+			continue;
+		}
+
+		FAnimNode_LinkedAnimGraph* LinkedNode = NodeProperty->ContainerPtrToValuePtr<FAnimNode_LinkedAnimGraph>(MainInstance);
+		if (!LinkedNode)
+		{
+			continue;
+		}
+
+		const UAnimInstance* CurrentInstance = LinkedNode->GetTargetInstance<UAnimInstance>();
+		const UClass* CurrentClass = CurrentInstance ? CurrentInstance->GetClass() : LinkedNode->InstanceClass.Get();
+		if (CurrentClass == ToClass.Get())
+		{
+			continue;
+		}
+		if (FromClass && CurrentClass != FromClass.Get())
+		{
+			continue;
+		}
+
+		LinkedNode->SetAnimClass(ToClass, MainInstance);
+		++NumSwitched;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("ReplaceLinkedAnimGraphClass: switched %d linked graph(s) on '%s' to %s."),
+		NumSwitched, *GetNameSafe(Mesh->GetOwner()), *ToClass->GetName());
+	return NumSwitched;
+}
+
+float UBH_CombatFunctionLibrary::GetMontageLayeringValue(const UAnimInstance* AnimInstance, FName CurveName, float StanceValue, FName CurveSlotName)
+{
+	if (!AnimInstance || CurveName.IsNone())
+	{
+		return StanceValue;
+	}
+
+	// Linked graphs / layers evaluate montages from the main instance.
+	const UAnimInstance* MainInstance = AnimInstance;
+	if (const USkeletalMeshComponent* OwningMesh = AnimInstance->GetOwningComponent())
+	{
+		if (const UAnimInstance* MeshInstance = OwningMesh->GetAnimInstance())
+		{
+			MainInstance = MeshInstance;
+		}
+	}
+
+	// Weight-blend EVERY montage instance (including ones blending out).
+	// NOTE: deliberately NOT GetActiveMontageInstance() - that drops a montage the
+	// instant it starts blending out, which snapped every layer to its stance value
+	// in a single frame while the montage pose was still at full weight (a visible
+	// pop / upper-body twitch at the end of every attack).
+	// Also NOT "heaviest instance wins": during a cross-fade between two montages
+	// with different curves (attack -> hit reaction, guard -> parry, guard -> hit)
+	// the winner flips when the weights cross 0.5 and the layer value jumps in one
+	// frame. Summing weight * value keeps it continuous. A montage without the curve
+	// contributes the stance value for its share of the weight.
+	float WeightedValue = 0.f;
+	float TotalWeight = 0.f;
+
+	for (const FAnimMontageInstance* MontageInstance : MainInstance->MontageInstances)
+	{
+		const UAnimMontage* Montage = MontageInstance ? MontageInstance->Montage.Get() : nullptr;
+		if (!Montage)
+		{
+			continue;
+		}
+
+		const float Weight = FMath::Clamp(MontageInstance->GetWeight(), 0.f, 1.f);
+		if (Weight <= UE_KINDA_SMALL_NUMBER)
+		{
+			continue;
+		}
+
+		float MontageValue = StanceValue;
+
+		// Prefer the dedicated curve track, fall back to the first slot track.
+		const FAnimTrack* Track = CurveSlotName.IsNone() ? nullptr : Montage->GetAnimationData(CurveSlotName);
+		if (!Track && Montage->SlotAnimTracks.Num() > 0)
+		{
+			Track = &Montage->SlotAnimTracks[0].AnimTrack;
+		}
+		if (Track)
+		{
+			const float MontagePosition = MontageInstance->GetPosition();
+			if (const FAnimSegment* Segment = Track->GetSegmentAtTime(MontagePosition))
+			{
+				float PositionInAnim = 0.f;
+				const UAnimSequenceBase* SegmentAnim = Segment->GetAnimationData(MontagePosition, PositionInAnim);
+				if (SegmentAnim && SegmentAnim->HasCurveData(CurveName))
+				{
+					MontageValue = SegmentAnim->EvaluateCurveData(CurveName, FAnimExtractContext(static_cast<double>(PositionInAnim)));
+				}
+			}
+		}
+
+		WeightedValue += Weight * MontageValue;
+		TotalWeight += Weight;
+	}
+
+	if (TotalWeight <= UE_KINDA_SMALL_NUMBER)
+	{
+		return StanceValue;
+	}
+	if (TotalWeight >= 1.f)
+	{
+		// Overlapping montages in different slot groups can sum past 1: normalise.
+		return WeightedValue / TotalWeight;
+	}
+	return WeightedValue + StanceValue * (1.f - TotalWeight);
 }

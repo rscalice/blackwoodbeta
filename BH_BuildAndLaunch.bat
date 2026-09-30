@@ -3,7 +3,7 @@ rem Blackwood Hollow - full editor build + relaunch.
 rem Close the Unreal Editor first (Live Coding can't add new classes).
 setlocal
 set ENG=D:\Epic Games\UE_5.8\Engine
-set PROJ=C:\Users\Robert Scalice\Documents\Unreal Projects\BlackwoodHollowBeta\BlackwoodHollowBeta.uproject
+set PROJ=C:\Users\Robert Scalice\Documents\Unreal Projects\blackwoodbeta\BlackwoodHollowBeta.uproject
 tasklist /FI "IMAGENAME eq UnrealEditor.exe" | find /I "UnrealEditor.exe" >nul
 if not errorlevel 1 (
   echo Unreal Editor is still running - close it and run this again.

@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "AttributeSet.h"
 #include "AbilitySystemComponent.h"
+#include "Engine/TimerHandle.h"
 #include "AH_AttributeSet.generated.h"
 
 // Boilerplate accessor macro (standard GAS pattern) -- generates getters/
@@ -73,6 +74,29 @@ public:
 	FGameplayAttributeData MaxPosture;
 	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, MaxPosture)
 
+	/**
+	 * Posture recovered per second by UAH_GE_PostureRegen (periodic, server-side).
+	 * Regen is paused while State.Combat.Attacking / Blocking / PostureBroken / Dead
+	 * is present, and for bh.Combat.PostureRegenDelay seconds after posture damage.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Posture", ReplicatedUsing = OnRep_PostureRegenRate)
+	FGameplayAttributeData PostureRegenRate;
+	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, PostureRegenRate)
+
+	// -- Stamina (nothing consumes it yet; regen + clamping are in place) -
+	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Stamina", ReplicatedUsing = OnRep_Stamina)
+	FGameplayAttributeData Stamina;
+	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, Stamina)
+
+	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Stamina", ReplicatedUsing = OnRep_MaxStamina)
+	FGameplayAttributeData MaxStamina;
+	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, MaxStamina)
+
+	/** Stamina recovered per second by UAH_GE_StaminaRegen (paused while Attacking / Blocking / PostureBroken / Dead). */
+	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Stamina", ReplicatedUsing = OnRep_StaminaRegenRate)
+	FGameplayAttributeData StaminaRegenRate;
+	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, StaminaRegenRate)
+
 	// -- Offense / Defense -------------------------------------------------
 	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Combat", ReplicatedUsing = OnRep_AttackPower)
 	FGameplayAttributeData AttackPower;
@@ -81,6 +105,11 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Combat", ReplicatedUsing = OnRep_Defense)
 	FGameplayAttributeData Defense;
 	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, Defense)
+
+	/** Melee montage play-rate multiplier (base 1.0, clamped [0.5, 2.0]). Raised by UAH_GE_Flurry; read when an attack activates. */
+	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Combat", ReplicatedUsing = OnRep_AttackSpeed)
+	FGameplayAttributeData AttackSpeed;
+	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, AttackSpeed)
 
 	// -- Blight resistance (mitigates BP_BlightVolume / Blight fog damage) -
 	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Blight", ReplicatedUsing = OnRep_BlightResistance)
@@ -120,10 +149,25 @@ protected:
 	virtual void OnRep_MaxPosture(const FGameplayAttributeData& OldValue);
 
 	UFUNCTION()
+	virtual void OnRep_PostureRegenRate(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	virtual void OnRep_Stamina(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	virtual void OnRep_MaxStamina(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	virtual void OnRep_StaminaRegenRate(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
 	virtual void OnRep_AttackPower(const FGameplayAttributeData& OldValue);
 
 	UFUNCTION()
 	virtual void OnRep_Defense(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	virtual void OnRep_AttackSpeed(const FGameplayAttributeData& OldValue);
 
 	UFUNCTION()
 	virtual void OnRep_BlightResistance(const FGameplayAttributeData& OldValue);
@@ -131,6 +175,18 @@ protected:
 private:
 	/** Shared clamp helper used by both PreAttributeChange and PostGameplayEffectExecute. */
 	void ClampAttribute(const FGameplayAttribute& Attribute, float& NewValue) const;
+
+	/** Applies the Posture == 0 consequences once: PostureBroken tag, OnPostureBroken, Event.Combat.PostureBreak. */
+	void HandlePostureDepleted(UAbilitySystemComponent* TargetASC, AActor* Instigator, AActor* TargetActor);
+
+	/** Posture just took damage: pause passive regen (State.Combat.PostureRegenDelayed) for bh.Combat.PostureRegenDelay seconds. */
+	void StartPostureRegenDelay(UAbilitySystemComponent* TargetASC);
+
+	FTimerHandle PostureRegenDelayTimer;
+
+	// Set in PreGameplayEffectExecute when an IncomingDamage mod is blocked, consumed in PostGameplayEffectExecute.
+	bool bPendingBlockedHit = false;
+	float PendingBlockPostureCost = 0.f;
 };
 
 #undef ATTRIBUTE_ACCESSORS

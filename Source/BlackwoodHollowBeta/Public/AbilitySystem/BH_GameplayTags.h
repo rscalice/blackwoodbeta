@@ -36,6 +36,7 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Overload
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Dead);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Attacking);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_ComboWindow);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_PostureRegenDelayed);
 
 // ---------------------------------------------------------------------------
 // Event.Combat.*  -- momentary gameplay events sent via SendGameplayEventToActor
@@ -62,6 +63,21 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Ability_Combat_Parry)
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Damage_Type_Melee);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Damage);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_PostureDamage);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Event_Combat_BlockImpact);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Ability_Combat_Block);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Ability_Combat_HitReaction);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Ability_Combat_PostureBreak);
+
+// ---------------------------------------------------------------------------
+// Phase 6: Flurry / Riposte / Shield Bash / GameplayCues
+// ---------------------------------------------------------------------------
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Flurry);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_RiposteReady);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Ability_Combat_ShieldBash);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Cooldown_Combat_ShieldBash);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_GameplayCue_Combat_Hit);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_GameplayCue_Combat_ParrySuccess);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_GameplayCue_Combat_PostureBroken);
 
 /**
  * Singleton accessor kept for readability at call sites and for parity with
@@ -87,6 +103,7 @@ public:
 	FGameplayTag State_Combat_Dead;
 	FGameplayTag State_Combat_Attacking;
 	FGameplayTag State_Combat_ComboWindow;
+	FGameplayTag State_Combat_PostureRegenDelayed;
 
 	// Event.Combat
 	FGameplayTag Event_Combat_Hit;
@@ -109,6 +126,10 @@ public:
 	FGameplayTag Damage_Type_Melee;
 	FGameplayTag Data_Damage;
 	FGameplayTag Data_PostureDamage;
+	FGameplayTag Event_Combat_BlockImpact;
+	FGameplayTag Ability_Combat_Block;
+	FGameplayTag Ability_Combat_HitReaction;
+	FGameplayTag Ability_Combat_PostureBreak;
 
 protected:
 	void AddAllTags();

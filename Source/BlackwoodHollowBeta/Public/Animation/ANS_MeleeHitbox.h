@@ -76,9 +76,41 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitbox", meta = (ClampMin = "0.0"))
 	float DamageMultiplier = 1.f;
 
-	/** Each actor can only be hit once per notify window. */
+	/** Each actor can only be hit once per notify window. Ignored when bAllowMultipleHits is on. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitbox")
 	bool bHitEachActorOnce = true;
+
+	/**
+	 * Multi-hit mode (spins, flurries): an actor can be hit again once ReHitInterval seconds of world time have
+	 * passed since its last hit in this window, up to MaxHitsPerActor. Also enables SubstepDistance sub-sweeps.
+	 * Overrides bHitEachActorOnce. false (default) = previous behaviour, unchanged.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitbox|MultiHit")
+	bool bAllowMultipleHits = false;
+
+	/** Minimum seconds between two hits on the same actor (multi-hit mode). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitbox|MultiHit", meta = (EditCondition = "bAllowMultipleHits", ClampMin = "0.02"))
+	float ReHitInterval = 0.12f;
+
+	/** Max hits per actor per window (multi-hit mode). 0 = unlimited. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitbox|MultiHit", meta = (EditCondition = "bAllowMultipleHits", ClampMin = "0"))
+	int32 MaxHitsPerActor = 0;
+
+	/**
+	 * Multi-hit mode: if the blade moved more than this (uu) between two ticks, the motion is split into several
+	 * sub-sweeps along an interpolated ARC (blade direction is slerped, not just the points lerped), so fast spins
+	 * neither skip thin targets nor cut the corner of the arc. 0 = off.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitbox|MultiHit", meta = (EditCondition = "bAllowMultipleHits", ClampMin = "0.0"))
+	float SubstepDistance = 30.f;
+
+	/**
+	 * If false (default), actors on the attacker's own combat team are ignored entirely
+	 * (no Hit / HitDealt events, so no damage, posture, parry or hit reaction).
+	 * Teams: UBH_CombatFunctionLibrary::GetCombatTeam (players vs ABH_EnemyBase::CombatTeam).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitbox")
+	bool bAllowFriendlyFire = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitbox|Debug")
 	bool bDrawDebug = false;
@@ -102,6 +134,14 @@ private:
 	{
 		TArray<FVector> PreviousPoints;
 		TSet<TWeakObjectPtr<AActor>> HitActors;
+
+		/** Multi-hit mode: per-actor last hit time (world seconds) and hit count. */
+		struct FHitRecord
+		{
+			double LastHitTime = 0.0;
+			int32 HitCount = 0;
+		};
+		TMap<TWeakObjectPtr<AActor>, FHitRecord> HitRecords;
 	};
 
 	/** Per-mesh swing state (this notify object is shared across all meshes playing the anim). */
@@ -114,4 +154,8 @@ private:
 
 	void SweepSegment(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, FSwingState& Swing,
 		const FVector& Start, const FVector& End) const;
+
+	/** Sweeps every sample point from Previous to Current; in multi-hit mode fast motion is split into arc sub-steps. */
+	void SweepMotion(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, FSwingState& Swing,
+		const TArray<FVector>& Previous, const TArray<FVector>& Current) const;
 };

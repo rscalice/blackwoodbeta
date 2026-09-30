@@ -106,6 +106,7 @@ void UANS_MeleeHitbox::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequen
 
 	FSwingState& Swing = ActiveSwings.FindOrAdd(MeshComp);
 	Swing.HitActors.Reset();
+	Swing.HitRecords.Reset();
 	GetWeaponPoints(MeshComp, Swing.PreviousPoints);
 
 	// Catch anything already overlapping the blade on the first frame.
@@ -134,10 +135,7 @@ void UANS_MeleeHitbox::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenc
 
 	if (Swing->PreviousPoints.Num() == CurrentPoints.Num())
 	{
-		for (int32 Index = 0; Index < CurrentPoints.Num(); ++Index)
-		{
-			SweepSegment(MeshComp, Animation, *Swing, Swing->PreviousPoints[Index], CurrentPoints[Index]);
-		}
+		SweepMotion(MeshComp, Animation, *Swing, Swing->PreviousPoints, CurrentPoints);
 	}
 	else
 	{
@@ -151,6 +149,17 @@ void UANS_MeleeHitbox::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenc
 void UANS_MeleeHitbox::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
 	const FAnimNotifyEventReference& EventReference)
 {
+	// Final sweep from the last ticked pose to the end pose. At low frame rates a
+	// short window can begin and end within one frame with no NotifyTick at all.
+	if (FSwingState* Swing = ActiveSwings.Find(MeshComp))
+	{
+		TArray<FVector> EndPoints;
+		if (GetWeaponPoints(MeshComp, EndPoints) && Swing->PreviousPoints.Num() == EndPoints.Num())
+		{
+			SweepMotion(MeshComp, Animation, *Swing, Swing->PreviousPoints, EndPoints);
+		}
+	}
+
 	ActiveSwings.Remove(MeshComp);
 
 	// Drop entries for meshes that were destroyed mid-swing.
@@ -163,6 +172,72 @@ void UANS_MeleeHitbox::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequence
 	}
 
 	Super::NotifyEnd(MeshComp, Animation, EventReference);
+}
+
+void UANS_MeleeHitbox::SweepMotion(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, FSwingState& Swing,
+	const TArray<FVector>& Previous, const TArray<FVector>& Current) const
+{
+	const int32 NumPoints = Current.Num();
+	if (NumPoints < 2 || Previous.Num() != NumPoints)
+	{
+		for (int32 Index = 0; Index < NumPoints && Index < Previous.Num(); ++Index)
+		{
+			SweepSegment(MeshComp, Animation, Swing, Previous[Index], Current[Index]);
+		}
+		return;
+	}
+
+	// Default behaviour (and multi-hit with substeps off): one straight sweep per sample point.
+	float MaxTravel = 0.f;
+	for (int32 Index = 0; Index < NumPoints; ++Index)
+	{
+		MaxTravel = FMath::Max(MaxTravel, static_cast<float>(FVector::Dist(Previous[Index], Current[Index])));
+	}
+
+	if (!bAllowMultipleHits || SubstepDistance <= 0.f || MaxTravel <= SubstepDistance)
+	{
+		for (int32 Index = 0; Index < NumPoints; ++Index)
+		{
+			SweepSegment(MeshComp, Animation, Swing, Previous[Index], Current[Index]);
+		}
+		return;
+	}
+
+	// Fast motion: interpolate the blade itself (root lerp, direction slerp, length lerp) and sweep
+	// sub-step to sub-step, so a spin is covered along its arc instead of along the chord.
+	constexpr int32 MaxSubsteps = 12;
+	const int32 Substeps = FMath::Clamp(FMath::CeilToInt(MaxTravel / SubstepDistance), 2, MaxSubsteps);
+
+	const FVector PrevRoot = Previous[0];
+	const FVector CurRoot = Current[0];
+	const FVector PrevVec = Previous.Last() - PrevRoot;
+	const FVector CurVec = Current.Last() - CurRoot;
+	const float PrevLen = static_cast<float>(PrevVec.Size());
+	const float CurLen = static_cast<float>(CurVec.Size());
+	const FVector PrevDir = PrevLen > KINDA_SMALL_NUMBER ? PrevVec / PrevLen : FVector::ForwardVector;
+	const FVector CurDir = CurLen > KINDA_SMALL_NUMBER ? CurVec / CurLen : PrevDir;
+	const FQuat Delta = FQuat::FindBetweenNormals(PrevDir, CurDir);
+
+	TArray<FVector> StepStart = Previous;
+	TArray<FVector> StepEnd;
+	StepEnd.SetNum(NumPoints);
+	for (int32 Step = 1; Step <= Substeps; ++Step)
+	{
+		const float StepAlpha = static_cast<float>(Step) / static_cast<float>(Substeps);
+		const FVector Root = FMath::Lerp(PrevRoot, CurRoot, StepAlpha);
+		const FVector Dir = FQuat::Slerp(FQuat::Identity, Delta, StepAlpha).RotateVector(PrevDir);
+		const float Length = FMath::Lerp(PrevLen, CurLen, StepAlpha);
+		for (int32 Index = 0; Index < NumPoints; ++Index)
+		{
+			const float PointAlpha = static_cast<float>(Index) / static_cast<float>(NumPoints - 1);
+			StepEnd[Index] = Step == Substeps ? Current[Index] : Root + Dir * (Length * PointAlpha);
+		}
+		for (int32 Index = 0; Index < NumPoints; ++Index)
+		{
+			SweepSegment(MeshComp, Animation, Swing, StepStart[Index], StepEnd[Index]);
+		}
+		StepStart = StepEnd;
+	}
 }
 
 void UANS_MeleeHitbox::SweepSegment(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, FSwingState& Swing,
@@ -217,7 +292,33 @@ void UANS_MeleeHitbox::ProcessHit(USkeletalMeshComponent* MeshComp, UAnimSequenc
 		return;
 	}
 
-	if (bHitEachActorOnce)
+	// Friendly fire: same-team targets are invisible to the blade.
+	if (!bAllowFriendlyFire && UBH_CombatFunctionLibrary::AreCombatAllies(Owner, HitActor))
+	{
+		return;
+	}
+
+	if (bAllowMultipleHits)
+	{
+		// Re-hit gate: measured in world time, so hit-stop / anim-rate changes can't cause double hits.
+		const UWorld* World = MeshComp->GetWorld();
+		const double Now = World ? World->GetTimeSeconds() : 0.0;
+		FSwingState::FHitRecord& Record = Swing.HitRecords.FindOrAdd(HitActor);
+		if (Record.HitCount > 0)
+		{
+			if (MaxHitsPerActor > 0 && Record.HitCount >= MaxHitsPerActor)
+			{
+				return;
+			}
+			if (Now - Record.LastHitTime < static_cast<double>(ReHitInterval))
+			{
+				return;
+			}
+		}
+		Record.LastHitTime = Now;
+		++Record.HitCount;
+	}
+	else if (bHitEachActorOnce)
 	{
 		if (Swing.HitActors.Contains(HitActor))
 		{

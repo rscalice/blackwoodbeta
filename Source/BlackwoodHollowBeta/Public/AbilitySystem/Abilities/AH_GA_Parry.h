@@ -86,6 +86,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Parry|Posture")
 	bool bScaleWithHitMultiplier = true;
 
+	/** Applied to the PARRIER (self, authority) on every successful parry: grants State.Combat.RiposteReady for its duration. Null = no riposte. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Parry|Riposte")
+	TSubclassOf<UGameplayEffect> RiposteWindowEffectClass;
+
 	UFUNCTION(BlueprintPure, Category = "Parry")
 	bool IsParryWindowActive() const { return bParryWindowActive; }
 

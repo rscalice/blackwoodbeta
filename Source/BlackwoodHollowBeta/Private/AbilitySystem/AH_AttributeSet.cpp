@@ -2,8 +2,20 @@
 
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "AbilitySystem/Abilities/AH_GA_Block.h"
+#include "GameplayCueManager.h"
+#include "GameplayEffectTypes.h"
 #include "GameplayEffectExtension.h"
 #include "Net/UnrealNetwork.h"
+#include "HAL/IConsoleManager.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
+
+static TAutoConsoleVariable<float> CVarBHPostureRegenDelay(
+	TEXT("bh.Combat.PostureRegenDelay"),
+	1.5f,
+	TEXT("Seconds passive posture regeneration stays paused after taking posture damage (0 = no delay)."),
+	ECVF_Default);
 
 UAH_AttributeSet::UAH_AttributeSet()
 {
@@ -13,8 +25,13 @@ UAH_AttributeSet::UAH_AttributeSet()
 	InitMaxMana(50.f);
 	InitPosture(100.f);
 	InitMaxPosture(100.f);
+	InitPostureRegenRate(5.f);
+	InitStamina(100.f);
+	InitMaxStamina(100.f);
+	InitStaminaRegenRate(25.f);
 	InitAttackPower(10.f);
 	InitDefense(5.f);
+	InitAttackSpeed(1.f);
 	InitBlightResistance(0.f);
 	InitIncomingDamage(0.f);
 }
@@ -29,8 +46,13 @@ void UAH_AttributeSet::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, MaxMana, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Posture, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, MaxPosture, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, PostureRegenRate, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Stamina, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, MaxStamina, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, StaminaRegenRate, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, AttackPower, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Defense, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, AttackSpeed, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, BlightResistance, COND_None, REPNOTIFY_Always);
 }
 
@@ -48,14 +70,27 @@ void UAH_AttributeSet::ClampAttribute(const FGameplayAttribute& Attribute, float
 	{
 		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxPosture());
 	}
-	else if (Attribute == GetMaxHealthAttribute() || Attribute == GetMaxManaAttribute() || Attribute == GetMaxPostureAttribute())
+	else if (Attribute == GetStaminaAttribute())
+	{
+		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxStamina());
+	}
+	else if (Attribute == GetMaxHealthAttribute() || Attribute == GetMaxManaAttribute() || Attribute == GetMaxPostureAttribute()
+		|| Attribute == GetMaxStaminaAttribute())
 	{
 		NewValue = FMath::Max(NewValue, 1.f);
+	}
+	else if (Attribute == GetPostureRegenRateAttribute() || Attribute == GetStaminaRegenRateAttribute())
+	{
+		NewValue = FMath::Max(NewValue, 0.f);
 	}
 	else if (Attribute == GetBlightResistanceAttribute())
 	{
 		// Percentage-style mitigation, clamp to [0, 0.9] so Blight damage is never fully negated.
 		NewValue = FMath::Clamp(NewValue, 0.f, 0.9f);
+	}
+	else if (Attribute == GetAttackSpeedAttribute())
+	{
+		NewValue = FMath::Clamp(NewValue, 0.5f, 2.0f);
 	}
 	else if (Attribute == GetDefenseAttribute() || Attribute == GetAttackPowerAttribute())
 	{
@@ -100,6 +135,27 @@ bool UAH_AttributeSet::PreGameplayEffectExecute(FGameplayEffectModCallbackData& 
 		}
 	}
 
+	// -- Block mitigation ---------------------------------------------------
+	// While UAH_GA_Block is active (State.Combat.Blocking) and the attacker is
+	// inside its frontal arc, cut the damage and convert part of it into
+	// Posture loss. Tunables live on the active block ability instance.
+	if (Data.EvaluatedData.Attribute == GetIncomingDamageAttribute()
+		&& Data.EvaluatedData.Magnitude > 0.f
+		&& Data.Target.HasMatchingGameplayTag(FBH_GameplayTags::Get().State_Combat_Blocking))
+	{
+		if (const UAH_GA_Block* Block = UAH_GA_Block::FindActiveBlock(&Data.Target))
+		{
+			const AActor* Attacker = Data.EffectSpec.GetContext().GetOriginalInstigator();
+			if (Block->IsAttackInBlockArc(Attacker))
+			{
+				const float Incoming = Data.EvaluatedData.Magnitude;
+				Data.EvaluatedData.Magnitude = Incoming * (1.f - Block->DamageReduction);
+				bPendingBlockedHit = true;
+				PendingBlockPostureCost = Incoming * Block->PostureDamageScale;
+			}
+		}
+	}
+
 	return true;
 }
 
@@ -120,38 +176,65 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 		const float DamageDone = GetIncomingDamage();
 		SetIncomingDamage(0.f);
 
+		const bool bWasBlocked = bPendingBlockedHit;
+		const float BlockPostureCost = PendingBlockPostureCost;
+		bPendingBlockedHit = false;
+		PendingBlockPostureCost = 0.f;
+
+		float NewHealth = GetHealth();
 		if (DamageDone > 0.f)
 		{
-			const float NewHealth = FMath::Clamp(GetHealth() - DamageDone, 0.f, GetMaxHealth());
+			NewHealth = FMath::Clamp(GetHealth() - DamageDone, 0.f, GetMaxHealth());
 			SetHealth(NewHealth);
+		}
+
+		if (bWasBlocked)
+		{
+			// Blocked: posture takes the hit, the blocker gets a block-impact event
+			// (UAH_GA_Block plays its Impact section) instead of a hit reaction.
+			if (BlockPostureCost > 0.f)
+			{
+				const float NewPosture = FMath::Clamp(GetPosture() - BlockPostureCost, 0.f, GetMaxPosture());
+				SetPosture(NewPosture);
+				StartPostureRegenDelay(TargetASC);
+				if (NewPosture <= 0.f)
+				{
+					HandlePostureDepleted(TargetASC, Instigator, TargetActor);
+				}
+			}
 
 			if (TargetASC)
 			{
-				// Post-damage notification (hit reactions, UI). Event.Combat.Hit is
-				// reserved for the PRE-damage melee hit sent by UANS_MeleeHitbox.
-				FGameplayEventData EventData;
-				EventData.EventTag = Tags.Event_Combat_DamageReceived;
-				EventData.Instigator = Instigator;
-				EventData.Target = TargetActor;
-				EventData.EventMagnitude = DamageDone;
-				TargetASC->HandleGameplayEvent(Tags.Event_Combat_DamageReceived, &EventData);
+				FGameplayEventData BlockEvent;
+				BlockEvent.EventTag = Tags.Event_Combat_BlockImpact;
+				BlockEvent.Instigator = Instigator;
+				BlockEvent.Target = TargetActor;
+				BlockEvent.EventMagnitude = BlockPostureCost;
+				TargetASC->HandleGameplayEvent(Tags.Event_Combat_BlockImpact, &BlockEvent);
 			}
+		}
+		else if (DamageDone > 0.f && TargetASC)
+		{
+			// Post-damage notification (UAH_GA_HitReaction, UI). Event.Combat.Hit is
+			// reserved for the PRE-damage melee hit sent by UANS_MeleeHitbox.
+			FGameplayEventData EventData;
+			EventData.EventTag = Tags.Event_Combat_DamageReceived;
+			EventData.Instigator = Instigator;
+			EventData.Target = TargetActor;
+			EventData.EventMagnitude = DamageDone;
+			TargetASC->HandleGameplayEvent(Tags.Event_Combat_DamageReceived, &EventData);
+		}
 
-			if (NewHealth <= 0.f)
-			{
-				OnHealthZero.Broadcast(Instigator);
+		if (DamageDone > 0.f && NewHealth <= 0.f && TargetASC && !TargetASC->HasMatchingGameplayTag(Tags.State_Combat_Dead))
+		{
+			OnHealthZero.Broadcast(Instigator);
+			TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead);
 
-				if (TargetASC)
-				{
-					TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead);
-
-					FGameplayEventData DeathEvent;
-					DeathEvent.EventTag = Tags.Event_Combat_Death;
-					DeathEvent.Instigator = Instigator;
-					DeathEvent.Target = TargetActor;
-					TargetASC->HandleGameplayEvent(Tags.Event_Combat_Death, &DeathEvent);
-				}
-			}
+			FGameplayEventData DeathEvent;
+			DeathEvent.EventTag = Tags.Event_Combat_Death;
+			DeathEvent.Instigator = Instigator;
+			DeathEvent.Target = TargetActor;
+			TargetASC->HandleGameplayEvent(Tags.Event_Combat_Death, &DeathEvent);
 		}
 	}
 	// -- Health/Posture/Mana can also be modified directly by effects -----
@@ -174,22 +257,82 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 		const float NewPosture = FMath::Clamp(GetPosture(), 0.f, GetMaxPosture());
 		SetPosture(NewPosture);
 
-		if (NewPosture <= 0.f && TargetASC && !TargetASC->HasMatchingGameplayTag(Tags.State_Combat_PostureBroken))
+		// Posture damage (negative delta, e.g. UAH_GE_PostureDamage / parry costs) holds off
+		// passive regen for a moment. Regen ticks themselves are positive and don't.
+		if (Data.EvaluatedData.Magnitude < 0.f)
 		{
-			TargetASC->AddLooseGameplayTag(Tags.State_Combat_PostureBroken);
-			OnPostureBroken.Broadcast(Instigator);
+			StartPostureRegenDelay(TargetASC);
+		}
 
-			FGameplayEventData EventData;
-			EventData.EventTag = Tags.Event_Combat_PostureBreak;
-			EventData.Instigator = Instigator;
-			EventData.Target = TargetActor;
-			TargetASC->HandleGameplayEvent(Tags.Event_Combat_PostureBreak, &EventData);
+		if (NewPosture <= 0.f)
+		{
+			HandlePostureDepleted(TargetASC, Instigator, TargetActor);
 		}
 	}
 	else if (Data.EvaluatedData.Attribute == GetManaAttribute())
 	{
 		SetMana(FMath::Clamp(GetMana(), 0.f, GetMaxMana()));
 	}
+	else if (Data.EvaluatedData.Attribute == GetStaminaAttribute())
+	{
+		SetStamina(FMath::Clamp(GetStamina(), 0.f, GetMaxStamina()));
+	}
+}
+
+void UAH_AttributeSet::StartPostureRegenDelay(UAbilitySystemComponent* TargetASC)
+{
+	const float Delay = CVarBHPostureRegenDelay.GetValueOnGameThread();
+	UWorld* World = TargetASC ? TargetASC->GetWorld() : nullptr;
+	if (!World || Delay <= 0.f)
+	{
+		return;
+	}
+
+	// Server-only loose tag: UAH_GE_PostureRegen's ongoing tag requirements ignore it,
+	// which inhibits the periodic regen until the timer clears it. Re-hits restart the timer.
+	TargetASC->SetLooseGameplayTagCount(TAG_State_Combat_PostureRegenDelayed, 1);
+
+	TWeakObjectPtr<UAbilitySystemComponent> WeakASC(TargetASC);
+	World->GetTimerManager().SetTimer(PostureRegenDelayTimer, FTimerDelegate::CreateWeakLambda(this, [WeakASC]()
+	{
+		if (UAbilitySystemComponent* ASC = WeakASC.Get())
+		{
+			ASC->SetLooseGameplayTagCount(TAG_State_Combat_PostureRegenDelayed, 0);
+		}
+	}), Delay, false);
+}
+
+void UAH_AttributeSet::HandlePostureDepleted(UAbilitySystemComponent* TargetASC, AActor* Instigator, AActor* TargetActor)
+{
+	const FBH_GameplayTags& Tags = FBH_GameplayTags::Get();
+	if (!TargetASC || TargetASC->HasMatchingGameplayTag(Tags.State_Combat_PostureBroken))
+	{
+		return;
+	}
+
+	TargetASC->AddLooseGameplayTag(Tags.State_Combat_PostureBroken);
+	OnPostureBroken.Broadcast(Instigator);
+
+	// Cosmetic cue (replicated): shatter VFX/SFX on every machine. Server-side only (this runs from GE execution).
+	{
+		FGameplayCueParameters CueParams;
+		CueParams.Instigator = Instigator;
+		CueParams.EffectCauser = Instigator;
+		CueParams.SourceObject = TargetActor;
+		if (TargetActor)
+		{
+			CueParams.Location = TargetActor->GetActorLocation();
+			CueParams.TargetAttachComponent = TargetActor->GetRootComponent();
+		}
+		TargetASC->ExecuteGameplayCue(TAG_GameplayCue_Combat_PostureBroken, CueParams);
+	}
+
+	// Triggers UAH_GA_PostureBreak (which owns the tag from here on).
+	FGameplayEventData EventData;
+	EventData.EventTag = Tags.Event_Combat_PostureBreak;
+	EventData.Instigator = Instigator;
+	EventData.Target = TargetActor;
+	TargetASC->HandleGameplayEvent(Tags.Event_Combat_PostureBreak, &EventData);
 }
 
 void UAH_AttributeSet::OnRep_Health(const FGameplayAttributeData& OldValue)
@@ -222,6 +365,26 @@ void UAH_AttributeSet::OnRep_MaxPosture(const FGameplayAttributeData& OldValue)
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, MaxPosture, OldValue);
 }
 
+void UAH_AttributeSet::OnRep_PostureRegenRate(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, PostureRegenRate, OldValue);
+}
+
+void UAH_AttributeSet::OnRep_Stamina(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, Stamina, OldValue);
+}
+
+void UAH_AttributeSet::OnRep_MaxStamina(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, MaxStamina, OldValue);
+}
+
+void UAH_AttributeSet::OnRep_StaminaRegenRate(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, StaminaRegenRate, OldValue);
+}
+
 void UAH_AttributeSet::OnRep_AttackPower(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, AttackPower, OldValue);
@@ -230,6 +393,11 @@ void UAH_AttributeSet::OnRep_AttackPower(const FGameplayAttributeData& OldValue)
 void UAH_AttributeSet::OnRep_Defense(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, Defense, OldValue);
+}
+
+void UAH_AttributeSet::OnRep_AttackSpeed(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, AttackSpeed, OldValue);
 }
 
 void UAH_AttributeSet::OnRep_BlightResistance(const FGameplayAttributeData& OldValue)

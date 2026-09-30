@@ -21,13 +21,19 @@
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "GameplayTagContainer.h"
 #include "Combat/BH_WeaponTypes.h"
+#include "Combat/BH_CombatTeam.h"
 #include "BH_CombatFunctionLibrary.generated.h"
 
 class UGameplayAbility;
 class ACharacter;
 class UMeshComponent;
 class USkeletalMeshComponent;
+class UAnimInstance;
 class UBH_WeaponLoadoutDataAsset;
+class USkeletalMesh;
+class APawn;
+class UUserWidget;
+class UBH_HUDWidget;
 
 UCLASS()
 class BLACKWOODHOLLOWBETA_API UBH_CombatFunctionLibrary : public UBlueprintFunctionLibrary
@@ -63,6 +69,21 @@ public:
 	static bool ApplyOverlayPoseByDisplayName(AActor* TargetCharacter, const FString& OverlayPoseDisplayName);
 
 	/**
+	 * Index of the stance that follows the character's current overlay pose in StanceCycle
+	 * (wrapping). Returns 0 if the current pose isn't in the list, INDEX_NONE if the list is empty.
+	 */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Overlay")
+	static int32 GetNextStanceIndex(const AActor* TargetCharacter, const TArray<FString>& StanceCycle);
+
+	/**
+	 * Multiplayer-correct stance change: applies the pose directly where TargetCharacter has
+	 * authority, otherwise asks the server (via the character's UBH_StanceWatcherComponent).
+	 * Weapon meshes follow on every machine through the watcher. Safe to call from a local controller.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Overlay")
+	static bool RequestStanceByName(AActor* TargetCharacter, const FString& OverlayPoseDisplayName);
+
+	/**
 	 * Grants each ability class (once -- already-granted classes are skipped).
 	 * Server/authority only; no-op on clients. Call after SetupCombatCharacter.
 	 */
@@ -77,6 +98,55 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Combat")
 	static bool HandleMeleeAttackInput(AActor* OwningActor, TSubclassOf<UGameplayAbility> MeleeAbilityClass);
+
+	/**
+	 * Hold-to-block input. bPressed = true activates BlockAbilityClass (if not
+	 * already active); false cancels it, which lowers the guard.
+	 * Wire to the block action's Started (true) and Completed (false).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Combat")
+	static bool HandleBlockInput(AActor* OwningActor, TSubclassOf<UGameplayAbility> BlockAbilityClass, bool bPressed);
+
+	/**
+	 * Applies the passive regeneration effects (UAH_GE_PostureRegen, UAH_GE_StaminaRegen)
+	 * to OwningActor's ASC once. Authority only; safe to call repeatedly (already-active
+	 * effects are skipped). SetupCombatCharacter and ABH_EnemyBase call this for you.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Combat")
+	static void ApplyPassiveRegenEffects(AActor* OwningActor);
+
+	// -- HUD -----------------------------------------------------------------
+
+	/**
+	 * Creates (once) and binds the local player's HUDs for Pawn: MainHUDClass (e.g. WBP_HUD_Main)
+	 * is shown and initialised with Pawn's ASC; DebugHUDClass (e.g. W_BH_DebugHUD) is created
+	 * hidden. Call from the character's BeginPlay on every machine: it only acts where Pawn is
+	 * locally controlled, and retries for a few seconds if possession hasn't arrived yet.
+	 * Toggle with the BH.HUD.ToggleDebug console command or ToggleDebugHUD.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|HUD")
+	static void SetupPlayerHUD(APawn* Pawn, TSubclassOf<UBH_HUDWidget> MainHUDClass, TSubclassOf<UUserWidget> DebugHUDClass);
+
+	/** Switches the local player(s) between the production HUD and the debug HUD. */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|HUD", meta = (WorldContext = "WorldContextObject"))
+	static void ToggleDebugHUD(const UObject* WorldContextObject);
+
+	// -- Teams / friendly fire -------------------------------------------------
+
+	/**
+	 * Combat team of Actor: its own IGenericTeamAgentInterface team (ABH_EnemyBase), else its
+	 * controller's, else Players for a human-controlled pawn, else Neutral. Non-pawn actors
+	 * (projectiles, traps) resolve through their Instigator pawn.
+	 */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Combat|Teams")
+	static EBH_CombatTeam GetCombatTeam(const AActor* Actor);
+
+	/** True if both actors resolve to the same (non-Neutral) team -- i.e. they must not damage each other. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Combat|Teams")
+	static bool AreCombatAllies(const AActor* A, const AActor* B);
+
+	/** C++ form of GetCombatTeam returning the raw engine team id (NoTeam = 255). */
+	static FGenericTeamId GetCombatTeamId(const AActor* Actor);
 
 	// -- Weapon mesh attachment ------------------------------------------------
 
@@ -129,4 +199,70 @@ public:
 	/** Display name of the character's current GASP OverlayPose (empty if it can't be read). */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Overlay")
 	static FString GetCurrentOverlayPoseDisplayName(const AActor* TargetCharacter);
+
+	// -- Weapon socket / grip tuning --------------------------------------------
+	// Two layers, pick the one that matches what's wrong:
+	//  * Socket  (weapon_r_socket / shield_l_socket on SKM_Manny / SKM_UEFN_Mannequin):
+	//    where the HAND holds things. Per character mesh, shared by every weapon.
+	//    NOTE: those meshes live in the GASPALS plugin -- changes apply live but are
+	//    only saved to disk if bMarkAssetDirty is true and you then save the mesh.
+	//  * Grip offset (FBH_WeaponMeshSlot::RelativeTransform in our DA_WeaponLoadouts):
+	//    how one particular WEAPON sits in that hand. Saved in our own content.
+	// Console (PIE, player 0): BH.Weapon.NudgeSocket / BH.Weapon.NudgeGrip / BH.Weapon.PrintTuning.
+
+	/** Reads a socket's bone and transform relative to that bone (mesh sockets first, then skeleton sockets). */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons|Tuning")
+	static bool GetMeshSocketTransform(const USkeletalMesh* Mesh, FName SocketName, FTransform& OutRelativeTransform, FName& OutBoneName);
+
+	/**
+	 * Overwrites a socket's transform relative to its bone. Takes effect immediately on every
+	 * component using Mesh (in PIE too). bMarkAssetDirty marks the owning package for saving.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons|Tuning")
+	static bool SetMeshSocketTransform(USkeletalMesh* Mesh, FName SocketName, const FTransform& RelativeTransform, bool bMarkAssetDirty = false);
+
+	/**
+	 * Nudges Slot's socket (weapon_r_socket / shield_l_socket, or the SocketOverride the weapon
+	 * was attached with) on the mesh Character's weapons attach to. Rotation is applied in the
+	 * socket's local space. Works on Manny or UEFN -- whichever mesh the character uses.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons|Tuning")
+	static bool NudgeWeaponSocket(ACharacter* Character, EBH_WeaponSlot Slot, FVector DeltaLocation, FRotator DeltaRotation, bool bMarkAssetDirty = false);
+
+	/** Sets the equipped weapon component's grip offset (relative to its socket) live. */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons|Tuning")
+	static bool SetEquippedWeaponOffset(ACharacter* Character, EBH_WeaponSlot Slot, const FTransform& RelativeTransform);
+
+	/**
+	 * Copies the equipped weapon's current grip offset into Loadouts' entry for the character's
+	 * current overlay pose (FBH_WeaponMeshSlot::RelativeTransform) and marks the data asset dirty.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons|Tuning")
+	static bool StoreEquippedWeaponOffsetInLoadout(ACharacter* Character, EBH_WeaponSlot Slot, UBH_WeaponLoadoutDataAsset* Loadouts);
+
+	// -- Animation -------------------------------------------------------------
+
+	/**
+	 * Swaps the class used by Linked Anim Graph nodes in Mesh's anim instance at
+	 * runtime, so a cloned sub-graph (e.g. our ABP_BH_LayerBlending) can replace
+	 * a plugin one (GASP's ABP_LayerBlending) without editing the plugin's ABP.
+	 * Only nodes currently running FromClass are changed (any node if FromClass
+	 * is None). Linked anim LAYERS are not touched.
+	 * Call after the mesh's anim instance exists (BeginPlay), and again if the
+	 * mesh's anim class is re-initialised.
+	 * @return number of linked graph nodes switched.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Animation")
+	static int32 ReplaceLinkedAnimGraphClass(USkeletalMeshComponent* Mesh, TSubclassOf<UAnimInstance> FromClass, TSubclassOf<UAnimInstance> ToClass);
+
+	/**
+	 * Layering value for a GASP region while a montage plays: evaluates CurveName on
+	 * the animation under the active montage's CurveSlotName track (falls back to
+	 * the first track) and blends StanceValue toward it by the montage's blend
+	 * weight. Returns StanceValue when no montage plays or the anim lacks the curve.
+	 * Works from linked instances (uses the owning mesh's main anim instance).
+	 * Call on the game thread (e.g. Event Blueprint Update Animation).
+	 */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Animation", meta = (DefaultToSelf = "AnimInstance"))
+	static float GetMontageLayeringValue(const UAnimInstance* AnimInstance, FName CurveName, float StanceValue, FName CurveSlotName = "Curves");
 };

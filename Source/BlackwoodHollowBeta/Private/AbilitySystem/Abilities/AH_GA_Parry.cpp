@@ -6,6 +6,8 @@
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
+#include "GameplayEffectTypes.h"
+#include "GameplayEffect.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimMontage.h"
@@ -30,6 +32,7 @@ UAH_GA_Parry::UAH_GA_Parry()
 	BlockAbilitiesWithTag.AddTag(TAG_Ability_Combat_MeleeAttack);
 
 	PostureDamageEffectClass = UAH_GE_PostureDamage::StaticClass();
+	RiposteWindowEffectClass = UAH_GE_RiposteWindow::StaticClass();
 }
 
 void UAH_GA_Parry::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
@@ -209,6 +212,31 @@ void UAH_GA_Parry::OnIncomingHit(FGameplayEventData Payload)
 	{
 		ApplyPostureDelta(UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Attacker), PostureToAttacker);
 		ApplyPostureDelta(GetAbilitySystemComponentFromActorInfo(), PostureToSelf);
+
+		if (UAbilitySystemComponent* SelfASC = GetAbilitySystemComponentFromActorInfo())
+		{
+			// Perfect parry: open the riposte window on the parrier.
+			if (RiposteWindowEffectClass)
+			{
+				FGameplayEffectSpecHandle RiposteSpec = MakeOutgoingGameplayEffectSpec(RiposteWindowEffectClass, GetAbilityLevel());
+				if (RiposteSpec.IsValid())
+				{
+					SelfASC->ApplyGameplayEffectSpecToSelf(*RiposteSpec.Data.Get());
+				}
+			}
+
+			// Cosmetic cue (replicated): target = parrier, the attacker travels in SourceObject / Instigator.
+			const FHitResult ParryHit = UAbilitySystemBlueprintLibrary::GetHitResultFromTargetData(Payload.TargetData, 0);
+			FGameplayCueParameters CueParams;
+			CueParams.Instigator = Attacker;
+			CueParams.EffectCauser = Attacker;
+			CueParams.SourceObject = Attacker;
+			CueParams.RawMagnitude = PostureToAttacker;
+			CueParams.Location = !ParryHit.ImpactPoint.IsZero() ? FVector(ParryHit.ImpactPoint) : Self->GetActorLocation();
+			CueParams.Normal = (Attacker->GetActorLocation() - Self->GetActorLocation()).GetSafeNormal();
+			CueParams.TargetAttachComponent = Self->GetRootComponent();
+			SelfASC->ExecuteGameplayCue(TAG_GameplayCue_Combat_ParrySuccess, CueParams);
+		}
 	}
 
 	FGameplayEventData SuccessPayload;
