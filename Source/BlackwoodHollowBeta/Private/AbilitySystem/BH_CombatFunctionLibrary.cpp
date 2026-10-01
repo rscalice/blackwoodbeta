@@ -5,7 +5,13 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
+#include "Combat/BH_WeaponBladeData.h"
 #include "Combat/BH_StanceWatcherComponent.h"
+#include "Combat/BH_CombatIdentityComponent.h"
+#include "Components/BPC_HeartFragment.h"
+#include "Combat/BH_LoadoutComponent.h"
+#include "Characters/BH_EnemyBase.h"
+#include "Engine/Texture2D.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemInterface.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -14,6 +20,8 @@
 #include "UObject/UnrealType.h"
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "HAL/IConsoleManager.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimClassInterface.h"
 #include "Animation/AnimNode_LinkedAnimGraph.h"
@@ -112,6 +120,11 @@ namespace BH_CombatFunctionLibrary_Private
 // Setup / abilities
 // ============================================================================
 
+static TAutoConsoleVariable<int32> CVarBHCapsuleBlocksPawns(
+	TEXT("bh.Combat.CapsuleBlocksPawns"), 1,
+	TEXT("1 = SetupCombatCharacter makes the character's capsule Block the Pawn channel (GASP's capsule profile ignores it, so pawns would overlap). 0 = leave the profile alone."),
+	ECVF_Default);
+
 bool UBH_CombatFunctionLibrary::SetupCombatCharacter(AActor* OwningActor, TSubclassOf<UGameplayAbility> OverloadBurstAbilityClass)
 {
 	using namespace BH_CombatFunctionLibrary_Private;
@@ -125,6 +138,15 @@ bool UBH_CombatFunctionLibrary::SetupCombatCharacter(AActor* OwningActor, TSubcl
 
 	ASC->InitAbilityActorInfo(OwningActor, OwningActor);
 
+	// Pawns must collide with each other (melee hitboxes are object-type sweeps, so they are unaffected).
+	if (CVarBHCapsuleBlocksPawns.GetValueOnGameThread() != 0)
+	{
+		if (UCapsuleComponent* Capsule = OwningActor->FindComponentByClass<UCapsuleComponent>())
+		{
+			Capsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+		}
+	}
+
 	if (!ASC->GetSet<UAH_AttributeSet>())
 	{
 		UAH_AttributeSet* NewAttributeSet = NewObject<UAH_AttributeSet>(OwningActor, UAH_AttributeSet::StaticClass(), TEXT("AH_AttributeSet"));
@@ -134,16 +156,94 @@ bool UBH_CombatFunctionLibrary::SetupCombatCharacter(AActor* OwningActor, TSubcl
 	// Passive posture / stamina regeneration (server-side periodic GEs).
 	ApplyPassiveRegenEffects(OwningActor);
 
-	if (OverloadBurstAbilityClass && OwningActor->HasAuthority())
+	// OverloadBurstAbilityClass is deprecated/ignored: the Heart-Fragment loadout grants Overload Burst now.
+	if (OwningActor->HasAuthority())
 	{
-		if (!ASC->FindAbilitySpecFromClass(OverloadBurstAbilityClass))
+		if (UBPC_HeartFragment* HeartFragment = OwningActor->FindComponentByClass<UBPC_HeartFragment>())
 		{
-			FGameplayAbilitySpec Spec(OverloadBurstAbilityClass, 1, INDEX_NONE, OwningActor);
-			ASC->GiveAbility(Spec);
+			HeartFragment->GrantEquippedFragments();
+		}
+	}
+
+	// Phase 8C: player pawns get the weapon-loadout component (creates the Narrative equipment component, derives
+	// the available stances, applies equipment stat mods). Enemies use ABH_EnemyBase and never get one; a Blueprint
+	// component of the same class on the character wins (no duplicate is added).
+	if (APawn* Pawn = Cast<APawn>(OwningActor))
+	{
+		if (!Cast<ABH_EnemyBase>(Pawn) && !Pawn->FindComponentByClass<UBH_LoadoutComponent>())
+		{
+			UBH_LoadoutComponent* Loadout = NewObject<UBH_LoadoutComponent>(Pawn, TEXT("Loadout"));
+			Pawn->AddInstanceComponent(Loadout);
+			Loadout->RegisterComponent();
 		}
 	}
 
 	return true;
+}
+
+bool UBH_CombatFunctionLibrary::HandleFragmentInput(AActor* OwningActor, int32 Slot)
+{
+	if (UBPC_HeartFragment* HeartFragment = OwningActor ? OwningActor->FindComponentByClass<UBPC_HeartFragment>() : nullptr)
+	{
+		return HeartFragment->TryActivateFragment(Slot);
+	}
+	return false;
+}
+
+UTexture2D* UBH_CombatFunctionLibrary::GetStanceIconForPose(const AActor* Character, FName PoseDisplayName)
+{
+	if (!Character || PoseDisplayName.IsNone())
+	{
+		return nullptr;
+	}
+
+	const UBH_WeaponLoadoutDataAsset* Loadouts = nullptr;
+	if (const FObjectProperty* Property = CastField<FObjectProperty>(Character->GetClass()->FindPropertyByName(FName(TEXT("WeaponLoadouts")))))
+	{
+		Loadouts = Cast<UBH_WeaponLoadoutDataAsset>(Property->GetObjectPropertyValue_InContainer(Character));
+	}
+	if (!Loadouts)
+	{
+		if (const UBH_StanceWatcherComponent* Watcher = UBH_StanceWatcherComponent::FindStanceWatcher(Character))
+		{
+			Loadouts = Watcher->FallbackLoadouts;
+		}
+	}
+
+	FBH_OverlayWeaponLoadout Loadout;
+	if (Loadouts && Loadouts->FindLoadout(PoseDisplayName, Loadout))
+	{
+		return Loadout.StanceIcon;
+	}
+	return nullptr;
+}
+
+TSubclassOf<UGameplayAbility> UBH_CombatFunctionLibrary::GetMeleeAbilityForPose(const AActor* Character, FName PoseDisplayName)
+{
+	if (!Character || PoseDisplayName.IsNone())
+	{
+		return nullptr;
+	}
+
+	const UBH_WeaponLoadoutDataAsset* Loadouts = nullptr;
+	if (const FObjectProperty* Property = CastField<FObjectProperty>(Character->GetClass()->FindPropertyByName(FName(TEXT("WeaponLoadouts")))))
+	{
+		Loadouts = Cast<UBH_WeaponLoadoutDataAsset>(Property->GetObjectPropertyValue_InContainer(Character));
+	}
+	if (!Loadouts)
+	{
+		if (const UBH_StanceWatcherComponent* Watcher = UBH_StanceWatcherComponent::FindStanceWatcher(Character))
+		{
+			Loadouts = Watcher->FallbackLoadouts;
+		}
+	}
+
+	FBH_OverlayWeaponLoadout Loadout;
+	if (Loadouts && Loadouts->FindLoadout(PoseDisplayName, Loadout))
+	{
+		return Loadout.MeleeAbility;
+	}
+	return nullptr;
 }
 
 void UBH_CombatFunctionLibrary::GrantCombatAbilities(AActor* OwningActor, const TArray<TSubclassOf<UGameplayAbility>>& AbilityClasses)
@@ -239,6 +339,74 @@ bool UBH_CombatFunctionLibrary::HandleBlockInput(AActor* OwningActor, TSubclassO
 			ASC->CancelAbilityHandle(Spec->Handle);
 		}
 	}
+	return true;
+}
+
+bool UBH_CombatFunctionLibrary::HandleDodgeInput(AActor* OwningActor)
+{
+	using namespace BH_CombatFunctionLibrary_Private;
+
+	UAbilitySystemComponent* ASC = ResolveAbilitySystemComponent(OwningActor);
+	if (!ASC)
+	{
+		return false;
+	}
+
+	FGameplayTagContainer DodgeTags;
+	DodgeTags.AddTag(TAG_Ability_Combat_Dodge);
+	return ASC->TryActivateAbilitiesByTag(DodgeTags);
+}
+
+bool UBH_CombatFunctionLibrary::HandleParryInput(AActor* OwningActor)
+{
+	using namespace BH_CombatFunctionLibrary_Private;
+
+	UAbilitySystemComponent* ASC = ResolveAbilitySystemComponent(OwningActor);
+	if (!ASC)
+	{
+		return false;
+	}
+
+	FGameplayTagContainer ParryTags;
+	ParryTags.AddTag(TAG_Ability_Combat_Parry);
+	return ASC->TryActivateAbilitiesByTag(ParryTags);
+}
+
+bool UBH_CombatFunctionLibrary::CheckStaminaCost(const UAbilitySystemComponent* ASC, float Cost, bool bAllowOvercommit)
+{
+	if (Cost <= 0.f)
+	{
+		return true;
+	}
+	if (!ASC || !ASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetStaminaAttribute()))
+	{
+		// No stamina attribute on this actor (e.g. a prop): nothing to spend.
+		return true;
+	}
+
+	const float Stamina = ASC->GetNumericAttribute(UAH_AttributeSet::GetStaminaAttribute());
+	return bAllowOvercommit ? Stamina > 0.f : Stamina >= Cost;
+}
+
+bool UBH_CombatFunctionLibrary::ApplyStaminaCost(UAbilitySystemComponent* ASC, float Cost)
+{
+	if (!ASC || Cost <= 0.f || !ASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetStaminaAttribute()))
+	{
+		return false;
+	}
+
+	FGameplayEffectContextHandle Context = ASC->MakeEffectContext();
+	const FGameplayEffectSpecHandle Spec = ASC->MakeOutgoingSpec(UAH_GE_StaminaCost::StaticClass(), 1.f, Context);
+	if (!Spec.IsValid())
+	{
+		return false;
+	}
+
+	Spec.Data->SetSetByCallerMagnitude(TAG_Data_StaminaCost, Cost);
+	// Instant effects never return an active handle, so there is nothing to test on the result.
+	ASC->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+	UE_LOG(LogBHCombat, Verbose, TEXT("ApplyStaminaCost: %s spent %.1f stamina (now %.1f)."), *GetNameSafe(ASC->GetOwner()), Cost,
+		ASC->GetNumericAttribute(UAH_AttributeSet::GetStaminaAttribute()));
 	return true;
 }
 
@@ -371,6 +539,17 @@ FGenericTeamId UBH_CombatFunctionLibrary::GetCombatTeamId(const AActor* Actor)
 	if (const IGenericTeamAgentInterface* Agent = Cast<const IGenericTeamAgentInterface>(TeamSource))
 	{
 		const FGenericTeamId TeamId = Agent->GetGenericTeamId();
+		if (TeamId != FGenericTeamId::NoTeam)
+		{
+			return TeamId;
+		}
+	}
+
+	// 1b) Replicated team on a UBH_CombatIdentityComponent (AI characters built on a Blueprint-only base).
+	//     Unlike the controller (server only), this resolves identically on every machine.
+	if (const UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(TeamSource))
+	{
+		const FGenericTeamId TeamId = BH_CombatTeam::ToGenericTeamId(Identity->CombatTeam);
 		if (TeamId != FGenericTeamId::NoTeam)
 		{
 			return TeamId;
@@ -695,6 +874,15 @@ UMeshComponent* UBH_CombatFunctionLibrary::AttachWeaponMesh(ACharacter* Characte
 
 	NewComponent->ComponentTags.Add(WeaponComponentTag());
 	NewComponent->ComponentTags.Add(WeaponSlotTag(Slot));
+
+	// Blade line for meshes without weapon_root / weapon_tip sockets (read by UANS_MeleeHitbox).
+	if (MeshSlot.bUseBladeOverride)
+	{
+		UBH_WeaponBladeData* BladeData = NewObject<UBH_WeaponBladeData>(NewComponent);
+		BladeData->RootLocal = MeshSlot.BladeRootLocal;
+		BladeData->TipLocal = MeshSlot.BladeTipLocal;
+		NewComponent->AddAssetUserData(BladeData);
+	}
 
 	// Purely visual: hit detection is done by UANS_MeleeHitbox sweeps, so the
 	// mesh itself must never push the capsule or block the camera.
@@ -1043,6 +1231,82 @@ bool UBH_CombatFunctionLibrary::StoreEquippedWeaponOffsetInLoadout(ACharacter* C
 	FBH_WeaponMeshSlot& MeshSlot = Slot == EBH_WeaponSlot::OffHand ? Entry->OffHand : Entry->MainHand;
 	MeshSlot.RelativeTransform = Weapon->GetRelativeTransform();
 	Loadouts->MarkPackageDirty();
+	return true;
+}
+
+// ============================================================================
+// GASP movement
+// ============================================================================
+
+bool UBH_CombatFunctionLibrary::SetCharacterWantsToStrafe(APawn* Pawn, bool bValue, bool* OutPrevious)
+{
+	if (!Pawn)
+	{
+		return false;
+	}
+
+	// CBP_SandboxCharacter: replicated struct "CharacterInputState" (UserDefinedStruct, members carry mangled names).
+	FStructProperty* StateProp = CastField<FStructProperty>(Pawn->GetClass()->FindPropertyByName(TEXT("CharacterInputState")));
+	if (!StateProp)
+	{
+		return false;
+	}
+
+	void* StatePtr = StateProp->ContainerPtrToValuePtr<void>(Pawn);
+	FBoolProperty* StrafeProp = nullptr;
+	for (TFieldIterator<FProperty> It(StateProp->Struct); It; ++It)
+	{
+		if (It->GetName().StartsWith(TEXT("WantsToStrafe")) || It->GetAuthoredName().Equals(TEXT("WantsToStrafe")))
+		{
+			StrafeProp = CastField<FBoolProperty>(*It);
+			break;
+		}
+	}
+	if (!StrafeProp)
+	{
+		return false;
+	}
+
+	const bool bCurrent = StrafeProp->GetPropertyValue_InContainer(StatePtr);
+	if (OutPrevious)
+	{
+		*OutPrevious = bCurrent;
+	}
+	if (bCurrent == bValue)
+	{
+		return true; // nothing to change
+	}
+	StrafeProp->SetPropertyValue_InContainer(StatePtr, bValue);
+
+	// Same path the Blueprint uses after a local input change: tell the server.
+	UFunction* UpdateFn = Pawn->FindFunction(TEXT("UpdateInputState_Server"));
+	if (UpdateFn && UpdateFn->ParmsSize > 0)
+	{
+		uint8* Params = static_cast<uint8*>(FMemory_Alloca(UpdateFn->ParmsSize));
+		FMemory::Memzero(Params, UpdateFn->ParmsSize);
+		for (TFieldIterator<FProperty> It(UpdateFn); It && It->HasAnyPropertyFlags(CPF_Parm); ++It)
+		{
+			It->InitializeValue_InContainer(Params);
+		}
+		FStructProperty* ParamProp = nullptr;
+		for (TFieldIterator<FProperty> It(UpdateFn); It && It->HasAnyPropertyFlags(CPF_Parm); ++It)
+		{
+			if (FStructProperty* SP = CastField<FStructProperty>(*It))
+			{
+				ParamProp = SP;
+				break;
+			}
+		}
+		if (ParamProp && ParamProp->Struct == StateProp->Struct)
+		{
+			ParamProp->CopyCompleteValue(ParamProp->ContainerPtrToValuePtr<void>(Params), StatePtr);
+			Pawn->ProcessEvent(UpdateFn, Params);
+		}
+		for (TFieldIterator<FProperty> It(UpdateFn); It && It->HasAnyPropertyFlags(CPF_Parm); ++It)
+		{
+			It->DestroyValue_InContainer(Params);
+		}
+	}
 	return true;
 }
 

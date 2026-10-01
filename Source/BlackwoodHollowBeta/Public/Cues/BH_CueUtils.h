@@ -4,9 +4,14 @@
 
 #include "CoreMinimal.h"
 #include "Camera/CameraShakeBase.h"
+#include "Cues/BH_CueFX.h"
 
 class AActor;
 class APlayerController;
+class UNiagaraComponent;
+class UNiagaraSystem;
+class USoundAttenuation;
+class USoundBase;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogBHCue, Log, All);
 
@@ -29,4 +34,25 @@ namespace BH_CueUtils
 	 * @return the started shake instance (nullptr if none).
 	 */
 	UCameraShakeBase* PlayDirectionalShake(const AActor* A, const AActor* B, TSubclassOf<UCameraShakeBase> ShakeClass, float Scale, const FVector& Direction);
+
+	/**
+	 * Plays a random entry of Sounds at Location with a random volume / pitch from the given ranges.
+	 * Avoids repeating the previous pick for the same array when it has 2+ entries (memory is keyed on the array's
+	 * storage, so every FX block / notify keeps its own history). Cosmetic: skipped on dedicated servers.
+	 * @return the sound that was picked (nullptr if none played).
+	 */
+	USoundBase* PlayRandomSound(const UObject* WorldContext, const TArray<TObjectPtr<USoundBase>>& Sounds, FVector Location,
+		FVector2D VolumeRange, FVector2D PitchRange, USoundAttenuation* Attenuation);
+
+	/**
+	 * Spawns a fire-and-forget Niagara system (auto-destroys when finished). If MaxLifetime > 0 the component is
+	 * deactivated after that many seconds, so looping systems cannot leak. Skipped on dedicated servers.
+	 * @return the spawned component (nullptr if nothing spawned).
+	 */
+	UNiagaraComponent* SpawnOneShotNiagara(const UObject* WorldContext, UNiagaraSystem* System, FVector Location, FRotator Rotation,
+		FVector Scale, float MaxLifetime);
+
+	/** Plays one FBH_CueFX block (system + random sound) at Location + FX.Offset. @return the spawned component, if any. */
+	UNiagaraComponent* PlayCueFX(const UObject* WorldContext, const FBH_CueFX& FX, const FVector& Location, const FRotator& Rotation,
+		USoundAttenuation* Attenuation);
 }

@@ -5,12 +5,47 @@
 #include "Cues/BH_CueUtils.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "GameplayCueManager.h"
-#include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
-#include "Kismet/GameplayStatics.h"
-#include "Sound/SoundBase.h"
+#include "Sound/SoundAttenuation.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+
+namespace
+{
+	/** Last impact-sound time per victim (shared by every hit cue CDO; cosmetic, game-thread only). */
+	TMap<TWeakObjectPtr<const AActor>, double> GLastHitSoundTime;
+
+	/** Returns true (and records the time) when a hit sound may play on Victim; false while rate-limited. */
+	bool ConsumeHitSoundSlot(const AActor* Victim, const UWorld* World, float MinInterval)
+	{
+		if (MinInterval <= 0.f || !Victim || !World)
+		{
+			return true;
+		}
+
+		const double Now = World->GetTimeSeconds();
+
+		// Occasional prune of dead victims and stale entries.
+		if (GLastHitSoundTime.Num() > 32)
+		{
+			for (auto It = GLastHitSoundTime.CreateIterator(); It; ++It)
+			{
+				if (!It.Key().IsValid() || Now - It.Value() > 5.0 || It.Value() > Now)
+				{
+					It.RemoveCurrent();
+				}
+			}
+		}
+
+		double& Last = GLastHitSoundTime.FindOrAdd(Victim, -1.0e9);
+		if (Now < Last || Now - Last >= MinInterval) // Now < Last: the world time reset (new PIE session)
+		{
+			Last = Now;
+			return true;
+		}
+		return false;
+	}
+}
 
 // ============================================================================
 // Hit
@@ -47,6 +82,27 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 	{
 		UE_LOG(LogBHCue, Log, TEXT("BH_GCN_CombatHit: camera shake %s started"), *GetNameSafe(Shake));
 	}
+
+	// Impact FX: blade impact point if the ability supplied one, otherwise chest height on the victim.
+	const bool bBlocked = Parameters.AggregatedSourceTags.HasTag(TAG_Combat_HitResult_Blocked);
+	FVector ImpactLocation = FVector(Parameters.Location);
+	if (ImpactLocation.IsZero())
+	{
+		const AActor* Anchor = Victim ? Victim : Attacker;
+		ImpactLocation = Anchor->GetActorLocation() + FallbackVictimOffset;
+	}
+	const FVector Normal = FVector(Parameters.Normal);
+	const FRotator ImpactRotation = Normal.IsNearlyZero() ? FRotator::ZeroRotator : Normal.Rotation();
+
+	UE_LOG(LogBHCue, Verbose, TEXT("BH_GCN_CombatHit(%s): %s FX at %s"), *GetNameSafe(this), bBlocked ? TEXT("blocked") : TEXT("flesh"), *ImpactLocation.ToCompactString());
+	// VFX every hit; the impact sound is rate-limited per victim (multi-hit spins would otherwise stack ~1.3 s clips).
+	FBH_CueFX FX = bBlocked ? BlockedFX : FleshFX;
+	const AActor* SoundKey = Victim ? Victim : Attacker;
+	if (!ConsumeHitSoundSlot(SoundKey, SoundKey ? SoundKey->GetWorld() : nullptr, MinSoundInterval))
+	{
+		FX.Sounds.Reset();
+	}
+	BH_CueUtils::PlayCueFX(Attacker ? Attacker : Victim, FX, ImpactLocation, ImpactRotation, Attenuation);
 	return true;
 }
 
@@ -96,6 +152,13 @@ bool UBH_GCN_ParrySuccess::OnExecute_Implementation(AActor* MyTarget, const FGam
 			UE_LOG(LogBHCue, Log, TEXT("BH_GCN_ParrySuccess: camera shake %s started"), *GetNameSafe(Shake));
 		}
 	}
+
+	// Clash FX at the midpoint between the two fighters.
+	const FVector ParrierLocation = Parrier ? Parrier->GetActorLocation() : Attacker->GetActorLocation();
+	const FVector AttackerLocation = Attacker ? Attacker->GetActorLocation() : ParrierLocation;
+	const FVector Midpoint = (ParrierLocation + AttackerLocation) * 0.5 + FVector(0.0, 0.0, ParryFXHeight);
+	const FVector Normal = FVector(Parameters.Normal);
+	BH_CueUtils::PlayCueFX(Parrier ? Parrier : Attacker, ParryFX, Midpoint, Normal.IsNearlyZero() ? FRotator::ZeroRotator : Normal.Rotation(), Attenuation);
 	return true;
 }
 
@@ -119,16 +182,10 @@ bool UBH_GCN_PostureBroken::OnExecute_Implementation(AActor* MyTarget, const FGa
 	const FVector Base = Parameters.Location.IsZero() ? MyTarget->GetActorLocation() : FVector(Parameters.Location);
 	const FVector SpawnLocation = Base + SpawnOffset;
 
-	UE_LOG(LogBHCue, Log, TEXT("BH_GCN_PostureBroken: target=%s system=%s sound=%s"),
-		*GetNameSafe(MyTarget), *GetNameSafe(ShatterSystem), *GetNameSafe(ShatterSound));
+	UE_LOG(LogBHCue, Log, TEXT("BH_GCN_PostureBroken: target=%s primary=%s secondary=%s"),
+		*GetNameSafe(MyTarget), *GetNameSafe(PrimaryFX.System), *GetNameSafe(SecondaryFX.System));
 
-	if (ShatterSystem)
-	{
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(World, ShatterSystem, SpawnLocation, FRotator::ZeroRotator);
-	}
-	if (ShatterSound)
-	{
-		UGameplayStatics::PlaySoundAtLocation(World, ShatterSound, SpawnLocation);
-	}
+	BH_CueUtils::PlayCueFX(MyTarget, PrimaryFX, SpawnLocation, FRotator::ZeroRotator, Attenuation);
+	BH_CueUtils::PlayCueFX(MyTarget, SecondaryFX, SpawnLocation, FRotator::ZeroRotator, Attenuation);
 	return true;
 }

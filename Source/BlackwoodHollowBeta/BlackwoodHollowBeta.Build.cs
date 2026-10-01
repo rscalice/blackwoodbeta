@@ -25,12 +25,16 @@ public class BlackwoodHollowBeta : ModuleRules
 			"MovieSceneTracks",
 			"Niagara",           // GameplayCue shatter VFX (UBH_GCN_PostureBroken)
 			"EngineCameras",     // code-only camera shakes (UWaveOscillatorCameraShakePattern)
+			"NarrativeInventory", // Phase 8C: player inventory (UNarrativeInventoryComponent on the PlayerState)
+			"NarrativeEquipment", // Phase 8C: UEquipmentComponent / UEquippableItem (UBH_WeaponItem)
+			"RadialSelector",     // Phase 8C: stance radial menu (UBH_StanceRadialComponent)
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"Slate",
 			"SlateCore",
+			"NavigationSystem",  // wave spawner: project spawn points onto the navmesh
 		});
 
 		// Uncomment if/when online features are used.

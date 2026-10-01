@@ -10,13 +10,11 @@ UAH_GA_OverloadBurst::UAH_GA_OverloadBurst()
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerInitiated;
 
-	// Triggered directly by UBPC_HeartFragment::TryActivateOverloadBurst() via
-	// Event.Combat.OverloadBurst; set on the CDO here so BP children inherit
-	// the wiring, but this can also be set per-ability-spec at grant time.
-	FAbilityTriggerData TriggerData;
-	TriggerData.TriggerTag = FBH_GameplayTags::Get().Event_Combat_OverloadBurst;
-	TriggerData.TriggerSource = EGameplayAbilityTriggerSource::GameplayEvent;
-	AbilityTriggers.Add(TriggerData);
+	// Heart-Fragment loadout data (no cost, 20 s cooldown via UAH_GA_FragmentBase).
+	CooldownDuration = 20.f;
+	CooldownTags.AddTag(TAG_Cooldown_Fragment_OverloadBurst);
+	FragmentName = NSLOCTEXT("BlackwoodHollow", "Fragment_OverloadBurst", "Overload Burst");
+	SlotIndexHint = 0;
 }
 
 bool UAH_GA_OverloadBurst::CanActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
@@ -27,9 +25,8 @@ bool UAH_GA_OverloadBurst::CanActivateAbility(const FGameplayAbilitySpecHandle H
 		return false;
 	}
 
-	// Mana/cooldown gating already happened in UBPC_HeartFragment::TryActivateOverloadBurst()
-	// before the triggering event was sent; this is a defensive re-check in
-	// case something else ever activates this ability directly.
+	// Cooldown is enforced by Super (UAH_GA_FragmentBase cooldown tags); there is no cost.
+	// The owner must carry a Heart-Fragment component (shield recharge target).
 	if (ActorInfo && ActorInfo->AvatarActor.IsValid())
 	{
 		if (const UBPC_HeartFragment* HeartFragment = ActorInfo->AvatarActor->FindComponentByClass<UBPC_HeartFragment>())
@@ -52,16 +49,32 @@ void UAH_GA_OverloadBurst::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 	AActor* Avatar = ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr;
 	UAbilitySystemComponent* ASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 
-	// Recharging the shield here (rather than relying solely on
-	// UBPC_HeartFragment::TryActivateOverloadBurst) keeps the "burst refills
-	// the shield" behavior tied to the ability actually resolving, so a
-	// cancelled/interrupted activation doesn't grant a free recharge.
+	// Recharging the shield here keeps the "burst refills the shield" behavior tied to
+	// the ability actually resolving, so a cancelled/interrupted activation doesn't
+	// grant a free recharge.
+	if (ASC)
+	{
+		ASC->AddLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_Overloading);
+		bHoldingOverloadingTag = true;
+	}
+
 	if (Avatar)
 	{
 		if (UBPC_HeartFragment* HeartFragment = Avatar->FindComponentByClass<UBPC_HeartFragment>())
 		{
 			HeartFragment->RechargeBlightShield();
 		}
+	}
+
+	// BP_BlightVolume subscribes to this event on nearby ASCs to suppress its fog.
+	if (ASC && Avatar && Avatar->HasAuthority())
+	{
+		FGameplayEventData EventData;
+		EventData.EventTag = FBH_GameplayTags::Get().Event_Combat_OverloadBurst;
+		EventData.Instigator = Avatar;
+		EventData.Target = Avatar;
+		EventData.EventMagnitude = BurstRadius;
+		ASC->HandleGameplayEvent(EventData.EventTag, &EventData);
 	}
 
 	K2_OnOverloadBurstActivated();
@@ -89,8 +102,12 @@ void UAH_GA_OverloadBurst::EndAbility(const FGameplayAbilitySpecHandle Handle, c
 
 		if (UAbilitySystemComponent* ASC = ActorInfo->AbilitySystemComponent.Get())
 		{
-			ASC->RemoveLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_Overloading);
+			if (bHoldingOverloadingTag)
+			{
+				ASC->RemoveLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_Overloading);
+			}
 		}
+		bHoldingOverloadingTag = false;
 	}
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);

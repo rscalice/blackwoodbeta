@@ -1,29 +1,26 @@
 // Blackwood Hollow - Overload Burst gameplay ability base
 // Target: Unreal Engine 5.8 (C++), GAS (GameplayAbilities plugin required)
 //
-// Native base class for the "GA_HeartFragment_OverloadBurst" ability. Create
-// GA_HeartFragment_OverloadBurst as a Blueprint child of this class (or
-// rename this class and use it directly) so designers can iterate on VFX,
-// montage, and Niagara hookups without touching C++, while the activation
-// gate, cost/cooldown bookkeeping, and BP_BlightVolume-facing event stay
-// native and consistent.
+// Heart-Fragment ability: refills the Blight shield and suppresses nearby Blight
+// volumes. Usable directly or via a Blueprint child (VFX / montage hooks live in
+// K2_OnOverloadBurstActivated).
 //
-// Activation: UBPC_HeartFragment::TryActivateOverloadBurst() sends
-// Event.Combat.OverloadBurst to the owner's AbilitySystemComponent. Grant
-// this ability to the ASC with AbilityTriggers containing
-// { Event.Combat.OverloadBurst, EGameplayAbilityTriggerSource::GameplayEvent }
-// so that event activates it directly.
+// Activation: it is a UAH_GA_FragmentBase, so it is granted and fired by the
+// Heart-Fragment loadout (UBPC_HeartFragment::TryActivateFragment, keys 1-5).
+// There is no event trigger and no mana cost; the 20 s cooldown comes from
+// UAH_GA_FragmentBase (tag Cooldown.Fragment.OverloadBurst). On activation (authority)
+// it still broadcasts Event.Combat.OverloadBurst on its ASC for BP_BlightVolume.
 
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Abilities/GameplayAbility.h"
+#include "AbilitySystem/Abilities/AH_GA_FragmentBase.h"
 #include "AH_GA_OverloadBurst.generated.h"
 
 class UBPC_HeartFragment;
 
 UCLASS()
-class BLACKWOODHOLLOWBETA_API UAH_GA_OverloadBurst : public UGameplayAbility
+class BLACKWOODHOLLOWBETA_API UAH_GA_OverloadBurst : public UAH_GA_FragmentBase
 {
 	GENERATED_BODY()
 
@@ -55,6 +52,9 @@ protected:
 
 private:
 	FTimerHandle BurstDurationTimerHandle;
+
+	/** True while this activation holds a State.Combat.Overloading loose tag (removed again in EndAbility). */
+	bool bHoldingOverloadingTag = false;
 
 	void FinishBurst();
 };

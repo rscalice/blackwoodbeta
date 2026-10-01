@@ -6,6 +6,12 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/PlayerController.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundAttenuation.h"
+#include "Sound/SoundBase.h"
 #include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY(LogBHCue);
@@ -22,6 +28,27 @@ namespace BH_CueUtils
 
 		TMap<TWeakObjectPtr<USkeletalMeshComponent>, FHitStopEntry> GHitStops;
 		uint32 GHitStopToken = 0;
+
+		/** Last index picked per sound array (keyed on the array's storage), for the no-immediate-repeat rule. */
+		TMap<const void*, int32> GLastSoundPick;
+
+		bool IsCosmeticWorld(const UWorld* World)
+		{
+			return World && World->GetNetMode() != NM_DedicatedServer;
+		}
+
+		/** Picks a random index in [0, Num), different from the last pick for this key when Num >= 2. */
+		int32 PickSoundIndex(const void* Key, int32 Num)
+		{
+			int32 Index = FMath::RandRange(0, Num - 1);
+			int32& Last = GLastSoundPick.FindOrAdd(Key, INDEX_NONE);
+			if (Num > 1 && Index == Last)
+			{
+				Index = (Index + FMath::RandRange(1, Num - 1)) % Num;
+			}
+			Last = Index;
+			return Index;
+		}
 	}
 
 	void ApplyHitStop(AActor* Actor, float Duration)
@@ -125,5 +152,66 @@ namespace BH_CueUtils
 			return PC->PlayerCameraManager->StartCameraShake(ShakeClass, Scale, ECameraShakePlaySpace::UserDefined, PlaySpaceRot);
 		}
 		return PC->PlayerCameraManager->StartCameraShake(ShakeClass, Scale, ECameraShakePlaySpace::CameraLocal);
+	}
+
+	USoundBase* PlayRandomSound(const UObject* WorldContext, const TArray<TObjectPtr<USoundBase>>& Sounds, FVector Location,
+		FVector2D VolumeRange, FVector2D PitchRange, USoundAttenuation* Attenuation)
+	{
+		UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+		if (!IsCosmeticWorld(World) || Sounds.Num() == 0)
+		{
+			return nullptr;
+		}
+
+		// Skip empty slots without breaking the repeat rule (pick among the array as authored).
+		USoundBase* Sound = Sounds[PickSoundIndex(Sounds.GetData(), Sounds.Num())];
+		if (!Sound)
+		{
+			return nullptr;
+		}
+
+		const float Volume = FMath::FRandRange(FMath::Min(VolumeRange.X, VolumeRange.Y), FMath::Max(VolumeRange.X, VolumeRange.Y));
+		const float Pitch = FMath::FRandRange(FMath::Min(PitchRange.X, PitchRange.Y), FMath::Max(PitchRange.X, PitchRange.Y));
+		UE_LOG(LogBHCue, Verbose, TEXT("PlayRandomSound: %s vol=%.2f pitch=%.2f at %s"), *GetNameSafe(Sound), Volume, Pitch, *Location.ToCompactString());
+		UGameplayStatics::PlaySoundAtLocation(World, Sound, Location, FRotator::ZeroRotator, Volume, Pitch, 0.f, Attenuation);
+		return Sound;
+	}
+
+	UNiagaraComponent* SpawnOneShotNiagara(const UObject* WorldContext, UNiagaraSystem* System, FVector Location, FRotator Rotation,
+		FVector Scale, float MaxLifetime)
+	{
+		UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+		if (!System || !IsCosmeticWorld(World))
+		{
+			return nullptr;
+		}
+
+		UNiagaraComponent* Comp = UNiagaraFunctionLibrary::SpawnSystemAtLocation(World, System, Location, Rotation, Scale,
+			/*bAutoDestroy*/ true, /*bAutoActivate*/ true);
+		if (Comp && MaxLifetime > 0.f)
+		{
+			// Looping systems never finish on their own: Deactivate() lets live particles fade, then auto-destroy cleans up.
+			const TWeakObjectPtr<UNiagaraComponent> WeakComp(Comp);
+			FTimerHandle Handle;
+			World->GetTimerManager().SetTimer(Handle, FTimerDelegate::CreateLambda([WeakComp]()
+			{
+				if (UNiagaraComponent* Live = WeakComp.Get())
+				{
+					Live->Deactivate();
+				}
+			}), MaxLifetime, false);
+		}
+		return Comp;
+	}
+
+	UNiagaraComponent* PlayCueFX(const UObject* WorldContext, const FBH_CueFX& FX, const FVector& Location, const FRotator& Rotation,
+		USoundAttenuation* Attenuation)
+	{
+		const FVector SpawnLocation = Location + FX.Offset;
+		UE_LOG(LogBHCue, Verbose, TEXT("PlayCueFX: system=%s sounds=%d scale=%s life=%.2f at %s"),
+			*GetNameSafe(FX.System), FX.Sounds.Num(), *FX.Scale.ToCompactString(), FX.MaxLifetime, *SpawnLocation.ToCompactString());
+
+		PlayRandomSound(WorldContext, FX.Sounds, SpawnLocation, FX.VolumeRange, FX.PitchRange, Attenuation);
+		return SpawnOneShotNiagara(WorldContext, FX.System, SpawnLocation, Rotation, FX.Scale, FX.MaxLifetime);
 	}
 }

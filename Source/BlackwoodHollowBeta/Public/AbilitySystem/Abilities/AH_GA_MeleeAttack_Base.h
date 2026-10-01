@@ -23,7 +23,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Abilities/GameplayAbility.h"
+#include "AbilitySystem/Abilities/AH_GA_StaminaBase.h"
+#include "GameplayTagContainer.h"
 #include "AH_GA_MeleeAttack_Base.generated.h"
 
 class UAnimMontage;
@@ -31,7 +32,7 @@ class UGameplayEffect;
 class UAbilityTask_PlayMontageAndWait;
 
 UCLASS(Blueprintable)
-class BLACKWOODHOLLOWBETA_API UAH_GA_MeleeAttack_Base : public UGameplayAbility
+class BLACKWOODHOLLOWBETA_API UAH_GA_MeleeAttack_Base : public UAH_GA_StaminaBase
 {
 	GENERATED_BODY()
 
@@ -43,6 +44,23 @@ public:
 
 	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
+
+	/** Step 0's stamina cost honours ComboStepStaminaCosts[0] when present. */
+	virtual void ApplyCost(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo) const override;
+
+	// -- Targeting ---------------------------------------------------------------
+
+	/** On activation, turn the avatar (yaw only) toward the controller's lock-on target, if any. Runs on the owning client and the server. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Targeting")
+	bool bFaceLockedTargetOnActivate = true;
+
+	/**
+	 * Soft lock ("attack magnetism"): with no hard lock, turn the avatar (yaw only, instant, never more than the lock-on
+	 * component's MaxSoftLockTurnDeg) toward the best enemy near the movement direction. On activation and on every combo step.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Targeting")
+	bool bFaceSoftTargetOnActivate = true;
 
 	// -- Montage / combo ---------------------------------------------------------
 
@@ -73,6 +91,19 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Combo")
 	bool bLoopCombo = false;
 
+	/**
+	 * true  = each combo step is a NEW play of the montage at the next section, so the anim system crossfades the
+	 *         outgoing step into the incoming one over ComboStepBlendTime (no pose pop).
+	 * false = legacy hard jump to the next section inside the same montage instance.
+	 * Either way the new step plays at MontagePlayRate * the owner's current AttackSpeed.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Combo")
+	bool bCrossfadeComboSteps = true;
+
+	/** Blend time (seconds) between combo steps when bCrossfadeComboSteps is on. Applies to the incoming step's blend-in and the outgoing step's blend-out. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Combo", meta = (ClampMin = "0.0", EditCondition = "bCrossfadeComboSteps"))
+	float ComboStepBlendTime = 0.12f;
+
 	// -- Damage ------------------------------------------------------------------
 
 	/** Instant GE that adds SetByCaller(Data.Damage) to UAH_AttributeSet::IncomingDamage. */
@@ -97,6 +128,18 @@ public:
 	/** Per-step multiplier, indexed like ComboSectionNames. Missing entries count as 1.0. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Damage")
 	TArray<float> ComboStepDamageMultipliers;
+
+	/** Optional per-step posture multiplier. When non-empty AND it has an entry for the step, it replaces ComboStepDamageMultipliers for posture damage. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Posture")
+	TArray<float> ComboStepPostureMultipliers;
+
+	/** Optional per-step stamina cost. When non-empty AND it has an entry for the step, it replaces StaminaCost for that step (entry 0 = the swing's activation cost). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Stamina")
+	TArray<float> ComboStepStaminaCosts;
+
+	/** Heavy weapons: while the swing is active the attacker has State.Combat.HyperArmor and hit reactions cannot stagger / interrupt it. Damage still applies. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Combo")
+	bool bHyperArmorDuringSwing = false;
 
 	/** Instant GE that adds SetByCaller(Data.PostureDamage) to Posture (sent negative). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Posture")
@@ -139,6 +182,16 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Momentum")
 	TSubclassOf<UGameplayEffect> OnHitSelfEffectClass;
 
+	/**
+	 * GameplayCue executed on every confirmed hit (hit-stop, shake, impact FX). Default GameplayCue.Combat.Hit;
+	 * abilities with their own impact (shield bash) point it at a child tag that has its own cue Blueprint.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Cosmetics", meta = (Categories = "GameplayCue"))
+	FGameplayTag HitCueTag;
+
+	// Stamina: StaminaCost (inherited, 12 per swing) is spent on activation (step 0) and again for every later combo
+	// step in AdvanceCombo; with no stamina left (bAllowStaminaOvercommit: Stamina <= 0) the combo stops advancing.
+
 	/** Current combo step (0-based). On the server this is derived from the playing montage section. */
 	UFUNCTION(BlueprintPure, Category = "Melee|Combo")
 	int32 GetCurrentComboStep() const;
@@ -172,16 +225,37 @@ private:
 	UFUNCTION() void OnHitDealt(FGameplayEventData Payload);
 	UFUNCTION() void OnParried(FGameplayEventData Payload);
 
+	/** Hard target (bFaceLockedTargetOnActivate) or soft target (bFaceSoftTargetOnActivate) facing; see UBH_LockOnComponent::FaceMeleeTarget. */
+	void FaceMeleeTarget(bool bNotifyServer);
+
 	/** Jumps the montage to the next combo step. Returns false at the end of a non-looping combo. */
 	bool AdvanceCombo();
 
+	/**
+	 * Spends StaminaCost for every combo step up to Step that has not been paid for yet. Authority only. The owning
+	 * machine pays in AdvanceCombo; for a remote predicted client the server never sees the input, so it pays when
+	 * it notices the replicated section moved on (combo window / hit events).
+	 */
+	void ChargeStaminaForStep(int32 Step);
+
 	/** Cuts the attack montage and plays RecoilMontage (parried). */
 	void PlayRecoil();
+
+	/** Creates + activates a PlayMontageAndWait task wired to the montage callbacks. */
+	UAbilityTask_PlayMontageAndWait* StartMontageTask(UAnimMontage* Montage, float Rate, FName StartSection = NAME_None);
+
+	/** Unbinds the montage callbacks from the current task and ends it WITHOUT ending the ability. */
+	void DetachMontageTask();
+
+	/** Starts SectionName as a new play of AttackMontage, crossfading from the running step over ComboStepBlendTime. */
+	void CrossfadeToSection(FName SectionName);
 
 	/** Makes the montage stop at the end of SectionName instead of flowing into the next section. */
 	void UnlinkSection(FName SectionName) const;
 
 	float GetStepDamageMultiplier(int32 ComboStep) const;
+	float GetStepPostureMultiplier(int32 ComboStep) const;
+	float GetStepStaminaCost(int32 ComboStep) const;
 
 	/** BaseRate * owner's AttackSpeed attribute (1.0 if the owner has no UAH_AttributeSet). Never below 0.1. */
 	float GetEffectivePlayRate(float BaseRate) const;
@@ -190,6 +264,9 @@ private:
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
 
 	int32 LocalComboStep = 0;
+
+	/** Highest combo step whose stamina has been spent on the authority. */
+	int32 StaminaChargedStep = 0;
 	bool bComboWindowOpen = false;
 	bool bInputBuffered = false;
 
@@ -201,4 +278,7 @@ private:
 
 	/** Recoiling from a parry: combo input, windows and hits are ignored. */
 	bool bInRecoil = false;
+
+	/** This activation granted State.Combat.HyperArmor (removed in EndAbility). */
+	bool bHyperArmorGranted = false;
 };

@@ -2,6 +2,9 @@
 
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "AbilitySystem/AH_AttributeSet.h"
+#include "AbilitySystem/BH_CombatFunctionLibrary.h"
+#include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
@@ -146,7 +149,48 @@ void UAH_GA_Block::OnBlockImpact(FGameplayEventData Payload)
 		}
 	}
 
+	// Stamina drain + guard break. The impact event is sent by the server (UAH_AttributeSet), so this is authority-only.
+	if (K2_HasAuthority())
+	{
+		DrainStaminaForBlock(Payload.EventMagnitude);
+	}
+
 	K2_OnBlockImpact(const_cast<AActor*>(Payload.Instigator.Get()), Payload.EventMagnitude);
+}
+
+void UAH_GA_Block::DrainStaminaForBlock(float PostureCost)
+{
+	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+	const float StaminaDrain = PostureCost * BlockStaminaScale;
+	if (!ASC || StaminaDrain <= 0.f)
+	{
+		return;
+	}
+
+	UBH_CombatFunctionLibrary::ApplyStaminaCost(ASC, StaminaDrain);
+
+	if (ASC->GetNumericAttribute(UAH_AttributeSet::GetStaminaAttribute()) > 0.f)
+	{
+		return;
+	}
+
+	// Guard break: out of stamina while blocking. Take whatever Posture is left so the standard posture-break path
+	// (State.Combat.PostureBroken, GC_PostureBroken, UAH_GA_PostureBreak) runs, then lower the guard.
+	const float RemainingPosture = ASC->GetNumericAttribute(UAH_AttributeSet::GetPostureAttribute());
+	if (RemainingPosture > 0.f)
+	{
+		FGameplayEffectSpecHandle BreakSpec = MakeOutgoingGameplayEffectSpec(UAH_GE_PostureDamage::StaticClass(), GetAbilityLevel());
+		if (BreakSpec.IsValid())
+		{
+			BreakSpec.Data->SetSetByCallerMagnitude(TAG_Data_PostureDamage, -RemainingPosture);
+			ASC->ApplyGameplayEffectSpecToSelf(*BreakSpec.Data.Get());
+		}
+	}
+
+	if (IsActive())
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+	}
 }
 
 void UAH_GA_Block::OnMontageInterrupted()

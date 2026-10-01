@@ -10,6 +10,7 @@
 
 #include "CoreMinimal.h"
 #include "GameplayEffect.h"
+#include "GameplayModMagnitudeCalculation.h"
 #include "AH_GE_CombatEffects.generated.h"
 
 /**
@@ -60,7 +61,8 @@ public:
 
 /**
  * Infinite, periodic: Stamina += StaminaRegenRate * RegenPeriod.
- * Inhibited while State.Combat.Attacking, Blocking, PostureBroken or Dead is present.
+ * Inhibited while State.Combat.Attacking, Blocking, PostureBroken, Dead, Dodging or StaminaRegenDelayed
+ * (the delay tag is set by UAH_AttributeSet for bh.Combat.StaminaRegenDelay seconds after any stamina spend).
  */
 UCLASS()
 class BLACKWOODHOLLOWBETA_API UAH_GE_StaminaRegen : public UGameplayEffect
@@ -71,6 +73,53 @@ public:
 	UAH_GE_StaminaRegen();
 
 	static constexpr float RegenPeriod = 0.1f;
+};
+
+// ---------------------------------------------------------------------------
+// Phase 7A: stamina spending
+// ---------------------------------------------------------------------------
+
+/** Returns -SetByCaller(Data.StaminaCost): lets callers pass the cost as a plain positive number. */
+UCLASS()
+class BLACKWOODHOLLOWBETA_API UAH_MMC_StaminaCost : public UGameplayModMagnitudeCalculation
+{
+	GENERATED_BODY()
+
+public:
+	virtual float CalculateBaseMagnitude_Implementation(const FGameplayEffectSpec& Spec) const override;
+};
+
+/**
+ * Instant: Stamina += -SetByCaller(Data.StaminaCost) (positive cost in, stamina removed).
+ * UAH_AttributeSet clamps Stamina at 0 and starts the stamina regen delay on any negative delta.
+ * Applied by UAH_GA_StaminaBase / UBH_CombatFunctionLibrary::ApplyStaminaCost.
+ */
+UCLASS()
+class BLACKWOODHOLLOWBETA_API UAH_GE_StaminaCost : public UGameplayEffect
+{
+	GENERATED_BODY()
+
+public:
+	UAH_GE_StaminaCost();
+};
+
+// ---------------------------------------------------------------------------
+// Phase 8C: equipment stat bonuses
+// ---------------------------------------------------------------------------
+
+/**
+ * Infinite: three Additive modifiers (AttackPower, Defense, MaxStamina), each driven by a SetByCaller tag
+ * (Data.Equip.AttackPower / Data.Equip.Defense / Data.Equip.MaxStamina; default magnitude 0). Applied once per
+ * equipped weapon by UBH_LoadoutComponent and removed when the weapon is unequipped or its loadout set is not
+ * the active one. Additive (not AddBase) so removing the effect restores the base value exactly.
+ */
+UCLASS()
+class BLACKWOODHOLLOWBETA_API UAH_GE_EquipmentStatMod : public UGameplayEffect
+{
+	GENERATED_BODY()
+
+public:
+	UAH_GE_EquipmentStatMod();
 };
 
 // ---------------------------------------------------------------------------
@@ -104,6 +153,19 @@ class BLACKWOODHOLLOWBETA_API UAH_GE_RiposteWindow : public UGameplayEffect
 
 public:
 	UAH_GE_RiposteWindow();
+};
+
+/**
+ * Generic cooldown: HasDuration, duration = SetByCaller(Data.Cooldown). Grants NO static tags: the owning ability
+ * appends its own cooldown tags to the spec's DynamicGrantedTags (see UAH_GA_FragmentBase::ApplyCooldown).
+ */
+UCLASS()
+class BLACKWOODHOLLOWBETA_API UAH_GE_Cooldown_Base : public UGameplayEffect
+{
+	GENERATED_BODY()
+
+public:
+	UAH_GE_Cooldown_Base();
 };
 
 /** Shield bash cooldown: 3 s, grants Cooldown.Combat.ShieldBash (used as UAH_GA_ShieldBash's CooldownGameplayEffectClass). */

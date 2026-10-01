@@ -13,6 +13,9 @@
 
 #include "NativeGameplayTags.h"
 
+/** Combat log channel (dodge i-frame whiffs, stamina spends, ...). Verbose messages are opt-in: Log LogBHCombat Verbose. */
+BLACKWOODHOLLOWBETA_API DECLARE_LOG_CATEGORY_EXTERN(LogBHCombat, Log, All);
+
 // ---------------------------------------------------------------------------
 // Weapon/combat STANCE is not duplicated here as gameplay tags. GASP's own
 // replicated OverlayPose enum (/GASPALS/OverlaySystem/Blueprints/Enum_OverlayPose)
@@ -35,6 +38,7 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_BlightSh
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Overloading);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Dead);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Attacking);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_HyperArmor);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_ComboWindow);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_PostureRegenDelayed);
 
@@ -78,6 +82,30 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Cooldown_Combat_Shiel
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_GameplayCue_Combat_Hit);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_GameplayCue_Combat_ParrySuccess);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_GameplayCue_Combat_PostureBroken);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_GameplayCue_Combat_Hit_ShieldBash);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Combat_HitResult_Blocked);
+
+// ---------------------------------------------------------------------------
+// Phase 7A: Dodge / Stamina
+// ---------------------------------------------------------------------------
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Dodging);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Invulnerable);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_StaminaRegenDelayed);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Ability_Combat_Dodge);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_StaminaCost);
+
+// ---------------------------------------------------------------------------
+// Phase 7C: Heart-Fragment loadout / generic cooldowns
+// ---------------------------------------------------------------------------
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Cooldown);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Cooldown_Fragment_OverloadBurst);
+
+// ---------------------------------------------------------------------------
+// Phase 8C: equipment stat-mod SetByCaller keys (read by UAH_GE_EquipmentStatMod)
+// ---------------------------------------------------------------------------
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Equip_AttackPower);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Equip_Defense);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Equip_MaxStamina);
 
 /**
  * Singleton accessor kept for readability at call sites and for parity with
@@ -130,6 +158,10 @@ public:
 	FGameplayTag Ability_Combat_Block;
 	FGameplayTag Ability_Combat_HitReaction;
 	FGameplayTag Ability_Combat_PostureBreak;
+
+	// Phase 7C
+	FGameplayTag Data_Cooldown;
+	FGameplayTag Cooldown_Fragment_OverloadBurst;
 
 protected:
 	void AddAllTags();

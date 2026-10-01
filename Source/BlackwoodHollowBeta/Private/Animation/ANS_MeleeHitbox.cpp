@@ -3,6 +3,7 @@
 #include "Animation/ANS_MeleeHitbox.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Combat/BH_WeaponBladeData.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -48,7 +49,16 @@ bool UANS_MeleeHitbox::GetWeaponPoints(USkeletalMeshComponent* MeshComp, TArray<
 		Tip = Weapon->GetSocketLocation(TipSocketName);
 		bFound = true;
 	}
-	// 2) Longest axis of the weapon's local bounds.
+	// 2) Per-weapon blade line from the loadout (FBH_WeaponMeshSlot::bUseBladeOverride), component-local.
+	else if (Weapon && Weapon->GetAssetUserData<UBH_WeaponBladeData>())
+	{
+		const UBH_WeaponBladeData* Blade = Weapon->GetAssetUserData<UBH_WeaponBladeData>();
+		const FTransform& WeaponTransform = Weapon->GetComponentTransform();
+		Root = WeaponTransform.TransformPosition(Blade->RootLocal);
+		Tip = WeaponTransform.TransformPosition(Blade->TipLocal);
+		bFound = true;
+	}
+	// 3) Longest axis of the weapon's local bounds.
 	else if (Weapon && bUseWeaponBoundsIfSocketsMissing)
 	{
 		const FBox LocalBox = Weapon->CalcBounds(FTransform::Identity).GetBox();
@@ -69,7 +79,7 @@ bool UANS_MeleeHitbox::GetWeaponPoints(USkeletalMeshComponent* MeshComp, TArray<
 			bFound = true;
 		}
 	}
-	// 3) Same socket names on the animating character mesh (unarmed / debug setups).
+	// 4) Same socket names on the animating character mesh (unarmed / debug setups).
 	if (!bFound && MeshComp->DoesSocketExist(RootSocketName) && MeshComp->DoesSocketExist(TipSocketName))
 	{
 		Root = MeshComp->GetSocketLocation(RootSocketName);
@@ -187,14 +197,14 @@ void UANS_MeleeHitbox::SweepMotion(USkeletalMeshComponent* MeshComp, UAnimSequen
 		return;
 	}
 
-	// Default behaviour (and multi-hit with substeps off): one straight sweep per sample point.
+	// Straight sweeps (chord) when arc sub-stepping is off, or the blade barely moved this tick.
 	float MaxTravel = 0.f;
 	for (int32 Index = 0; Index < NumPoints; ++Index)
 	{
 		MaxTravel = FMath::Max(MaxTravel, static_cast<float>(FVector::Dist(Previous[Index], Current[Index])));
 	}
 
-	if (!bAllowMultipleHits || SubstepDistance <= 0.f || MaxTravel <= SubstepDistance)
+	if ((!bSubstepArc && !bAllowMultipleHits) || SubstepDistance <= 0.f || MaxTravel <= SubstepDistance)
 	{
 		for (int32 Index = 0; Index < NumPoints; ++Index)
 		{
@@ -296,6 +306,17 @@ void UANS_MeleeHitbox::ProcessHit(USkeletalMeshComponent* MeshComp, UAnimSequenc
 	if (!bAllowFriendlyFire && UBH_CombatFunctionLibrary::AreCombatAllies(Owner, HitActor))
 	{
 		return;
+	}
+
+	// Dodge i-frames: an invulnerable victim is invisible to the blade. Checked before the hit bookkeeping so a
+	// swing that is still active when the i-frames end can connect, and before any event so no hit reaction / cue plays.
+	if (const UAbilitySystemComponent* VictimASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(HitActor))
+	{
+		if (VictimASC->HasMatchingGameplayTag(TAG_State_Combat_Invulnerable))
+		{
+			UE_LOG(LogBHCombat, Verbose, TEXT("MeleeHitbox: %s whiffed on %s (State.Combat.Invulnerable)."), *GetNameSafe(Owner), *GetNameSafe(HitActor));
+			return;
+		}
 	}
 
 	if (bAllowMultipleHits)

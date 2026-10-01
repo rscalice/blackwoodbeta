@@ -4,6 +4,7 @@
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -12,6 +13,9 @@
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimMontage.h"
+#include "Combat/BH_LockOnComponent.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/Controller.h"
 
 UAH_GA_MeleeAttack_Base::UAH_GA_MeleeAttack_Base()
 {
@@ -29,8 +33,13 @@ UAH_GA_MeleeAttack_Base::UAH_GA_MeleeAttack_Base()
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Dead);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Parrying);
 
+	// Souls feel: a swing may start on a sliver of stamina (it floors at 0), but the combo won't advance on empty.
+	StaminaCost = 12.f;
+	bAllowStaminaOvercommit = true;
+
 	DamageEffectClass = UAH_GE_MeleeDamage::StaticClass();
 	PostureDamageEffectClass = UAH_GE_PostureDamage::StaticClass();
+	HitCueTag = TAG_GameplayCue_Combat_Hit;
 
 	ComboSectionNames = { FName(TEXT("Attack1")), FName(TEXT("Attack2")), FName(TEXT("Attack3")) };
 }
@@ -55,21 +64,29 @@ void UAH_GA_MeleeAttack_Base::ActivateAbility(const FGameplayAbilitySpecHandle H
 		return;
 	}
 
+	// The server computes its own target here (activation reaches it with the same movement state); no RPC needed.
+	FaceMeleeTarget(false);
+
 	LocalComboStep = 0;
+	StaminaChargedStep = 0; // step 0 was paid by CommitAbility
 	bComboWindowOpen = false;
 	bInputBuffered = false;
 	bWindowClosedThisStep = false;
 	bIgnoreNextWindowClose = false;
 	bInRecoil = false;
 
+	if (bHyperArmorDuringSwing && !bHyperArmorGranted)
+	{
+		if (UAbilitySystemComponent* ArmorASC = GetAbilitySystemComponentFromActorInfo())
+		{
+			ArmorASC->AddLooseGameplayTag(TAG_State_Combat_HyperArmor);
+			bHyperArmorGranted = true;
+		}
+	}
+
 	const FName StartSection = ComboSectionNames[0];
 
-	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, AttackMontage, GetEffectivePlayRate(MontagePlayRate), StartSection);
-	MontageTask->OnCompleted.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageCompleted);
-	MontageTask->OnBlendOut.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageBlendOut);
-	MontageTask->OnInterrupted.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageInterrupted);
-	MontageTask->OnCancelled.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageCancelled);
-	MontageTask->ReadyForActivation();
+	MontageTask = StartMontageTask(AttackMontage, GetEffectivePlayRate(MontagePlayRate), StartSection);
 
 	UnlinkSection(StartSection);
 
@@ -105,6 +122,22 @@ void UAH_GA_MeleeAttack_Base::EndAbility(const FGameplayAbilitySpecHandle Handle
 		if (UAbilitySystemComponent* ASC = ActorInfo->AbilitySystemComponent.Get())
 		{
 			ASC->SetLooseGameplayTagCount(TAG_State_Combat_ComboWindow, 0);
+			if (bHyperArmorGranted)
+			{
+				ASC->RemoveLooseGameplayTag(TAG_State_Combat_HyperArmor);
+			}
+		}
+	}
+	bHyperArmorGranted = false;
+
+	// Give the pawn back to the camera yaw (a soft-lock turn suspends controller rotation for the swing).
+	if (ActorInfo)
+	{
+		const APawn* AvatarPawn = Cast<APawn>(ActorInfo->AvatarActor.Get());
+		const AController* Controller = AvatarPawn ? AvatarPawn->GetController() : nullptr;
+		if (UBH_LockOnComponent* LockOn = Controller ? Controller->FindComponentByClass<UBH_LockOnComponent>() : nullptr)
+		{
+			LockOn->EndMeleeFacingOverride();
 		}
 	}
 
@@ -117,6 +150,24 @@ void UAH_GA_MeleeAttack_Base::EndAbility(const FGameplayAbilitySpecHandle Handle
 	bInRecoil = false;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+}
+
+void UAH_GA_MeleeAttack_Base::ApplyCost(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilityActivationInfo ActivationInfo) const
+{
+	if (!ComboStepStaminaCosts.IsValidIndex(0))
+	{
+		Super::ApplyCost(Handle, ActorInfo, ActivationInfo);
+		return;
+	}
+
+	// Per-step cost array: step 0 pays ComboStepStaminaCosts[0] instead of StaminaCost.
+	UGameplayAbility::ApplyCost(Handle, ActorInfo, ActivationInfo);
+	const float Cost = GetStepStaminaCost(0);
+	if (Cost > 0.f && ActorInfo && HasAuthorityOrPredictionKey(ActorInfo, &ActivationInfo))
+	{
+		UBH_CombatFunctionLibrary::ApplyStaminaCost(ActorInfo->AbilitySystemComponent.Get(), Cost);
+	}
 }
 
 // ============================================================================
@@ -152,6 +203,22 @@ void UAH_GA_MeleeAttack_Base::UnlinkSection(FName SectionName) const
 	}
 }
 
+void UAH_GA_MeleeAttack_Base::FaceMeleeTarget(bool bNotifyServer)
+{
+	if (!bFaceLockedTargetOnActivate && !bFaceSoftTargetOnActivate)
+	{
+		return;
+	}
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	const APawn* AvatarPawn = Cast<APawn>(Avatar);
+	const AController* Controller = AvatarPawn ? AvatarPawn->GetController() : nullptr;
+	if (UBH_LockOnComponent* LockOn = Controller ? Controller->FindComponentByClass<UBH_LockOnComponent>() : nullptr)
+	{
+		bool bUsedSoftTarget = false;
+		LockOn->FaceMeleeTarget(bFaceLockedTargetOnActivate, bFaceSoftTargetOnActivate, bNotifyServer, bUsedSoftTarget);
+	}
+}
+
 bool UAH_GA_MeleeAttack_Base::AdvanceCombo()
 {
 	int32 NextStep = LocalComboStep + 1;
@@ -171,6 +238,13 @@ bool UAH_GA_MeleeAttack_Base::AdvanceCombo()
 		return false;
 	}
 
+	// Out of stamina: the combo stops here (the montage was un-linked, so it ends after the current step).
+	if (!CanAffordStamina())
+	{
+		bInputBuffered = false;
+		return false;
+	}
+
 	// If we jump while the current step's window is still open, that window's
 	// NotifyEnd (Close event) arrives after the jump and belongs to the OLD step.
 	bIgnoreNextWindowClose = bComboWindowOpen;
@@ -180,16 +254,53 @@ bool UAH_GA_MeleeAttack_Base::AdvanceCombo()
 	bComboWindowOpen = false;
 	bWindowClosedThisStep = false;
 
+	// Re-aim for the new step. The server never sees this input for a remote client, so the client sends its target.
+	FaceMeleeTarget(true);
+
+	if (K2_HasAuthority())
+	{
+		if (NextStep == 0)
+		{
+			StaminaChargedStep = -1; // a wrapped (looping) combo pays again for step 0
+		}
+		ChargeStaminaForStep(NextStep);
+	}
+
 	const FName SectionName = ComboSectionNames[NextStep];
-	ASC->CurrentMontageJumpToSection(SectionName);
+	if (bCrossfadeComboSteps)
+	{
+		CrossfadeToSection(SectionName);
+	}
+	else
+	{
+		// Legacy hard jump inside the running montage instance; still refresh the rate (AttackSpeed may have changed).
+		ASC->CurrentMontageSetPlayRate(GetEffectivePlayRate(MontagePlayRate));
+		ASC->CurrentMontageJumpToSection(SectionName);
+	}
 	UnlinkSection(SectionName);
 
 	K2_OnComboStepStarted(NextStep, SectionName);
 	return true;
 }
 
+void UAH_GA_MeleeAttack_Base::ChargeStaminaForStep(int32 Step)
+{
+	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+	while (ASC && StaminaChargedStep < Step)
+	{
+		++StaminaChargedStep;
+		UBH_CombatFunctionLibrary::ApplyStaminaCost(ASC, GetStepStaminaCost(StaminaChargedStep));
+	}
+}
+
 void UAH_GA_MeleeAttack_Base::OnComboWindowOpened(FGameplayEventData Payload)
 {
+	// Server-side catch-up for a remote client's combo steps (see ChargeStaminaForStep).
+	if (K2_HasAuthority() && !bInRecoil)
+	{
+		ChargeStaminaForStep(GetCurrentComboStep());
+	}
+
 	if (bInRecoil)
 	{
 		return;
@@ -268,6 +379,16 @@ float UAH_GA_MeleeAttack_Base::GetStepDamageMultiplier(int32 ComboStep) const
 	return ComboStepDamageMultipliers.IsValidIndex(ComboStep) ? ComboStepDamageMultipliers[ComboStep] : 1.f;
 }
 
+float UAH_GA_MeleeAttack_Base::GetStepPostureMultiplier(int32 ComboStep) const
+{
+	return ComboStepPostureMultipliers.IsValidIndex(ComboStep) ? ComboStepPostureMultipliers[ComboStep] : GetStepDamageMultiplier(ComboStep);
+}
+
+float UAH_GA_MeleeAttack_Base::GetStepStaminaCost(int32 ComboStep) const
+{
+	return ComboStepStaminaCosts.IsValidIndex(ComboStep) ? ComboStepStaminaCosts[ComboStep] : StaminaCost;
+}
+
 float UAH_GA_MeleeAttack_Base::GetEffectivePlayRate(float BaseRate) const
 {
 	float Speed = 1.f;
@@ -330,6 +451,8 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 		return;
 	}
 
+	ChargeStaminaForStep(GetCurrentComboStep());
+
 	AActor* Target = const_cast<AActor*>(Payload.Target.Get());
 	UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Target);
 	UAbilitySystemComponent* SourceASC = GetAbilitySystemComponentFromActorInfo();
@@ -382,7 +505,7 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 
 	if ((!bBlockedByTarget || bIgnoreBlockForPosture) && PostureDamageEffectClass && BasePostureDamage > 0.f)
 	{
-		const float PostureDamage = BasePostureDamage * GetStepDamageMultiplier(ComboStep) * HitboxMultiplier * (bRiposte ? RiposteDamageMultiplier : 1.f);
+		const float PostureDamage = BasePostureDamage * GetStepPostureMultiplier(ComboStep) * HitboxMultiplier * (bRiposte ? RiposteDamageMultiplier : 1.f);
 
 		FGameplayEffectSpecHandle PostureSpec = MakeOutgoingGameplayEffectSpec(PostureDamageEffectClass, GetAbilityLevel());
 		if (PostureSpec.IsValid())
@@ -418,10 +541,16 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 		CueParams.EffectCauser = AttackerActor;
 		CueParams.SourceObject = Target;
 		CueParams.RawMagnitude = DamageApplied;
-		CueParams.Location = HitResult.bBlockingHit || !HitResult.ImpactPoint.IsZero() ? FVector(HitResult.ImpactPoint) : Target->GetActorLocation();
+		// Impact point of the blade sweep; left zero when unknown so the cue can fall back to chest height on the victim.
+		CueParams.Location = HitResult.ImpactPoint.IsZero() ? FVector::ZeroVector : FVector(HitResult.ImpactPoint);
 		CueParams.Normal = (Target->GetActorLocation() - AttackerActor->GetActorLocation()).GetSafeNormal();
 		CueParams.TargetAttachComponent = Target->GetRootComponent();
-		SourceASC->ExecuteGameplayCue(TAG_GameplayCue_Combat_Hit, CueParams);
+		if (bBlockedByTarget)
+		{
+			// Lets the cue pick the blocked (metal on metal) FX instead of the flesh FX.
+			CueParams.AggregatedSourceTags.AddTag(TAG_Combat_HitResult_Blocked);
+		}
+		SourceASC->ExecuteGameplayCue(HitCueTag.IsValid() ? HitCueTag : FGameplayTag(TAG_GameplayCue_Combat_Hit), CueParams);
 	}
 
 	K2_OnHitConfirmed(Target, HitResult, DamageApplied);
@@ -460,6 +589,29 @@ void UAH_GA_MeleeAttack_Base::PlayRecoil()
 
 	// Detach from the attack montage task first so its interruption (caused by
 	// the recoil replacing it) doesn't end the ability.
+	DetachMontageTask();
+
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		ASC->SetLooseGameplayTagCount(TAG_State_Combat_ComboWindow, 0);
+	}
+
+	MontageTask = StartMontageTask(RecoilMontage, GetEffectivePlayRate(RecoilPlayRate));
+}
+
+UAbilityTask_PlayMontageAndWait* UAH_GA_MeleeAttack_Base::StartMontageTask(UAnimMontage* Montage, float Rate, FName StartSection)
+{
+	UAbilityTask_PlayMontageAndWait* Task = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, Montage, Rate, StartSection);
+	Task->OnCompleted.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageCompleted);
+	Task->OnBlendOut.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageBlendOut);
+	Task->OnInterrupted.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageInterrupted);
+	Task->OnCancelled.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageCancelled);
+	Task->ReadyForActivation();
+	return Task;
+}
+
+void UAH_GA_MeleeAttack_Base::DetachMontageTask()
+{
 	if (MontageTask)
 	{
 		MontageTask->OnCompleted.RemoveAll(this);
@@ -469,19 +621,37 @@ void UAH_GA_MeleeAttack_Base::PlayRecoil()
 		MontageTask->EndTask();
 		MontageTask = nullptr;
 	}
+}
 
-	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+void UAH_GA_MeleeAttack_Base::CrossfadeToSection(FName SectionName)
+{
+	// The old task must not report the handoff (its instance is interrupted by the new play) as the end of the ability.
+	DetachMontageTask();
+
+	// A fresh Montage_Play stops the running instance of this montage's slot group and blends the new one in.
+	// UAbilityTask_PlayMontageAndWait has no blend parameters, so the asset's BlendIn (used for both the new
+	// instance's blend-in and the interrupted instance's blend-out) is overridden for the duration of the play call
+	// only (game thread, synchronous: ReadyForActivation plays the montage immediately) and restored right after.
+	const float AssetBlendIn = AttackMontage->BlendIn.GetBlendTime();
+	AttackMontage->BlendIn.SetBlendTime(ComboStepBlendTime);
+
+	MontageTask = StartMontageTask(AttackMontage, GetEffectivePlayRate(MontagePlayRate), SectionName);
+
+	AttackMontage->BlendIn.SetBlendTime(AssetBlendIn);
+
+	// A predicted client's montage play is local-only: tell the server which step is now playing (and how fast)
+	// through the ASC's own jump / play-rate RPCs. Locally these are no-ops (already on that section, same rate).
+	if (!K2_HasAuthority())
 	{
-		ASC->SetLooseGameplayTagCount(TAG_State_Combat_ComboWindow, 0);
+		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+		{
+			if (ASC->GetCurrentMontage() == AttackMontage)
+			{
+				ASC->CurrentMontageJumpToSection(SectionName);
+				ASC->CurrentMontageSetPlayRate(GetEffectivePlayRate(MontagePlayRate));
+			}
+		}
 	}
-
-	UAbilityTask_PlayMontageAndWait* RecoilTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, RecoilMontage, GetEffectivePlayRate(RecoilPlayRate));
-	RecoilTask->OnCompleted.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageCompleted);
-	RecoilTask->OnBlendOut.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageBlendOut);
-	RecoilTask->OnInterrupted.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageInterrupted);
-	RecoilTask->OnCancelled.AddDynamic(this, &UAH_GA_MeleeAttack_Base::OnMontageCancelled);
-	RecoilTask->ReadyForActivation();
-	MontageTask = RecoilTask;
 }
 
 // ============================================================================

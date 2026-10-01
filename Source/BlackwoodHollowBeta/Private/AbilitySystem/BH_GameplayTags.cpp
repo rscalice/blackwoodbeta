@@ -3,6 +3,8 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "GameplayTagsManager.h"
 
+DEFINE_LOG_CATEGORY(LogBHCombat);
+
 FBH_GameplayTags FBH_GameplayTags::GameplayTags;
 
 // ---------------------------------------------------------------------------
@@ -23,6 +25,7 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_BlightShielded, "State.Combat.BlightShie
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Overloading, "State.Combat.Overloading");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Dead, "State.Combat.Dead");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Attacking, "State.Combat.Attacking");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Combat_HyperArmor, "State.Combat.HyperArmor", "Hit reactions cannot stagger this actor (heavy weapon swing); damage still applies.");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_ComboWindow, "State.Combat.ComboWindow");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_PostureRegenDelayed, "State.Combat.PostureRegenDelayed");
 
@@ -60,6 +63,24 @@ UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Cooldown_Combat_ShieldBash, "Cooldown.Combat.
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_Hit, "GameplayCue.Combat.Hit", "Cosmetic cue: a melee hit connected (hit-stop + camera shake).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_ParrySuccess, "GameplayCue.Combat.ParrySuccess", "Cosmetic cue: a parry deflected a hit (heavy hit-stop + camera punch).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_PostureBroken, "GameplayCue.Combat.PostureBroken", "Cosmetic cue: a target's posture broke (shatter VFX/SFX).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_Hit_ShieldBash, "GameplayCue.Combat.Hit.ShieldBash", "Cosmetic cue: a shield bash connected (heavier, metallic variant of the Hit cue).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Combat_HitResult_Blocked, "Combat.HitResult.Blocked", "Flag carried in FGameplayCueParameters::AggregatedSourceTags: the victim blocked this hit.");
+
+// Phase 7A
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Combat_Dodging, "State.Combat.Dodging", "A dodge ability is active (granted by UAH_GA_Dodge).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Combat_Invulnerable, "State.Combat.Invulnerable", "Dodge i-frames: melee damage / posture damage and melee hits are ignored.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Combat_StaminaRegenDelayed, "State.Combat.StaminaRegenDelayed", "Stamina was just spent: passive stamina regen is paused for bh.Combat.StaminaRegenDelay seconds (loose tag).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Ability_Combat_Dodge, "Ability.Combat.Dodge", "Identifies the dodge ability.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_StaminaCost, "Data.StaminaCost", "SetByCaller key: stamina cost (positive number) read by UAH_GE_StaminaCost.");
+
+// Phase 7C
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Cooldown, "Data.Cooldown", "SetByCaller key: cooldown duration in seconds, read by UAH_GE_Cooldown_Base.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Cooldown_Fragment_OverloadBurst, "Cooldown.Fragment.OverloadBurst", "Heart-Fragment Overload Burst is on cooldown (granted dynamically by UAH_GA_FragmentBase::ApplyCooldown).");
+
+// Phase 8C
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Equip_AttackPower, "Data.Equip.AttackPower", "SetByCaller key: additive AttackPower bonus read by UAH_GE_EquipmentStatMod.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Equip_Defense, "Data.Equip.Defense", "SetByCaller key: additive Defense bonus read by UAH_GE_EquipmentStatMod.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Equip_MaxStamina, "Data.Equip.MaxStamina", "SetByCaller key: additive MaxStamina bonus read by UAH_GE_EquipmentStatMod.");
 
 void FBH_GameplayTags::InitializeNativeTags()
 {
@@ -92,7 +113,7 @@ void FBH_GameplayTags::AddAllTags()
 	AddTag(Event_Combat_Death, "Event.Combat.Death", "Sent when Health reaches zero.");
 	AddTag(Event_Combat_BlightDamage, "Event.Combat.BlightDamage", "Sent when Blight damage is applied to an actor.");
 	AddTag(Event_Combat_BlightShieldDepleted, "Event.Combat.BlightShieldDepleted", "Sent when the Heart-Fragment's Blight shield hits zero.");
-	AddTag(Event_Combat_OverloadBurst, "Event.Combat.OverloadBurst", "Sent to activate GA_HeartFragment_OverloadBurst.");
+	AddTag(Event_Combat_OverloadBurst, "Event.Combat.OverloadBurst", "Sent by UAH_GA_OverloadBurst when it activates (BP_BlightVolume listens). Does NOT activate the ability.");
 	AddTag(Event_Combat_OverloadBurst_Ready, "Event.Combat.OverloadBurst.Ready", "Sent when the Overload Burst comes off cooldown / refills.");
 	AddTag(Event_Combat_DamageReceived, "Event.Combat.DamageReceived", "Sent to the victim after IncomingDamage has been applied to Health.");
 	AddTag(Event_Combat_HitDealt, "Event.Combat.HitDealt", "Sent to the attacker by UANS_MeleeHitbox when its sweep connects.");
@@ -111,4 +132,8 @@ void FBH_GameplayTags::AddAllTags()
 	AddTag(Ability_Combat_Block, "Ability.Combat.Block", "Identifies the hold-to-block ability.");
 	AddTag(Ability_Combat_HitReaction, "Ability.Combat.HitReaction", "Identifies the hit reaction ability.");
 	AddTag(Ability_Combat_PostureBreak, "Ability.Combat.PostureBreak", "Identifies the posture break ability.");
+
+	// Phase 7C
+	AddTag(Data_Cooldown, "Data.Cooldown", "SetByCaller key: cooldown duration in seconds.");
+	AddTag(Cooldown_Fragment_OverloadBurst, "Cooldown.Fragment.OverloadBurst", "Heart-Fragment Overload Burst is on cooldown.");
 }

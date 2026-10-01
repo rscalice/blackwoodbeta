@@ -43,6 +43,26 @@ namespace AH_GE_CombatEffects_Private
 	}
 }
 
+UAH_GE_EquipmentStatMod::UAH_GE_EquipmentStatMod()
+{
+	DurationPolicy = EGameplayEffectDurationType::Infinite;
+
+	auto AddAdditive = [this](const FGameplayAttribute& Attribute, const FGameplayTag& DataTag)
+	{
+		FSetByCallerFloat SetByCaller;
+		SetByCaller.DataTag = DataTag;
+
+		FGameplayModifierInfo Modifier;
+		Modifier.Attribute = Attribute;
+		Modifier.ModifierOp = EGameplayModOp::Additive;
+		Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(SetByCaller);
+		Modifiers.Add(Modifier);
+	};
+	AddAdditive(UAH_AttributeSet::GetAttackPowerAttribute(), TAG_Data_Equip_AttackPower);
+	AddAdditive(UAH_AttributeSet::GetDefenseAttribute(), TAG_Data_Equip_Defense);
+	AddAdditive(UAH_AttributeSet::GetMaxStaminaAttribute(), TAG_Data_Equip_MaxStamina);
+}
+
 UAH_GE_MeleeDamage::UAH_GE_MeleeDamage()
 {
 	DurationPolicy = EGameplayEffectDurationType::Instant;
@@ -55,6 +75,25 @@ UAH_GE_PostureDamage::UAH_GE_PostureDamage()
 	DurationPolicy = EGameplayEffectDurationType::Instant;
 	Modifiers.Add(AH_GE_CombatEffects_Private::MakeSetByCallerAddModifier(
 		UAH_AttributeSet::GetPostureAttribute(), TAG_Data_PostureDamage));
+}
+
+float UAH_MMC_StaminaCost::CalculateBaseMagnitude_Implementation(const FGameplayEffectSpec& Spec) const
+{
+	return -FMath::Max(Spec.GetSetByCallerMagnitude(TAG_Data_StaminaCost, /*WarnIfNotFound*/ false, 0.f), 0.f);
+}
+
+UAH_GE_StaminaCost::UAH_GE_StaminaCost()
+{
+	DurationPolicy = EGameplayEffectDurationType::Instant;
+
+	FCustomCalculationBasedFloat Calculation;
+	Calculation.CalculationClassMagnitude = UAH_MMC_StaminaCost::StaticClass();
+
+	FGameplayModifierInfo Modifier;
+	Modifier.Attribute = UAH_AttributeSet::GetStaminaAttribute();
+	Modifier.ModifierOp = EGameplayModOp::AddBase;
+	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(Calculation);
+	Modifiers.Add(Modifier);
 }
 
 UAH_GE_PostureRegen::UAH_GE_PostureRegen()
@@ -94,6 +133,8 @@ UAH_GE_StaminaRegen::UAH_GE_StaminaRegen()
 	TagRequirements->OngoingTagRequirements.IgnoreTags.AddTag(TAG_State_Combat_Blocking);
 	TagRequirements->OngoingTagRequirements.IgnoreTags.AddTag(TAG_State_Combat_PostureBroken);
 	TagRequirements->OngoingTagRequirements.IgnoreTags.AddTag(TAG_State_Combat_Dead);
+	TagRequirements->OngoingTagRequirements.IgnoreTags.AddTag(TAG_State_Combat_Dodging);
+	TagRequirements->OngoingTagRequirements.IgnoreTags.AddTag(TAG_State_Combat_StaminaRegenDelayed);
 	GEComponents.Add(TagRequirements);
 }
 
@@ -136,6 +177,15 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	UTargetTagsGameplayEffectComponent* GrantedTags = CreateDefaultSubobject<UTargetTagsGameplayEffectComponent>(TEXT("RiposteGrantedTags"));
 	AH_GE_CombatEffects_Private::ConfigureGrantedTag(GrantedTags, TAG_State_Combat_RiposteReady);
 	GEComponents.Add(GrantedTags);
+}
+
+UAH_GE_Cooldown_Base::UAH_GE_Cooldown_Base()
+{
+	DurationPolicy = EGameplayEffectDurationType::HasDuration;
+
+	FSetByCallerFloat SetByCaller;
+	SetByCaller.DataTag = TAG_Data_Cooldown;
+	DurationMagnitude = FGameplayEffectModifierMagnitude(SetByCaller);
 }
 
 UAH_GE_ShieldBashCooldown::UAH_GE_ShieldBashCooldown()

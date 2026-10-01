@@ -18,6 +18,7 @@ ABH_EnemyBase::ABH_EnemyBase()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	bReplicates = true;
+	DisplayName = NSLOCTEXT("BlackwoodHollow", "EnemyDefaultName", "Enemy");
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 
 	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));

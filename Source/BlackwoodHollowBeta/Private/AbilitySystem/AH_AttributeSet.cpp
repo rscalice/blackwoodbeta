@@ -17,6 +17,12 @@ static TAutoConsoleVariable<float> CVarBHPostureRegenDelay(
 	TEXT("Seconds passive posture regeneration stays paused after taking posture damage (0 = no delay)."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<float> CVarBHStaminaRegenDelay(
+	TEXT("bh.Combat.StaminaRegenDelay"),
+	0.5f,
+	TEXT("Seconds passive stamina regeneration stays paused after any stamina spend (0 = no delay)."),
+	ECVF_Default);
+
 UAH_AttributeSet::UAH_AttributeSet()
 {
 	InitHealth(100.f);
@@ -110,6 +116,50 @@ void UAH_AttributeSet::PreAttributeBaseChange(const FGameplayAttribute& Attribut
 	ClampAttribute(Attribute, NewValue);
 }
 
+void UAH_AttributeSet::PostAttributeChange(const FGameplayAttribute& Attribute, float OldValue, float NewValue)
+{
+	Super::PostAttributeChange(Attribute, OldValue, NewValue);
+
+	// ClampAttribute only runs when the CURRENT value changes; a shrinking Max would otherwise leave
+	// Health/Posture/Stamina above their new cap. Server only: clients receive the clamped base via replication.
+	if (NewValue >= OldValue)
+	{
+		return;
+	}
+	UAbilitySystemComponent* ASC = GetOwningAbilitySystemComponent();
+	if (!ASC || !ASC->IsOwnerActorAuthoritative())
+	{
+		return;
+	}
+
+	FGameplayAttribute Current;
+	float CurrentValue = 0.f;
+	if (Attribute == GetMaxHealthAttribute())
+	{
+		Current = GetHealthAttribute();
+		CurrentValue = GetHealth();
+	}
+	else if (Attribute == GetMaxPostureAttribute())
+	{
+		Current = GetPostureAttribute();
+		CurrentValue = GetPosture();
+	}
+	else if (Attribute == GetMaxStaminaAttribute())
+	{
+		Current = GetStaminaAttribute();
+		CurrentValue = GetStamina();
+	}
+	else
+	{
+		return;
+	}
+
+	if (CurrentValue > NewValue)
+	{
+		ASC->SetNumericAttributeBase(Current, NewValue);
+	}
+}
+
 bool UAH_AttributeSet::PreGameplayEffectExecute(FGameplayEffectModCallbackData& Data)
 {
 	if (!Super::PreGameplayEffectExecute(Data))
@@ -132,6 +182,26 @@ bool UAH_AttributeSet::PreGameplayEffectExecute(FGameplayEffectModCallbackData& 
 		if (SpecAssetTags.HasTag(FBH_GameplayTags::Get().Damage_Type_Melee))
 		{
 			return false;
+		}
+	}
+
+	// -- Dodge i-frames -----------------------------------------------------
+	// Melee damage and melee posture damage are thrown out while the target has
+	// State.Combat.Invulnerable (granted by UAH_GA_Dodge during its i-frame window).
+	// UANS_MeleeHitbox already skips invulnerable victims before sending any event;
+	// this is the authoritative backstop (e.g. a hit that landed one tick before the window opened).
+	if (Data.Target.HasMatchingGameplayTag(TAG_State_Combat_Invulnerable))
+	{
+		const bool bIncomingDamage = Data.EvaluatedData.Attribute == GetIncomingDamageAttribute();
+		const bool bPostureDamage = Data.EvaluatedData.Attribute == GetPostureAttribute() && Data.EvaluatedData.Magnitude < 0.f;
+		if (bIncomingDamage || bPostureDamage)
+		{
+			FGameplayTagContainer SpecAssetTags;
+			Data.EffectSpec.GetAllAssetTags(SpecAssetTags);
+			if (SpecAssetTags.HasTag(FBH_GameplayTags::Get().Damage_Type_Melee))
+			{
+				return false;
+			}
 		}
 	}
 
@@ -276,6 +346,12 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 	else if (Data.EvaluatedData.Attribute == GetStaminaAttribute())
 	{
 		SetStamina(FMath::Clamp(GetStamina(), 0.f, GetMaxStamina()));
+
+		// Any spend (negative delta) holds off passive regen for a moment; regen ticks are positive and don't.
+		if (Data.EvaluatedData.Magnitude < 0.f)
+		{
+			StartStaminaRegenDelay(TargetASC);
+		}
 	}
 }
 
@@ -298,6 +374,28 @@ void UAH_AttributeSet::StartPostureRegenDelay(UAbilitySystemComponent* TargetASC
 		if (UAbilitySystemComponent* ASC = WeakASC.Get())
 		{
 			ASC->SetLooseGameplayTagCount(TAG_State_Combat_PostureRegenDelayed, 0);
+		}
+	}), Delay, false);
+}
+
+void UAH_AttributeSet::StartStaminaRegenDelay(UAbilitySystemComponent* TargetASC)
+{
+	const float Delay = CVarBHStaminaRegenDelay.GetValueOnGameThread();
+	UWorld* World = TargetASC ? TargetASC->GetWorld() : nullptr;
+	if (!World || Delay <= 0.f)
+	{
+		return;
+	}
+
+	// Loose tag, same pattern as the posture delay: UAH_GE_StaminaRegen is inhibited while it is present; re-spending restarts the timer.
+	TargetASC->SetLooseGameplayTagCount(TAG_State_Combat_StaminaRegenDelayed, 1);
+
+	TWeakObjectPtr<UAbilitySystemComponent> WeakASC(TargetASC);
+	World->GetTimerManager().SetTimer(StaminaRegenDelayTimer, FTimerDelegate::CreateWeakLambda(this, [WeakASC]()
+	{
+		if (UAbilitySystemComponent* ASC = WeakASC.Get())
+		{
+			ASC->SetLooseGameplayTagCount(TAG_State_Combat_StaminaRegenDelayed, 0);
 		}
 	}), Delay, false);
 }

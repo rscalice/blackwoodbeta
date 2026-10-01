@@ -7,6 +7,7 @@
 #include "AbilitySystemComponent.h"
 #include "Blueprint/WidgetTree.h"
 #include "UObject/UObjectIterator.h"
+#include "GameFramework/PlayerController.h"
 
 void UBH_HUDWidget::InitializeHUD(UAbilitySystemComponent* ASC)
 {
@@ -21,7 +22,10 @@ void UBH_HUDWidget::InitializeHUD(UAbilitySystemComponent* ASC)
 			if (UBH_HUDWidget* Child = Cast<UBH_HUDWidget>(Widget))
 			{
 				Child->bIsNestedHUD = true;
-				Child->InitializeHUD(ASC);
+				if (!Child->bExcludeFromParentInit)
+				{
+					Child->InitializeHUD(ASC);
+				}
 			}
 		});
 	}
@@ -186,6 +190,32 @@ void UBH_HUDWidget::BroadcastStanceChanged(const AActor* Character, const FStrin
 		if (Widget->BoundASC->GetAvatarActor() == Character)
 		{
 			Widget->NotifyStanceChanged(StanceName);
+		}
+	}
+}
+
+void UBH_HUDWidget::NotifyLockedTargetChanged(AActor* Target)
+{
+	HandleLockedTargetChanged(Target);
+	K2_OnLockedTargetChanged(Target);
+}
+
+void UBH_HUDWidget::BroadcastLockedTargetChanged(const APlayerController* PC, AActor* Target)
+{
+	if (!PC)
+	{
+		return;
+	}
+	for (TObjectIterator<UBH_HUDWidget> It; It; ++It)
+	{
+		UBH_HUDWidget* Widget = *It;
+		if (!Widget || Widget->IsTemplate() || !Widget->GetWorld())
+		{
+			continue;
+		}
+		if (Widget->GetOwningPlayer() == PC)
+		{
+			Widget->NotifyLockedTargetChanged(Target);
 		}
 	}
 }

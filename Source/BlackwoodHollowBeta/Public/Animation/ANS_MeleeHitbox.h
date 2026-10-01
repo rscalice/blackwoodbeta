@@ -97,12 +97,17 @@ public:
 	int32 MaxHitsPerActor = 0;
 
 	/**
-	 * Multi-hit mode: if the blade moved more than this (uu) between two ticks, the motion is split into several
-	 * sub-sweeps along an interpolated ARC (blade direction is slerped, not just the points lerped), so fast spins
-	 * neither skip thin targets nor cut the corner of the arc. 0 = off.
+	 * If the blade moved more than this (uu) between two ticks, the motion is split into several sub-sweeps along
+	 * an interpolated ARC (blade direction is slerped, not just the points lerped), so fast swings and spins
+	 * neither skip thin targets nor cut the corner of the arc. 0 = off. Used in multi-hit mode, and in single-hit
+	 * mode when bSubstepArc is on.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitbox|MultiHit", meta = (EditCondition = "bAllowMultipleHits", ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitbox|Arc", meta = (ClampMin = "0.0"))
 	float SubstepDistance = 30.f;
+
+	/** Arc sub-stepping also for normal single-hit windows (default on). Off = one straight sweep per sample point, as before Phase 7A. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hitbox|Arc")
+	bool bSubstepArc = true;
 
 	/**
 	 * If false (default), actors on the attacker's own combat team are ignored entirely

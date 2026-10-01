@@ -44,6 +44,8 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue) override;
 	virtual void PreAttributeBaseChange(const FGameplayAttribute& Attribute, float& NewValue) const override;
+	/** Phase 8C: when MaxHealth / MaxPosture / MaxStamina drops (e.g. an equipment mod), the current value is pulled down to the new max. */
+	virtual void PostAttributeChange(const FGameplayAttribute& Attribute, float OldValue, float NewValue) override;
 	virtual bool PreGameplayEffectExecute(FGameplayEffectModCallbackData& Data) override;
 	virtual void PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data) override;
 
@@ -83,7 +85,7 @@ public:
 	FGameplayAttributeData PostureRegenRate;
 	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, PostureRegenRate)
 
-	// -- Stamina (nothing consumes it yet; regen + clamping are in place) -
+	// -- Stamina (spent by dodge / melee swings / block impacts; regen pauses briefly after every spend) -
 	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Stamina", ReplicatedUsing = OnRep_Stamina)
 	FGameplayAttributeData Stamina;
 	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, Stamina)
@@ -182,7 +184,11 @@ private:
 	/** Posture just took damage: pause passive regen (State.Combat.PostureRegenDelayed) for bh.Combat.PostureRegenDelay seconds. */
 	void StartPostureRegenDelay(UAbilitySystemComponent* TargetASC);
 
+	/** Stamina was just spent: pause passive regen (State.Combat.StaminaRegenDelayed) for bh.Combat.StaminaRegenDelay seconds. */
+	void StartStaminaRegenDelay(UAbilitySystemComponent* TargetASC);
+
 	FTimerHandle PostureRegenDelayTimer;
+	FTimerHandle StaminaRegenDelayTimer;
 
 	// Set in PreGameplayEffectExecute when an IncomingDamage mod is blocked, consumed in PostGameplayEffectExecute.
 	bool bPendingBlockedHit = false;

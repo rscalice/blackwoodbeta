@@ -22,7 +22,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Abilities/GameplayAbility.h"
+#include "AbilitySystem/Abilities/AH_GA_StaminaBase.h"
 #include "AH_GA_Block.generated.h"
 
 class UAnimMontage;
@@ -30,7 +30,7 @@ class UAbilitySystemComponent;
 class UAbilityTask_PlayMontageAndWait;
 
 UCLASS(Blueprintable)
-class BLACKWOODHOLLOWBETA_API UAH_GA_Block : public UGameplayAbility
+class BLACKWOODHOLLOWBETA_API UAH_GA_Block : public UAH_GA_StaminaBase
 {
 	GENERATED_BODY()
 
@@ -58,6 +58,14 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block", meta = (ClampMin = "0.0"))
 	float PostureDamageScale = 0.5f;
 
+	/**
+	 * Stamina drained from the blocker per blocked hit = the hit's posture cost (Event.Combat.BlockImpact magnitude) * this.
+	 * Raising the guard itself is free (StaminaCost defaults to 0). When a block impact drains Stamina to 0 the guard
+	 * breaks: the remaining Posture is removed in the same hit (-> the normal posture break) and the block ends.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block|Stamina", meta = (ClampMin = "0.0"))
+	float BlockStaminaScale = 1.f;
+
 	/** Width of the frontal arc that can be blocked (180 = anything in front). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block", meta = (ClampMin = "0.0", ClampMax = "360.0"))
 	float BlockAngleDegrees = 120.f;
@@ -77,6 +85,9 @@ protected:
 private:
 	UFUNCTION() void OnMontageInterrupted();
 	UFUNCTION() void OnBlockImpact(FGameplayEventData Payload);
+
+	/** Block impact: spend stamina (PostureCost * BlockStaminaScale); on empty, break posture and end the block. */
+	void DrainStaminaForBlock(float PostureCost);
 
 	bool MontageHasSection(FName SectionName) const;
 	void SetSectionLink(FName From, FName To) const;

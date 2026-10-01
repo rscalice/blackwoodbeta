@@ -13,6 +13,8 @@
 
 class UStaticMesh;
 class USkeletalMesh;
+class UTexture2D;
+class UGameplayAbility;
 
 /** Which hand/socket a weapon mesh attaches to. */
 UENUM(BlueprintType)
@@ -48,6 +50,19 @@ struct BLACKWOODHOLLOWBETA_API FBH_WeaponMeshSlot
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon")
 	FTransform RelativeTransform = FTransform::Identity;
 
+	/**
+	 * Per-weapon blade line for UANS_MeleeHitbox, used when the mesh has no weapon_root / weapon_tip sockets.
+	 * BladeRootLocal / BladeTipLocal are in the weapon COMPONENT's local space (guard side / tip side).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Blade")
+	bool bUseBladeOverride = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Blade", meta = (EditCondition = "bUseBladeOverride"))
+	FVector BladeRootLocal = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Blade", meta = (EditCondition = "bUseBladeOverride"))
+	FVector BladeTipLocal = FVector::ZeroVector;
+
 	bool HasMesh() const { return !StaticMesh.IsNull() || !SkeletalMesh.IsNull(); }
 };
 
@@ -62,4 +77,12 @@ struct BLACKWOODHOLLOWBETA_API FBH_OverlayWeaponLoadout
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon")
 	FBH_WeaponMeshSlot OffHand;
+
+	/** HUD stance emblem for this pose (UBH_VitalsClusterWidget). An entry may set ONLY this (empty weapon slots = unarmed). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Stance")
+	TObjectPtr<UTexture2D> StanceIcon;
+
+	/** Melee combo ability used while this stance is active (UBH_CombatFunctionLibrary::GetMeleeAbilityForPose). Empty = caller's fallback. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Stance")
+	TSubclassOf<UGameplayAbility> MeleeAbility;
 };

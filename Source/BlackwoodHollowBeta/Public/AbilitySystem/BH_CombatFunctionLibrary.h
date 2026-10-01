@@ -25,6 +25,7 @@
 #include "BH_CombatFunctionLibrary.generated.h"
 
 class UGameplayAbility;
+class UAbilitySystemComponent;
 class ACharacter;
 class UMeshComponent;
 class USkeletalMeshComponent;
@@ -34,6 +35,7 @@ class USkeletalMesh;
 class APawn;
 class UUserWidget;
 class UBH_HUDWidget;
+class UTexture2D;
 
 UCLASS()
 class BLACKWOODHOLLOWBETA_API UBH_CombatFunctionLibrary : public UBlueprintFunctionLibrary
@@ -45,12 +47,35 @@ public:
 	 * One-shot combat setup for a character: resolves its AbilitySystemComponent
 	 * (via IAbilitySystemInterface, falling back to a component search), calls
 	 * InitAbilityActorInfo, spawns + registers UAH_AttributeSet if not already
-	 * present, and (server-only) grants OverloadBurstAbilityClass if set.
+	 * present, and (server-only) hands off to the character's UBPC_HeartFragment to grant its fragment loadout.
+	 * OverloadBurstAbilityClass is DEPRECATED and ignored: Overload Burst is now a fragment in
+	 * UBPC_HeartFragment::EquippedFragments (granting it here too would double-grant).
 	 * Call once from the character's BeginPlay.
 	 * @return true if an AbilitySystemComponent was found and initialized.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Combat")
 	static bool SetupCombatCharacter(AActor* OwningActor, TSubclassOf<UGameplayAbility> OverloadBurstAbilityClass);
+
+	/**
+	 * Heart-Fragment key N: fires slot Slot (0-based) of OwningActor's UBPC_HeartFragment. Wire to IA_Fragment_N Started.
+	 * @return true if an activation was started.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Combat")
+	static bool HandleFragmentInput(AActor* OwningActor, int32 Slot);
+
+	/**
+	 * Data-driven stance emblem: StanceIcon of the loadout entry for PoseDisplayName in Character's weapon loadouts
+	 * (its "WeaponLoadouts" object variable, else its UBH_StanceWatcherComponent::FallbackLoadouts). Null if none.
+	 */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Overlay")
+	static UTexture2D* GetStanceIconForPose(const AActor* Character, FName PoseDisplayName);
+
+	/**
+	 * Data-driven melee combo ability for a stance: MeleeAbility of the loadout entry for PoseDisplayName
+	 * (same lookup as GetStanceIconForPose). Null if the entry is missing or has no ability set.
+	 */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Overlay")
+	static TSubclassOf<UGameplayAbility> GetMeleeAbilityForPose(const AActor* Character, FName PoseDisplayName);
 
 	/**
 	 * Sets the GASP OverlayPose on TargetCharacter by looking up the entry in
@@ -106,6 +131,40 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Combat")
 	static bool HandleBlockInput(AActor* OwningActor, TSubclassOf<UGameplayAbility> BlockAbilityClass, bool bPressed);
+
+	/**
+	 * Dodge button: tries to activate whichever granted ability carries the tag Ability.Combat.Dodge
+	 * (UAH_GA_Dodge picks the direction montage itself). Wire to the dodge action's Started.
+	 * @return true if the ability activated.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Combat")
+	static bool HandleDodgeInput(AActor* OwningActor);
+
+	/**
+	 * Parry button: tries to activate whichever granted ability carries the tag Ability.Combat.Parry.
+	 * @return true if the ability activated.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Combat")
+	static bool HandleParryInput(AActor* OwningActor);
+
+	// -- Stamina ---------------------------------------------------------------
+
+	/**
+	 * Can ASC's owner afford Cost? Requires Stamina >= Cost, or just Stamina > 0 when bAllowOvercommit
+	 * (the souls feel for attacks: you may start a swing on a sliver of stamina, it just floors at 0).
+	 * Cost <= 0 is always affordable.
+	 */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Combat|Stamina")
+	static bool CheckStaminaCost(const UAbilitySystemComponent* ASC, float Cost, bool bAllowOvercommit = false);
+
+	/**
+	 * Spends Cost stamina (instant UAH_GE_StaminaCost, SetByCaller Data.StaminaCost). Needs authority or a valid
+	 * prediction key (i.e. call it from an ability's commit / activation). Stamina floors at 0; any spend starts the
+	 * bh.Combat.StaminaRegenDelay pause. Cost <= 0 does nothing.
+	 * @return true if the effect was applied.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Combat|Stamina")
+	static bool ApplyStaminaCost(UAbilitySystemComponent* ASC, float Cost);
 
 	/**
 	 * Applies the passive regeneration effects (UAH_GE_PostureRegen, UAH_GE_StaminaRegen)
@@ -239,6 +298,17 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons|Tuning")
 	static bool StoreEquippedWeaponOffsetInLoadout(ACharacter* Character, EBH_WeaponSlot Slot, UBH_WeaponLoadoutDataAsset* Loadouts);
+
+	// -- GASP movement ---------------------------------------------------------
+
+	/**
+	 * Sets the GASP CharacterInputState.WantsToStrafe flag (reflection: the struct is a UserDefinedStruct with
+	 * mangled member names) and forwards it to the server through UpdateInputState_Server like the Blueprint does.
+	 * While set, the character turns toward the controller rotation (lock-on camera, AI SetFocus).
+	 * @param OutPrevious receives the value before the call, if non-null.
+	 * @return false if the pawn is not a GASP SandboxCharacter (no such struct / member).
+	 */
+	static bool SetCharacterWantsToStrafe(APawn* Pawn, bool bValue, bool* OutPrevious = nullptr);
 
 	// -- Animation -------------------------------------------------------------
 

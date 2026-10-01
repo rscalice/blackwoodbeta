@@ -55,6 +55,10 @@ public:
 
 	// -- Setup ---------------------------------------------------------------
 
+	/** Name shown on the lock-on target vitals. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Enemy")
+	FText DisplayName;
+
 	/** Team for friendly-fire filtering: same-team hitboxes never connect. Neutral = hittable by everyone. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Enemy")
 	EBH_CombatTeam CombatTeam = EBH_CombatTeam::Enemies;

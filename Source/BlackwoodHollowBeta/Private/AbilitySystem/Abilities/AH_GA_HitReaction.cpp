@@ -26,6 +26,8 @@ UAH_GA_HitReaction::UAH_GA_HitReaction()
 	// Posture break / death own the character's animation; blocked hits use Event.Combat.BlockImpact instead.
 	ActivationBlockedTags.AddTag(TAG_State_Combat_PostureBroken);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Dead);
+	// Hyper armor (e.g. greatsword swing): damage still lands, but the attacker is not staggered / interrupted.
+	ActivationBlockedTags.AddTag(TAG_State_Combat_HyperArmor);
 
 	// Getting hit interrupts your own swing / parry.
 	CancelAbilitiesWithTag.AddTag(TAG_Ability_Combat_MeleeAttack);

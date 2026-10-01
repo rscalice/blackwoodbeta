@@ -25,6 +25,7 @@
 #include "BH_HUDWidget.generated.h"
 
 class UAbilitySystemComponent;
+class APlayerController;
 
 UCLASS(Abstract, Blueprintable)
 class BLACKWOODHOLLOWBETA_API UBH_HUDWidget : public UUserWidget
@@ -71,6 +72,12 @@ public:
 	/** Pushes a stance change to every live HUD widget bound to Character's ASC. */
 	static void BroadcastStanceChanged(const AActor* Character, const FString& StanceName);
 
+	/** Tells every live HUD widget owned by PC that the lock-on target changed (Target may be null). */
+	static void BroadcastLockedTargetChanged(const APlayerController* PC, AActor* Target);
+
+	/** Pushes a lock-on target change into this widget. */
+	void NotifyLockedTargetChanged(AActor* Target);
+
 protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual void NativeDestruct() override;
@@ -81,6 +88,7 @@ protected:
 	virtual void HandlePostureChanged(float Posture, float MaxPosture) {}
 	virtual void HandlePostureBrokenChanged(bool bBroken) {}
 	virtual void HandleStanceChanged(const FString& StanceName) {}
+	virtual void HandleLockedTargetChanged(AActor* Target) {}
 
 	// -- Blueprint events -------------------------------------------------------
 	UFUNCTION(BlueprintImplementableEvent, Category = "BlackwoodHollow|HUD", meta = (DisplayName = "On Health Updated"))
@@ -98,6 +106,14 @@ protected:
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "BlackwoodHollow|HUD", meta = (DisplayName = "On Posture Broken Changed"))
 	void K2_OnPostureBrokenChanged(bool bBroken);
+
+	/** Lock-on target changed (null = lock released). */
+	UFUNCTION(BlueprintImplementableEvent, Category = "BlackwoodHollow|HUD", meta = (DisplayName = "On Locked Target Changed"))
+	void K2_OnLockedTargetChanged(AActor* Target);
+
+	/** When true a parent HUD widget's InitializeHUD skips this widget (it binds to some other ASC, e.g. the lock-on target). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|HUD")
+	bool bExcludeFromParentInit = false;
 
 	/** Seconds between OverlayPose replication checks (root widget only). */
 	UPROPERTY(EditAnywhere, Category = "BlackwoodHollow|HUD", meta = (ClampMin = "0.05"))
