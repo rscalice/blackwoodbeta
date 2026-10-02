@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Animation/AnimNotifies/AnimNotify.h"
+#include "Combat/BH_CombatFeel.h"
 #include "BH_AN_PlayRandomSound.generated.h"
 
 class USoundBase;
@@ -12,6 +13,10 @@ class USoundAttenuation;
 /**
  * Picks one of Sounds at random (never the same twice in a row) and plays it at the mesh, or at AttachSocketName
  * if that socket exists. Cosmetic only: skipped on dedicated servers.
+ *
+ * Chance gates the whole notify (0.6 on light combo steps so efforts are not repetitive). With bUseOwnerVoiceSet the
+ * sound comes from the owning character's voice set (UBH_CombatIdentityComponent::VoiceSet, or the player's default on
+ * DA_CombatFeel) for VoiceCategory, with that set's pitch multiplier, and Sounds is ignored.
  */
 UCLASS(meta = (DisplayName = "Play Random Sound"))
 class BLACKWOODHOLLOWBETA_API UBH_AN_PlayRandomSound : public UAnimNotify
@@ -39,4 +44,15 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
 	TObjectPtr<USoundAttenuation> Attenuation;
+
+	/** Probability (0..1) that this notify plays anything. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float Chance = 1.f;
+
+	/** Resolve the sounds from the owner's voice set instead of Sounds. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
+	bool bUseOwnerVoiceSet = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice", meta = (EditCondition = "bUseOwnerVoiceSet"))
+	EBH_VoiceCategory VoiceCategory = EBH_VoiceCategory::AttackLight;
 };

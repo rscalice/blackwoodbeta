@@ -15,6 +15,11 @@ UBH_AN_PlayRandomSound::UBH_AN_PlayRandomSound()
 
 FString UBH_AN_PlayRandomSound::GetNotifyName_Implementation() const
 {
+	if (bUseOwnerVoiceSet)
+	{
+		const UEnum* Enum = StaticEnum<EBH_VoiceCategory>();
+		return FString::Printf(TEXT("Voice %s (%.0f%%)"), Enum ? *Enum->GetNameStringByValue(static_cast<int64>(VoiceCategory)) : TEXT("?"), Chance * 100.f);
+	}
 	return FString::Printf(TEXT("Random Sound (%d)"), Sounds.Num());
 }
 
@@ -23,6 +28,17 @@ void UBH_AN_PlayRandomSound::Notify(USkeletalMeshComponent* MeshComp, UAnimSeque
 	Super::Notify(MeshComp, Animation, EventReference);
 
 	if (!MeshComp)
+	{
+		return;
+	}
+
+	if (bUseOwnerVoiceSet)
+	{
+		UBH_CombatFeelLibrary::PlayVoice(MeshComp->GetOwner(), VoiceCategory, Chance);
+		return;
+	}
+
+	if (Chance < 1.f && FMath::FRand() > Chance)
 	{
 		return;
 	}

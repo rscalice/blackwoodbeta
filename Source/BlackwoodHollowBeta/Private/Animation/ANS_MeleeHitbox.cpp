@@ -3,6 +3,7 @@
 #include "Animation/ANS_MeleeHitbox.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Combat/BH_WeaponTrailComponent.h"
 #include "Combat/BH_WeaponBladeData.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -29,20 +30,18 @@ FString UANS_MeleeHitbox::GetNotifyName_Implementation() const
 		WeaponSlot == EBH_WeaponSlot::OffHand ? TEXT("Off") : TEXT("Main"), DamageMultiplier);
 }
 
-bool UANS_MeleeHitbox::GetWeaponPoints(USkeletalMeshComponent* MeshComp, TArray<FVector>& OutPoints) const
+bool UANS_MeleeHitbox::GetBladeRootTip(USkeletalMeshComponent* MeshComp, EBH_WeaponSlot Slot, FName RootSocketName, FName TipSocketName,
+	bool bUseWeaponBoundsIfSocketsMissing, FVector& Root, FVector& Tip)
 {
-	OutPoints.Reset();
 	if (!MeshComp)
 	{
 		return false;
 	}
 
-	FVector Root = FVector::ZeroVector;
-	FVector Tip = FVector::ZeroVector;
 	bool bFound = false;
 
 	// 1) Sockets on the equipped weapon mesh.
-	UMeshComponent* Weapon = UBH_CombatFunctionLibrary::GetEquippedWeaponComponent(MeshComp->GetOwner(), WeaponSlot);
+	UMeshComponent* Weapon = UBH_CombatFunctionLibrary::GetEquippedWeaponComponent(MeshComp->GetOwner(), Slot);
 	if (Weapon && Weapon->DoesSocketExist(RootSocketName) && Weapon->DoesSocketExist(TipSocketName))
 	{
 		Root = Weapon->GetSocketLocation(RootSocketName);
@@ -50,7 +49,7 @@ bool UANS_MeleeHitbox::GetWeaponPoints(USkeletalMeshComponent* MeshComp, TArray<
 		bFound = true;
 	}
 	// 2) Per-weapon blade line from the loadout (FBH_WeaponMeshSlot::bUseBladeOverride), component-local.
-	else if (Weapon && Weapon->GetAssetUserData<UBH_WeaponBladeData>())
+	else if (Weapon && Weapon->GetAssetUserData<UBH_WeaponBladeData>() && Weapon->GetAssetUserData<UBH_WeaponBladeData>()->bHasBladeLine)
 	{
 		const UBH_WeaponBladeData* Blade = Weapon->GetAssetUserData<UBH_WeaponBladeData>();
 		const FTransform& WeaponTransform = Weapon->GetComponentTransform();
@@ -87,7 +86,15 @@ bool UANS_MeleeHitbox::GetWeaponPoints(USkeletalMeshComponent* MeshComp, TArray<
 		bFound = true;
 	}
 
-	if (!bFound)
+	return bFound;
+}
+
+bool UANS_MeleeHitbox::GetWeaponPoints(USkeletalMeshComponent* MeshComp, TArray<FVector>& OutPoints) const
+{
+	OutPoints.Reset();
+	FVector Root = FVector::ZeroVector;
+	FVector Tip = FVector::ZeroVector;
+	if (!GetBladeRootTip(MeshComp, WeaponSlot, RootSocketName, TipSocketName, bUseWeaponBoundsIfSocketsMissing, Root, Tip))
 	{
 		return false;
 	}
@@ -108,6 +115,13 @@ void UANS_MeleeHitbox::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequen
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
 
 	AActor* Owner = MeshComp ? MeshComp->GetOwner() : nullptr;
+
+	// Cosmetic swing trail: every machine (simulated proxies included).
+	if (UBH_WeaponTrailComponent* Trail = UBH_WeaponTrailComponent::FindOrCreate(Owner))
+	{
+		Trail->BeginTrail(MeshComp, this);
+	}
+
 	if (!Owner || Owner->GetLocalRole() == ROLE_SimulatedProxy)
 	{
 		// Simulated proxies never own the damage decision; skip the traces entirely.
@@ -159,6 +173,14 @@ void UANS_MeleeHitbox::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenc
 void UANS_MeleeHitbox::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
 	const FAnimNotifyEventReference& EventReference)
 {
+	if (MeshComp && MeshComp->GetOwner())
+	{
+		if (UBH_WeaponTrailComponent* Trail = MeshComp->GetOwner()->FindComponentByClass<UBH_WeaponTrailComponent>())
+		{
+			Trail->EndTrail(WeaponSlot);
+		}
+	}
+
 	// Final sweep from the last ticked pose to the end pose. At low frame rates a
 	// short window can begin and end within one frame with no NotifyTick at all.
 	if (FSwingState* Swing = ActiveSwings.Find(MeshComp))

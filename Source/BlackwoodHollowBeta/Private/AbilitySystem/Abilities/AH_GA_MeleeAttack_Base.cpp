@@ -541,6 +541,8 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 		CueParams.EffectCauser = AttackerActor;
 		CueParams.SourceObject = Target;
 		CueParams.RawMagnitude = DamageApplied;
+		// Step posture multiplier x hitbox multiplier: lets the hit cue recognise finishers (UBH_CombatFeelLibrary::TierForHit).
+		CueParams.NormalizedMagnitude = GetStepPostureMultiplier(ComboStep) * HitboxMultiplier;
 		// Impact point of the blade sweep; left zero when unknown so the cue can fall back to chest height on the victim.
 		CueParams.Location = HitResult.ImpactPoint.IsZero() ? FVector::ZeroVector : FVector(HitResult.ImpactPoint);
 		CueParams.Normal = (Target->GetActorLocation() - AttackerActor->GetActorLocation()).GetSafeNormal();

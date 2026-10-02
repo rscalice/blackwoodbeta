@@ -81,7 +81,7 @@ bool UAH_GA_Block::IsAttackInBlockArc(const AActor* Attacker) const
 
 bool UAH_GA_Block::MontageHasSection(FName SectionName) const
 {
-	return GuardMontage && GuardMontage->IsValidSectionName(SectionName);
+	return ActiveGuardMontage && ActiveGuardMontage->IsValidSectionName(SectionName);
 }
 
 void UAH_GA_Block::SetSectionLink(FName From, FName To) const
@@ -92,7 +92,7 @@ void UAH_GA_Block::SetSectionLink(FName From, FName To) const
 	}
 	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 	{
-		if (ASC->GetCurrentMontage() == GuardMontage)
+		if (ASC->GetCurrentMontage() == ActiveGuardMontage)
 		{
 			ASC->CurrentMontageSetNextSectionName(From, MontageHasSection(To) ? To : NAME_None);
 		}
@@ -104,6 +104,22 @@ void UAH_GA_Block::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 {
 	using namespace AH_GA_Block_Private;
 
+	// Stance-specific guard (e.g. both hands on the greatsword hilt); SnS / DS and anything unlisted use GuardMontage.
+	ActiveGuardMontage = GuardMontage;
+	{
+		const FString Stance = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
+		if (!Stance.IsEmpty())
+		{
+			if (const TObjectPtr<UAnimMontage>* Found = StanceGuardMontages.Find(FName(*Stance)))
+			{
+				if (*Found)
+				{
+					ActiveGuardMontage = *Found;
+				}
+			}
+		}
+	}
+
 	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -114,14 +130,14 @@ void UAH_GA_Block::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 	ImpactTask->EventReceived.AddDynamic(this, &UAH_GA_Block::OnBlockImpact);
 	ImpactTask->ReadyForActivation();
 
-	if (GuardMontage)
+	if (ActiveGuardMontage)
 	{
 		const FName FirstSection = MontageHasSection(StartSection()) ? StartSection()
 			: (MontageHasSection(LoopSection()) ? LoopSection() : NAME_None);
 
 		// bStopWhenAbilityEnds = false so the "End" (lower guard) section can finish after release.
 		MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-			this, NAME_None, GuardMontage, MontagePlayRate, FirstSection, /*bStopWhenAbilityEnds*/ false);
+			this, NAME_None, ActiveGuardMontage, MontagePlayRate, FirstSection, /*bStopWhenAbilityEnds*/ false);
 		MontageTask->OnInterrupted.AddDynamic(this, &UAH_GA_Block::OnMontageInterrupted);
 		MontageTask->OnCancelled.AddDynamic(this, &UAH_GA_Block::OnMontageInterrupted);
 		MontageTask->ReadyForActivation();
@@ -141,7 +157,7 @@ void UAH_GA_Block::OnBlockImpact(FGameplayEventData Payload)
 	{
 		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 		{
-			if (ASC->GetCurrentMontage() == GuardMontage)
+			if (ASC->GetCurrentMontage() == ActiveGuardMontage)
 			{
 				ASC->CurrentMontageJumpToSection(ImpactSection());
 				SetSectionLink(ImpactSection(), LoopSection());
@@ -214,7 +230,7 @@ void UAH_GA_Block::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGa
 	// Lower the guard: play "End" if the guard montage is still up, otherwise just stop it.
 	if (UAbilitySystemComponent* ASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr)
 	{
-		if (GuardMontage && ASC->GetCurrentMontage() == GuardMontage)
+		if (ActiveGuardMontage && ASC->GetCurrentMontage() == ActiveGuardMontage)
 		{
 			if (MontageHasSection(EndSection()))
 			{

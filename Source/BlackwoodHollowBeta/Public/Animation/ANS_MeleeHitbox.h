@@ -134,6 +134,13 @@ public:
 
 	virtual FString GetNotifyName_Implementation() const override;
 
+	/**
+	 * Blade root / tip in world space for the weapon equipped in Slot (weapon-mesh sockets > per-weapon blade line > longest bounds axis >
+	 * same sockets on the character mesh). Shared by the hitbox sampling and UBH_WeaponTrailComponent.
+	 */
+	static bool GetBladeRootTip(USkeletalMeshComponent* MeshComp, EBH_WeaponSlot Slot, FName RootSocket, FName TipSocket, bool bUseBoundsFallback,
+		FVector& OutRoot, FVector& OutTip);
+
 private:
 	struct FSwingState
 	{

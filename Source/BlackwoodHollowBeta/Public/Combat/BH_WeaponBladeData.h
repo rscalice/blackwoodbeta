@@ -18,8 +18,29 @@ class BLACKWOODHOLLOWBETA_API UBH_WeaponBladeData : public UAssetUserData
 	GENERATED_BODY()
 
 public:
+	/** true when RootLocal/TipLocal are a real blade override (this object may also exist only to carry the grip data). */
+	UPROPERTY()
+	bool bHasBladeLine = false;
+
 	UPROPERTY()
 	FVector RootLocal = FVector::ZeroVector;
+
+	/** Two-handed grip, copied from FBH_WeaponMeshSlot (weapon component local space). */
+	UPROPERTY()
+	bool bTwoHandedGrip = false;
+
+	UPROPERTY()
+	FVector PrimaryGripLocal = FVector::ZeroVector;
+
+	/** The authored relative transform to the attach socket (what the two-hand aim rotates away from and restores). */
+	UPROPERTY()
+	FTransform AuthoredRelative = FTransform::Identity;
+
+	UPROPERTY()
+	FVector SecondaryGripLocal = FVector::ZeroVector;
+
+	UPROPERTY()
+	FRotator SecondaryGripRotLocal = FRotator::ZeroRotator;
 
 	UPROPERTY()
 	FVector TipLocal = FVector::ZeroVector;

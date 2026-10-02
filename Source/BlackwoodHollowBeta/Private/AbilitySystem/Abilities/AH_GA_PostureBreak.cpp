@@ -3,6 +3,7 @@
 #include "AbilitySystem/Abilities/AH_GA_PostureBreak.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
@@ -82,9 +83,24 @@ void UAH_GA_PostureBreak::ActivateAbility(const FGameplayAbilitySpecHandle Handl
 
 	K2_OnPostureBroken(TriggerEventData ? const_cast<AActor*>(TriggerEventData->Instigator.Get()) : nullptr);
 
-	if (PostureBreakMontage)
+	UAnimMontage* BreakMontage = PostureBreakMontage;
 	{
-		MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, PostureBreakMontage, MontagePlayRate);
+		const FString Stance = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(GetAvatarActorFromActorInfo());
+		if (!Stance.IsEmpty())
+		{
+			if (const TObjectPtr<UAnimMontage>* Found = StancePostureBreakMontages.Find(FName(*Stance)))
+			{
+				if (*Found)
+				{
+					BreakMontage = *Found;
+				}
+			}
+		}
+	}
+
+	if (BreakMontage)
+	{
+		MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, BreakMontage, MontagePlayRate);
 		// Montage finishing early doesn't end the break - BreakDuration does.
 		MontageTask->OnInterrupted.AddDynamic(this, &UAH_GA_PostureBreak::OnMontageInterrupted);
 		MontageTask->OnCancelled.AddDynamic(this, &UAH_GA_PostureBreak::OnMontageInterrupted);

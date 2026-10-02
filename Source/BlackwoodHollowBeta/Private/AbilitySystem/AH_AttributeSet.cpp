@@ -3,6 +3,7 @@
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
+#include "Combat/BH_CombatFeel.h"
 #include "GameplayCueManager.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayEffectExtension.h"
@@ -299,6 +300,10 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 		{
 			OnHealthZero.Broadcast(Instigator);
 			TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead);
+
+			// Death vocal (cosmetic, this machine). Melee kills are also voiced by the hit cue on every machine; PlayVoice's
+			// 2 s per-actor death limit keeps that from doubling here. Covers non-melee deaths (blight, effects) on the host.
+			UBH_CombatFeelLibrary::PlayVoice(TargetActor, EBH_VoiceCategory::Death);
 
 			FGameplayEventData DeathEvent;
 			DeathEvent.EventTag = Tags.Event_Combat_Death;

@@ -23,6 +23,7 @@
 class UGameplayAbility;
 class UBH_WeaponLoadoutDataAsset;
 class UMaterialInterface;
+class UBH_VoiceSetDataAsset;
 class UAbilitySystemComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnIdentityDeath, AActor*, Killer);
@@ -121,6 +122,14 @@ public:
 	/** Applied as the overlay material to the character's skeletal meshes on every machine. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Look")
 	TObjectPtr<UMaterialInterface> OverlayMaterial;
+
+	/** Vocal efforts / hurt / death sounds for this character (see UBH_VoiceSetDataAsset; pitch multiplier lives there). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Look")
+	TObjectPtr<UBH_VoiceSetDataAsset> VoiceSet;
+
+	/** Overrides the weapon trail material chosen from stance / overlay (see UBH_WeaponTrailComponent). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Look")
+	TObjectPtr<UMaterialInterface> TrailMaterialOverride;
 
 	// -- Events (server) ----------------------------------------------------------------
 

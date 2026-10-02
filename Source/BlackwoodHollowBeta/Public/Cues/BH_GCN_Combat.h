@@ -24,11 +24,15 @@
 #include "GameplayCueNotify_Static.h"
 #include "Camera/CameraShakeBase.h"
 #include "Cues/BH_CueFX.h"
+#include "Combat/BH_CombatFeel.h"
 #include "BH_GCN_Combat.generated.h"
 
 class USoundAttenuation;
 
-/** Hit-stop on attacker + victim, a directional camera shake for the local player if involved, and impact FX. */
+/**
+ * Impact FX for a connecting hit + the tiered "feel" (hit-stop, camera shake, flash) via UBH_CombatFeelLibrary::PlayImpactFeel,
+ * and the victim's hurt / death vocal. Cue params: RawMagnitude = damage, NormalizedMagnitude = step posture multiplier (finisher detection).
+ */
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API UBH_GCN_CombatHit : public UGameplayCueNotify_Static
 {
@@ -39,16 +43,12 @@ public:
 
 	virtual bool OnExecute_Implementation(AActor* MyTarget, const FGameplayCueParameters& Parameters) const override;
 
-	/** Seconds both actors' skeletal meshes freeze (GlobalAnimRateScale = 0). 0 disables. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0.0"))
-	float HitStopDuration = 0.05f;
-
-	/** Played on the local player's camera when the attacker or victim is their pawn. Default: UBH_CameraShake_Hit. */
+	/** Use FixedTier instead of the damage-based tier (shield bash = Medium). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit")
-	TSubclassOf<UCameraShakeBase> HitShakeClass;
+	bool bUseFixedTier = false;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (ClampMin = "0.0"))
-	float HitShakeScale = 1.f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit", meta = (EditCondition = "bUseFixedTier"))
+	EBH_ImpactTier FixedTier = EBH_ImpactTier::Medium;
 
 	/** Impact FX when the victim took the hit (blood, flesh sounds). Spawned at the impact point, oriented along the hit normal. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit|FX")
@@ -74,7 +74,7 @@ public:
 	float MinSoundInterval = 0.1f;
 };
 
-/** Longer hit-stop on parrier + attacker and a heavier camera punch for the local parrier. */
+/** Heavy-tier feel (hit-stop on both, camera punch for the local parrier) and the clash FX. */
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API UBH_GCN_ParrySuccess : public UGameplayCueNotify_Static
 {
@@ -84,16 +84,6 @@ public:
 	UBH_GCN_ParrySuccess();
 
 	virtual bool OnExecute_Implementation(AActor* MyTarget, const FGameplayCueParameters& Parameters) const override;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Parry", meta = (ClampMin = "0.0"))
-	float HitStopDuration = 0.08f;
-
-	/** Default: UBH_CameraShake_ParryPunch. Only played for the parrier (MyTarget) when they are the local pawn. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Parry")
-	TSubclassOf<UCameraShakeBase> ParryShakeClass;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Parry", meta = (ClampMin = "0.0"))
-	float ParryShakeScale = 1.f;
 
 	/** Clash FX spawned between parrier and attacker (midpoint, raised by ParryFXHeight). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Parry|FX")
@@ -107,7 +97,7 @@ public:
 	float ParryFXHeight = 120.f;
 };
 
-/** Spawns PrimaryFX and SecondaryFX (system + random sound each) at the broken actor. */
+/** Spawns PrimaryFX and SecondaryFX (system + random sound each) at the broken actor, Massive-tier feel, and the broken actor's groan. */
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API UBH_GCN_PostureBroken : public UGameplayCueNotify_Static
 {

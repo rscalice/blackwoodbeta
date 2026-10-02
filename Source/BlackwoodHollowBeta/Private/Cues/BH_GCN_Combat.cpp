@@ -1,9 +1,11 @@
 // Blackwood Hollow - Combat GameplayCue notifies (implementation)
 
 #include "Cues/BH_GCN_Combat.h"
-#include "Cues/BH_CameraShakes.h"
 #include "Cues/BH_CueUtils.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "AbilitySystem/AH_AttributeSet.h"
+#include "AbilitySystemBlueprintLibrary.h"
+#include "AbilitySystemComponent.h"
 #include "GameplayCueManager.h"
 #include "NiagaraSystem.h"
 #include "Sound/SoundAttenuation.h"
@@ -54,7 +56,6 @@ namespace
 UBH_GCN_CombatHit::UBH_GCN_CombatHit()
 {
 	GameplayCueTag = TAG_GameplayCue_Combat_Hit;
-	HitShakeClass = UBH_CameraShake_Hit::StaticClass();
 }
 
 bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGameplayCueParameters& Parameters) const
@@ -69,20 +70,6 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 	UE_LOG(LogBHCue, Log, TEXT("BH_GCN_CombatHit: attacker=%s victim=%s dmg=%.1f"),
 		*GetNameSafe(Attacker), *GetNameSafe(Victim), Parameters.RawMagnitude);
 
-	if (HitStopDuration > 0.f)
-	{
-		BH_CueUtils::ApplyHitStop(Attacker, HitStopDuration);
-		if (Victim != Attacker)
-		{
-			BH_CueUtils::ApplyHitStop(Victim, HitStopDuration);
-		}
-	}
-
-	if (UCameraShakeBase* Shake = BH_CueUtils::PlayDirectionalShake(Attacker, Victim, HitShakeClass, HitShakeScale, FVector(Parameters.Normal)))
-	{
-		UE_LOG(LogBHCue, Log, TEXT("BH_GCN_CombatHit: camera shake %s started"), *GetNameSafe(Shake));
-	}
-
 	// Impact FX: blade impact point if the ability supplied one, otherwise chest height on the victim.
 	const bool bBlocked = Parameters.AggregatedSourceTags.HasTag(TAG_Combat_HitResult_Blocked);
 	FVector ImpactLocation = FVector(Parameters.Location);
@@ -93,6 +80,30 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 	}
 	const FVector Normal = FVector(Parameters.Normal);
 	const FRotator ImpactRotation = Normal.IsNearlyZero() ? FRotator::ZeroRotator : Normal.Rotation();
+
+	// Tiered feel (hit-stop + shake + flash) and vocals. Tier rules live in BH_CombatFeel.h.
+	bool bBlockerStaminaZero = false;
+	bool bFatal = false;
+	if (const UAbilitySystemComponent* VictimASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Victim))
+	{
+		if (VictimASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetStaminaAttribute()))
+		{
+			bBlockerStaminaZero = VictimASC->GetNumericAttribute(UAH_AttributeSet::GetStaminaAttribute()) <= 0.f;
+			bFatal = !bBlocked && (VictimASC->HasMatchingGameplayTag(TAG_State_Combat_Dead)
+				|| VictimASC->GetNumericAttribute(UAH_AttributeSet::GetHealthAttribute()) <= 0.f);
+		}
+	}
+	EBH_ImpactTier Tier = bUseFixedTier ? FixedTier : UBH_CombatFeelLibrary::TierForHit(Parameters.RawMagnitude, Parameters.NormalizedMagnitude, bBlocked, bBlockerStaminaZero);
+	if (bFatal && Tier < EBH_ImpactTier::Heavy)
+	{
+		Tier = EBH_ImpactTier::Heavy;
+	}
+	UBH_CombatFeelLibrary::PlayImpactFeel(Attacker ? Attacker : Victim, Tier, Attacker, Victim, ImpactLocation, /*bEscalateForVictim*/ !bBlocked, false);
+
+	if (Victim && !bBlocked)
+	{
+		UBH_CombatFeelLibrary::PlayVoice(Victim, bFatal ? EBH_VoiceCategory::Death : (Tier >= EBH_ImpactTier::Heavy ? EBH_VoiceCategory::HurtHeavy : EBH_VoiceCategory::Hurt));
+	}
 
 	UE_LOG(LogBHCue, Verbose, TEXT("BH_GCN_CombatHit(%s): %s FX at %s"), *GetNameSafe(this), bBlocked ? TEXT("blocked") : TEXT("flesh"), *ImpactLocation.ToCompactString());
 	// VFX every hit; the impact sound is rate-limited per victim (multi-hit spins would otherwise stack ~1.3 s clips).
@@ -113,7 +124,6 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 UBH_GCN_ParrySuccess::UBH_GCN_ParrySuccess()
 {
 	GameplayCueTag = TAG_GameplayCue_Combat_ParrySuccess;
-	ParryShakeClass = UBH_CameraShake_ParryPunch::StaticClass();
 }
 
 bool UBH_GCN_ParrySuccess::OnExecute_Implementation(AActor* MyTarget, const FGameplayCueParameters& Parameters) const
@@ -135,29 +145,15 @@ bool UBH_GCN_ParrySuccess::OnExecute_Implementation(AActor* MyTarget, const FGam
 
 	UE_LOG(LogBHCue, Log, TEXT("BH_GCN_ParrySuccess: parrier=%s attacker=%s"), *GetNameSafe(Parrier), *GetNameSafe(Attacker));
 
-	if (HitStopDuration > 0.f)
-	{
-		BH_CueUtils::ApplyHitStop(Parrier, HitStopDuration);
-		if (Attacker != Parrier)
-		{
-			BH_CueUtils::ApplyHitStop(Attacker, HitStopDuration);
-		}
-	}
-
-	// Punch only for the local parrier (a local player who merely got parried does not get the big shake).
-	if (Parrier)
-	{
-		if (UCameraShakeBase* Shake = BH_CueUtils::PlayDirectionalShake(Parrier, nullptr, ParryShakeClass, ParryShakeScale, FVector(Parameters.Normal)))
-		{
-			UE_LOG(LogBHCue, Log, TEXT("BH_GCN_ParrySuccess: camera shake %s started"), *GetNameSafe(Shake));
-		}
-	}
-
 	// Clash FX at the midpoint between the two fighters.
 	const FVector ParrierLocation = Parrier ? Parrier->GetActorLocation() : Attacker->GetActorLocation();
 	const FVector AttackerLocation = Attacker ? Attacker->GetActorLocation() : ParrierLocation;
 	const FVector Midpoint = (ParrierLocation + AttackerLocation) * 0.5 + FVector(0.0, 0.0, ParryFXHeight);
 	const FVector Normal = FVector(Parameters.Normal);
+
+	// Heavy feel: hit-stop on both, camera punch only for the local parrier (a local player who merely got parried gets no big shake).
+	UBH_CombatFeelLibrary::PlayImpactFeel(Parrier ? Parrier : Attacker, EBH_ImpactTier::Heavy, Parrier, Attacker, Midpoint, false, /*bInstigatorOnlyShake*/ true);
+
 	BH_CueUtils::PlayCueFX(Parrier ? Parrier : Attacker, ParryFX, Midpoint, Normal.IsNearlyZero() ? FRotator::ZeroRotator : Normal.Rotation(), Attenuation);
 	return true;
 }
@@ -184,6 +180,10 @@ bool UBH_GCN_PostureBroken::OnExecute_Implementation(AActor* MyTarget, const FGa
 
 	UE_LOG(LogBHCue, Log, TEXT("BH_GCN_PostureBroken: target=%s primary=%s secondary=%s"),
 		*GetNameSafe(MyTarget), *GetNameSafe(PrimaryFX.System), *GetNameSafe(SecondaryFX.System));
+
+	AActor* Breaker = const_cast<AActor*>(Cast<AActor>(Parameters.Instigator.Get()));
+	UBH_CombatFeelLibrary::PlayImpactFeel(MyTarget, EBH_ImpactTier::Massive, Breaker, MyTarget, SpawnLocation);
+	UBH_CombatFeelLibrary::PlayVoice(MyTarget, EBH_VoiceCategory::PostureBreak);
 
 	BH_CueUtils::PlayCueFX(MyTarget, PrimaryFX, SpawnLocation, FRotator::ZeroRotator, Attenuation);
 	BH_CueUtils::PlayCueFX(MyTarget, SecondaryFX, SpawnLocation, FRotator::ZeroRotator, Attenuation);

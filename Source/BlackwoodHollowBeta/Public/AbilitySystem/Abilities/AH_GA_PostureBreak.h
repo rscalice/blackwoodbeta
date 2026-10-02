@@ -38,6 +38,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PostureBreak")
 	TObjectPtr<UAnimMontage> PostureBreakMontage;
 
+	/** Stance (GASP OverlayPose display name, e.g. "Greatsword") -> posture break montage. Falls back to PostureBreakMontage. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PostureBreak")
+	TMap<FName, TObjectPtr<UAnimMontage>> StancePostureBreakMontages;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PostureBreak", meta = (ClampMin = "0.1"))
 	float MontagePlayRate = 1.f;
 

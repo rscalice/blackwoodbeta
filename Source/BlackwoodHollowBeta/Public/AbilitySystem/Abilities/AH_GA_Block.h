@@ -47,6 +47,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block")
 	TObjectPtr<UAnimMontage> GuardMontage;
 
+	/** Stance (GASP OverlayPose display name, e.g. "Greatsword") -> guard montage. Falls back to GuardMontage. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block")
+	TMap<FName, TObjectPtr<UAnimMontage>> StanceGuardMontages;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block", meta = (ClampMin = "0.1"))
 	float MontagePlayRate = 1.f;
 
@@ -94,4 +98,8 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+
+	/** The guard montage chosen for the current activation (stance override or GuardMontage). */
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> ActiveGuardMontage;
 };

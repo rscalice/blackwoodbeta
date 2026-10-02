@@ -3,6 +3,7 @@
 #include "AbilitySystem/Abilities/AH_GA_Dodge.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
+#include "Combat/BH_CombatFeel.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Animation/AnimMontage.h"
@@ -134,6 +135,9 @@ void UAH_GA_Dodge::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 	}
 
 	UE_LOG(LogBHCombat, Log, TEXT("Dodge: %s -> %s (%s)"), *GetNameSafe(Avatar), *UEnum::GetValueAsString(Direction), *Montage->GetName());
+
+	// Exhale vocal (cosmetic; the dodge slide SFX is a TODO: no asset yet).
+	UBH_CombatFeelLibrary::PlayVoice(Avatar, EBH_VoiceCategory::Dodge);
 
 	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, Montage, DodgePlayRate);
 	MontageTask->OnCompleted.AddDynamic(this, &UAH_GA_Dodge::OnMontageFinished);

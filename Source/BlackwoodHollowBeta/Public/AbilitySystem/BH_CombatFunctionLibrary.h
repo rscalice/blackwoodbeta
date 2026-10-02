@@ -241,6 +241,21 @@ public:
 	static UMeshComponent* GetEquippedWeaponComponent(const AActor* Character, EBH_WeaponSlot Slot);
 
 	/**
+	 * Two-handed weapon left-hand IK target (FBH_WeaponMeshSlot::bTwoHandedGrip). GAME THREAD ONLY: call it from the anim
+	 * instance's game-thread update (e.g. ABP_BH_LayerBlending::UpdateAttackLayering) and cache the results in variables
+	 * the anim graph reads.
+	 *  - OutCS_Target / OutCS_JointTarget: grip point and elbow hint in AnimMesh (CharacterMesh0) COMPONENT space.
+	 *  - OutHandR_Offset: the same grip point expressed in the hand_r BONE's local space. Feeding this to the Two Bone IK
+	 *    (effector space = Bone Space, bone = hand_r) keeps the effector glued to the right hand's CURRENT-frame pose, so
+	 *    it has no one-frame lag (the weapon / grip transform read here is last frame's).
+	 *  - OutAlpha: 1 when the equipped main-hand weapon has a two-handed grip, the character is grounded, not ragdolling,
+	 *    and the grip is within the left arm's reach; fades to 0 as the grip moves out of reach (e.g. extended lunges),
+	 *    else 0 (outputs are then zero).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons")
+	static void GetSecondaryGripIKTarget(ACharacter* Character, USkeletalMeshComponent* AnimMesh, FVector& OutCS_Target, FVector& OutCS_JointTarget, FVector& OutHandR_Offset, float& OutAlpha);
+
+	/**
 	 * Clears current weapon meshes, then attaches the loadout registered in
 	 * Loadouts for OverlayPoseDisplayName (an Enum_OverlayPose display name, e.g.
 	 * "SwordAndShield"). A pose with no entry just leaves the hands empty.
@@ -335,4 +350,16 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Animation", meta = (DefaultToSelf = "AnimInstance"))
 	static float GetMontageLayeringValue(const UAnimInstance* AnimInstance, FName CurveName, float StanceValue, FName CurveSlotName = "Curves");
+
+	/**
+	 * Two-hand weapon grip frame (game thread, call after animation, e.g. from UBH_TwoHandAimComponent in TG_PostUpdateWork).
+	 * While the MainHand weapon has a two-handed grip: poses the weapon from the VISIBLE mesh's hands. The right-hand grip
+	 * point (PrimaryGripLocal under the authored attach) stays pinned; the handle axis (primary -> secondary grip) points at the
+	 * left palm (hand_l toward middle_01_l by bh.GripIK.PalmFrac); the roll is the authored weapon Y made orthogonal to that axis.
+	 * No angle clamp. When the hands are closer than bh.GripIK.MinHandGap or farther than bh.GripIK.MaxHandGap (one-handed
+	 * moments), or the BH_HandIK_L montage curve is 0, it blends back to the authored attach (bh.GripIK.FrameBlendRate).
+	 * InOutWeight / InOutPrevRotation / bInOutHasPrevRotation are caller-owned state (smoothed weight; last driven rotation for the
+	 * rate limit bh.GripIK.MaxStepDegPerSec, frame-rate independent). bh.GripIK.FrameWeight scales the weight.
+	 */
+	static void ApplyTwoHandAim(ACharacter* Character, float DeltaSeconds, float& InOutWeight, FQuat& InOutPrevRotation, bool& bInOutHasPrevRotation);
 };

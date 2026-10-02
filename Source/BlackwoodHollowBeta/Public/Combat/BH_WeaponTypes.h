@@ -63,6 +63,23 @@ struct BLACKWOODHOLLOWBETA_API FBH_WeaponMeshSlot
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Blade", meta = (EditCondition = "bUseBladeOverride"))
 	FVector BladeTipLocal = FVector::ZeroVector;
 
+	/**
+	 * Two-handed grip: the left hand is IK'd onto SecondaryGripLocal (weapon COMPONENT local space) by the layer-blending
+	 * anim BP (see UBH_CombatFunctionLibrary::GetSecondaryGripIKTarget). SecondaryGripRotLocal is an optional palm orientation.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Grip")
+	bool bTwoHandedGrip = false;
+
+	/** Where the right (main) hand holds the weapon, weapon COMPONENT local space. Pivot for the two-hand weapon aim. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Grip", meta = (EditCondition = "bTwoHandedGrip"))
+	FVector PrimaryGripLocal = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Grip", meta = (EditCondition = "bTwoHandedGrip"))
+	FVector SecondaryGripLocal = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Grip", meta = (EditCondition = "bTwoHandedGrip"))
+	FRotator SecondaryGripRotLocal = FRotator::ZeroRotator;
+
 	bool HasMesh() const { return !StaticMesh.IsNull() || !SkeletalMesh.IsNull(); }
 };
 

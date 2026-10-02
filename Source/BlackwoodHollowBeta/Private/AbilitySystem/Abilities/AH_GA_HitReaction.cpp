@@ -2,6 +2,7 @@
 
 #include "AbilitySystem/Abilities/AH_GA_HitReaction.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Animation/AnimMontage.h"
@@ -71,8 +72,31 @@ bool UAH_GA_HitReaction::ShouldAbilityRespondToEvent(const FGameplayAbilityActor
 	return !Payload || Payload->EventMagnitude >= MinimumDamageToReact;
 }
 
+UAnimMontage* UAH_GA_HitReaction::GetStanceMontage(EBH_HitDirection Direction) const
+{
+	const FString Stance = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(GetAvatarActorFromActorInfo());
+	const FBH_HitMontageSet* Set = Stance.IsEmpty() ? nullptr : StanceHitMontages.Find(FName(*Stance));
+	if (!Set)
+	{
+		return nullptr;
+	}
+	UAnimMontage* Montage = nullptr;
+	switch (Direction)
+	{
+	case EBH_HitDirection::Back:  Montage = Set->Back;  break;
+	case EBH_HitDirection::Left:  Montage = Set->Left;  break;
+	case EBH_HitDirection::Right: Montage = Set->Right; break;
+	default: break;
+	}
+	return Montage ? Montage : Set->Front.Get();
+}
+
 UAnimMontage* UAH_GA_HitReaction::GetMontageForDirection(EBH_HitDirection Direction) const
 {
+	if (UAnimMontage* StanceMontage = GetStanceMontage(Direction))
+	{
+		return StanceMontage;
+	}
 	UAnimMontage* Montage = nullptr;
 	switch (Direction)
 	{

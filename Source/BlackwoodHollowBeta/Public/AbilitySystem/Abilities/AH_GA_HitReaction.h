@@ -26,6 +26,25 @@ enum class EBH_HitDirection : uint8
 	Right,
 };
 
+/** One montage per hit side (a missing side falls back to Front). */
+USTRUCT(BlueprintType)
+struct BLACKWOODHOLLOWBETA_API FBH_HitMontageSet
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitReaction")
+	TObjectPtr<UAnimMontage> Front;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitReaction")
+	TObjectPtr<UAnimMontage> Back;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitReaction")
+	TObjectPtr<UAnimMontage> Left;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HitReaction")
+	TObjectPtr<UAnimMontage> Right;
+};
+
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API UAH_GA_HitReaction : public UGameplayAbility
 {
@@ -55,6 +74,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReaction")
 	TObjectPtr<UAnimMontage> HitMontageRight;
 
+	/** Stance (GASP OverlayPose display name, e.g. "Greatsword") -> directional hit montages. Falls back to the montages above. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReaction")
+	TMap<FName, FBH_HitMontageSet> StanceHitMontages;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReaction", meta = (ClampMin = "0.1"))
 	float MontagePlayRate = 1.f;
 
@@ -82,6 +105,9 @@ private:
 	void FinishReaction();
 
 	UAnimMontage* GetMontageForDirection(EBH_HitDirection Direction) const;
+
+	/** True stance-specific lookup (nullptr when the current stance has no entry / montage). */
+	UAnimMontage* GetStanceMontage(EBH_HitDirection Direction) const;
 
 	UPROPERTY()
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;

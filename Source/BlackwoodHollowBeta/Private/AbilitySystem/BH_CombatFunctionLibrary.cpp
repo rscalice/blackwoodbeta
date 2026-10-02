@@ -19,6 +19,8 @@
 #include "UObject/SoftObjectPath.h"
 #include "UObject/UnrealType.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Combat/BH_TwoHandAimComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "HAL/IConsoleManager.h"
@@ -50,6 +52,44 @@
 
 namespace BH_CombatFunctionLibrary_Private
 {
+	// Re-entrancy guard for the Handle*Input entry points (game thread only). A nested call (e.g. editor Python running
+	// under FEditorScriptExecutionGuard, which executes RPCs locally and can recurse ASC->TryActivateAbility ->
+	// ServerTryActivateAbility -> TryActivateAbility ...) is rejected instead of recursing until the stack dies.
+	// Function-local static (not file-scope) to stay safe under Live Coding patches.
+	static bool& InputInFlight() { static bool bInFlight = false; return bInFlight; }
+	struct FInputReentrancyGuard
+	{
+		bool bNested;
+		FInputReentrancyGuard() : bNested(InputInFlight()) { InputInFlight() = true; }
+		~FInputReentrancyGuard() { if (!bNested) { InputInFlight() = false; } }
+	};
+#define BH_REJECT_NESTED_INPUT(Guard, FuncName) \
+	if ((Guard).bNested) \
+	{ \
+		UE_LOG(LogBHCombat, Verbose, TEXT(FuncName ": nested call rejected (re-entrancy guard).")); \
+		return false; \
+	}
+
+	// Tuning for GetSecondaryGripIKTarget (live-tunable console variables; cm unless noted).
+	// Elbow hint offsets, character-relative.
+	static TAutoConsoleVariable<float> CVarGripElbowLeft(TEXT("bh.GripIK.ElbowLeftCm"), 15.f, TEXT("Left-hand grip IK: elbow hint offset toward character-left (cm)."));
+	static TAutoConsoleVariable<float> CVarGripElbowBack(TEXT("bh.GripIK.ElbowBackCm"), 10.f, TEXT("Left-hand grip IK: elbow hint offset behind the character (cm)."));
+	static TAutoConsoleVariable<float> CVarGripElbowDown(TEXT("bh.GripIK.ElbowDownCm"), 30.f, TEXT("Left-hand grip IK: elbow hint offset downward (cm)."));
+	// Reach fade: grip distance from the left shoulder / left arm length. Full IK up to Full, none from None on.
+	static TAutoConsoleVariable<float> CVarGripReachFull(TEXT("bh.GripIK.ReachFull"), 1.0f, TEXT("Left-hand grip IK: reach ratio up to which the IK is fully applied."));
+	static TAutoConsoleVariable<float> CVarGripReachNone(TEXT("bh.GripIK.ReachNone"), 1.5f, TEXT("Left-hand grip IK: reach ratio from which the IK is fully faded out."));
+	// Grip slide toward the right hand when out of reach: max distance in weapon-local units, and search steps.
+	static TAutoConsoleVariable<float> CVarGripSlideMax(TEXT("bh.GripIK.SlideMaxLocal"), 10.f, TEXT("Left-hand grip IK: max slide of the grip toward the right hand (weapon-local units)."));
+	static constexpr int32 BH_GripSlideSteps = 20;
+	// Two-hand weapon grip frame (ApplyTwoHandAim): the weapon is posed from the two hands of the visible mesh, no angle clamp.
+	static TAutoConsoleVariable<float> CVarGripFrameWeight(TEXT("bh.GripIK.FrameWeight"), 1.0f, TEXT("Two-hand grip frame: overall weight (0 = authored attach only, 1 = weapon follows both hands)."));
+	static TAutoConsoleVariable<float> CVarGripMinHandGap(TEXT("bh.GripIK.MinHandGap"), 5.0f, TEXT("Two-hand grip frame: below this hand-to-hand distance (cm) the weapon falls back to the authored attach."));
+	static TAutoConsoleVariable<float> CVarGripMaxHandGap(TEXT("bh.GripIK.MaxHandGap"), 45.0f, TEXT("Two-hand grip frame: above this hand-to-hand distance (cm) the weapon falls back to the authored attach."));
+	static TAutoConsoleVariable<float> CVarGripPalmFrac(TEXT("bh.GripIK.PalmFrac"), 0.5f, TEXT("Two-hand grip frame: left palm point = hand_l lerped toward middle_01_l by this fraction."));
+	static TAutoConsoleVariable<float> CVarGripFrameBlendRate(TEXT("bh.GripIK.FrameBlendRate"), 12.0f, TEXT("Two-hand grip frame: weight interpolation speed (1/s) when entering / leaving the fallback."));
+	static TAutoConsoleVariable<float> CVarGripMaxStepDegPerSec(TEXT("bh.GripIK.MaxStepDegPerSec"), 3300.0f, TEXT("Two-hand grip frame: max weapon rotation speed (degrees per second, frame-rate independent: 3300 = 55 deg per frame at 60 fps) - a rate limit for clip cuts / degenerate hand axes, not an angle clamp (0 = off)."));
+	static TAutoConsoleVariable<int32> CVarGripUseLeftHandIK(TEXT("bh.GripIK.UseLeftHandIK"), 0, TEXT("1 = the ABP left-hand Two Bone IK is driven by GetSecondaryGripIKTarget (legacy); 0 = alpha forced to 0 (the grip frame moves the weapon to the hands instead)."));
+
 	// Component tags used to find/clean up the weapon meshes this library spawns.
 	// (Plain functions returning FName rather than file-scope statics, to stay
 	// safe under Live Coding patches -- see the note in ApplyOverlayPoseByDisplayName.)
@@ -183,6 +223,10 @@ bool UBH_CombatFunctionLibrary::SetupCombatCharacter(AActor* OwningActor, TSubcl
 
 bool UBH_CombatFunctionLibrary::HandleFragmentInput(AActor* OwningActor, int32 Slot)
 {
+	using namespace BH_CombatFunctionLibrary_Private;
+
+	const FInputReentrancyGuard Guard;
+	BH_REJECT_NESTED_INPUT(Guard, "HandleFragmentInput")
 	if (UBPC_HeartFragment* HeartFragment = OwningActor ? OwningActor->FindComponentByClass<UBPC_HeartFragment>() : nullptr)
 	{
 		return HeartFragment->TryActivateFragment(Slot);
@@ -275,6 +319,9 @@ bool UBH_CombatFunctionLibrary::HandleMeleeAttackInput(AActor* OwningActor, TSub
 {
 	using namespace BH_CombatFunctionLibrary_Private;
 
+	const FInputReentrancyGuard Guard;
+	BH_REJECT_NESTED_INPUT(Guard, "HandleMeleeAttackInput")
+
 	UAbilitySystemComponent* ASC = ResolveAbilitySystemComponent(OwningActor);
 	if (!ASC || !MeleeAbilityClass)
 	{
@@ -305,6 +352,9 @@ bool UBH_CombatFunctionLibrary::HandleMeleeAttackInput(AActor* OwningActor, TSub
 bool UBH_CombatFunctionLibrary::HandleBlockInput(AActor* OwningActor, TSubclassOf<UGameplayAbility> BlockAbilityClass, bool bPressed)
 {
 	using namespace BH_CombatFunctionLibrary_Private;
+
+	const FInputReentrancyGuard Guard;
+	BH_REJECT_NESTED_INPUT(Guard, "HandleBlockInput")
 
 	UAbilitySystemComponent* ASC = ResolveAbilitySystemComponent(OwningActor);
 	if (!ASC || !BlockAbilityClass)
@@ -346,6 +396,9 @@ bool UBH_CombatFunctionLibrary::HandleDodgeInput(AActor* OwningActor)
 {
 	using namespace BH_CombatFunctionLibrary_Private;
 
+	const FInputReentrancyGuard Guard;
+	BH_REJECT_NESTED_INPUT(Guard, "HandleDodgeInput")
+
 	UAbilitySystemComponent* ASC = ResolveAbilitySystemComponent(OwningActor);
 	if (!ASC)
 	{
@@ -360,6 +413,9 @@ bool UBH_CombatFunctionLibrary::HandleDodgeInput(AActor* OwningActor)
 bool UBH_CombatFunctionLibrary::HandleParryInput(AActor* OwningActor)
 {
 	using namespace BH_CombatFunctionLibrary_Private;
+
+	const FInputReentrancyGuard Guard;
+	BH_REJECT_NESTED_INPUT(Guard, "HandleParryInput")
 
 	UAbilitySystemComponent* ASC = ResolveAbilitySystemComponent(OwningActor);
 	if (!ASC)
@@ -692,6 +748,14 @@ bool UBH_CombatFunctionLibrary::ApplyOverlayPoseByDisplayName(AActor* TargetChar
 	}
 	TargetCharacter->ProcessEvent(UpdateOverlayPoseFunction, nullptr);
 
+	// GASP also replicates an "OverlayBase" and links its anim layer from UpdateOverlayBase (OnRep_OverlayBase / the owner). A remote proxy whose
+	// replicated base equals the class default never gets that OnRep, so its overlay-base layer stays unlinked (the arms then pose differently from
+	// the owner: hands 10-20 cm farther apart in montages). Run it on every machine; it is idempotent.
+	if (UFunction* UpdateOverlayBaseFunction = TargetCharacter->FindFunction(FName(TEXT("UpdateOverlayBase"))))
+	{
+		TargetCharacter->ProcessEvent(UpdateOverlayBaseFunction, nullptr);
+	}
+
 	// Tell any HUD bound to this character (K2_OnStanceUpdated). Remote clients that only
 	// receive the pose by replication are covered by the HUD's own OverlayPose poll.
 	UBH_HUDWidget::BroadcastStanceChanged(TargetCharacter, OverlayPoseEnum->GetDisplayNameTextByIndex(FoundIndex).ToString());
@@ -820,6 +884,210 @@ UMeshComponent* UBH_CombatFunctionLibrary::GetEquippedWeaponComponent(const AAct
 	return nullptr;
 }
 
+void UBH_CombatFunctionLibrary::GetSecondaryGripIKTarget(ACharacter* Character, USkeletalMeshComponent* AnimMesh, FVector& OutCS_Target, FVector& OutCS_JointTarget, FVector& OutHandR_Offset, float& OutAlpha)
+{
+	using namespace BH_CombatFunctionLibrary_Private;
+
+	OutCS_Target = FVector::ZeroVector;
+	OutCS_JointTarget = FVector::ZeroVector;
+	OutHandR_Offset = FVector::ZeroVector;
+	OutAlpha = 0.f;
+
+	// The two-hand grip frame (ApplyTwoHandAim) poses the weapon from both hands; the left-hand IK stays off unless asked for.
+	if (CVarGripUseLeftHandIK.GetValueOnGameThread() == 0)
+	{
+		return;
+	}
+
+	if (!Character || !AnimMesh)
+	{
+		return;
+	}
+
+	UMeshComponent* Weapon = GetEquippedWeaponComponent(Character, EBH_WeaponSlot::MainHand);
+	const UBH_WeaponBladeData* Data = Weapon ? Weapon->GetAssetUserData<UBH_WeaponBladeData>() : nullptr;
+	if (!Data || !Data->bTwoHandedGrip)
+	{
+		return;
+	}
+
+	// No IK while ragdolling or airborne (the swing poses there are not authored for a fixed grip).
+	if (AnimMesh->IsSimulatingPhysics())
+	{
+		return;
+	}
+	if (const UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+	{
+		if (Movement->IsFalling())
+		{
+			return;
+		}
+	}
+
+	const FTransform& MeshTransform = AnimMesh->GetComponentTransform();
+	const FTransform WeaponTransform = Weapon->GetComponentTransform();
+
+	// Elbow hint: the current lowerarm_l pushed away from the body (character-left, back and down), in cm.
+	static const FName ElbowBone(TEXT("lowerarm_l"));
+	static const FName UpperArmBone(TEXT("upperarm_l"));
+	static const FName HandLBone(TEXT("hand_l"));
+	static const FName HandRBone(TEXT("hand_r"));
+	if (AnimMesh->GetBoneIndex(ElbowBone) == INDEX_NONE || AnimMesh->GetBoneIndex(UpperArmBone) == INDEX_NONE
+		|| AnimMesh->GetBoneIndex(HandLBone) == INDEX_NONE || AnimMesh->GetBoneIndex(HandRBone) == INDEX_NONE)
+	{
+		return;
+	}
+	const FVector ShoulderCS = AnimMesh->GetSocketTransform(UpperArmBone, RTS_Component).GetLocation();
+	const FVector ElbowCS = AnimMesh->GetSocketTransform(ElbowBone, RTS_Component).GetLocation();
+	const FVector HandCS = AnimMesh->GetSocketTransform(HandLBone, RTS_Component).GetLocation();
+	const float LimbLength = FVector::Dist(ShoulderCS, ElbowCS) + FVector::Dist(ElbowCS, HandCS);
+	if (LimbLength < KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	// Grip point: the authored secondary grip, slid up the handle toward the right hand only as far as needed to stay
+	// inside the left arm's reach (authored swings extend the weapon; real two-handed swings bring the hands together).
+	FVector GripLocal = Data->SecondaryGripLocal;
+	FVector GripWorld = WeaponTransform.TransformPosition(GripLocal);
+	float ReachRatio = FVector::Dist(ShoulderCS, MeshTransform.InverseTransformPosition(GripWorld)) / LimbLength;
+	float BestRatio = ReachRatio;
+	FVector BestLocal = GripLocal;
+	for (int32 Step = 1; Step <= BH_GripSlideSteps && ReachRatio > CVarGripReachFull.GetValueOnGameThread(); ++Step)
+	{
+		const FVector CandLocal = Data->SecondaryGripLocal + FVector(0.f, 0.f, CVarGripSlideMax.GetValueOnGameThread() * Step / BH_GripSlideSteps);
+		const FVector CandWorld = WeaponTransform.TransformPosition(CandLocal);
+		ReachRatio = FVector::Dist(ShoulderCS, MeshTransform.InverseTransformPosition(CandWorld)) / LimbLength;
+		if (ReachRatio < BestRatio)
+		{
+			BestRatio = ReachRatio;
+			BestLocal = CandLocal;
+		}
+	}
+	GripWorld = WeaponTransform.TransformPosition(BestLocal);
+	OutCS_Target = MeshTransform.InverseTransformPosition(GripWorld);
+
+	const FTransform ActorTransform = Character->GetActorTransform();
+	const FVector OffsetWorld = ActorTransform.GetUnitAxis(EAxis::Y) * -CVarGripElbowLeft.GetValueOnGameThread()
+		+ ActorTransform.GetUnitAxis(EAxis::X) * -CVarGripElbowBack.GetValueOnGameThread()
+		+ FVector::UpVector * -CVarGripElbowDown.GetValueOnGameThread();
+	OutCS_JointTarget = ElbowCS + MeshTransform.InverseTransformVectorNoScale(OffsetWorld);
+
+	// Grip point in the right hand bone's local space (weapon and bone are from the same, last-evaluated pose).
+	OutHandR_Offset = AnimMesh->GetSocketTransform(HandRBone, RTS_World).InverseTransformPosition(GripWorld);
+
+	// Reach fade: if even the slid grip is out of reach, fade the IK out rather than stretch a straight arm at it.
+	OutAlpha = 1.f - FMath::SmoothStep(CVarGripReachFull.GetValueOnGameThread(), CVarGripReachNone.GetValueOnGameThread(), BestRatio);
+}
+
+void UBH_CombatFunctionLibrary::ApplyTwoHandAim(ACharacter* Character, float DeltaSeconds, float& InOutWeight, FQuat& InOutPrevRotation, bool& bInOutHasPrevRotation)
+{
+	using namespace BH_CombatFunctionLibrary_Private;
+
+	if (!Character)
+	{
+		InOutWeight = 0.f;
+		bInOutHasPrevRotation = false;
+		return;
+	}
+
+	UMeshComponent* Weapon = GetEquippedWeaponComponent(Character, EBH_WeaponSlot::MainHand);
+	const UBH_WeaponBladeData* Data = Weapon ? Weapon->GetAssetUserData<UBH_WeaponBladeData>() : nullptr;
+	USkeletalMeshComponent* AnimMesh = Character->GetMesh();
+	USkeletalMeshComponent* Parent = Weapon ? Cast<USkeletalMeshComponent>(Weapon->GetAttachParent()) : nullptr;
+	if (!Data || !Data->bTwoHandedGrip || !Parent)
+	{
+		InOutWeight = 0.f;
+		bInOutHasPrevRotation = false;
+		return;
+	}
+
+	// The authored one-handed attach (weapon socket of the VISIBLE mesh) and the right-hand grip point it implies.
+	const FTransform ParentSocket = Parent->GetSocketTransform(Weapon->GetAttachSocketName());
+	const FTransform Authored = Data->AuthoredRelative * ParentSocket;
+	const FVector Scale = Authored.GetScale3D();
+	const FVector PrimaryWorld = Authored.TransformPosition(Data->PrimaryGripLocal);
+
+	// Left palm point on the visible mesh: hand_l lerped toward the middle finger base.
+	static const FName HandLBone(TEXT("hand_l"));
+	static const FName PalmBone(TEXT("middle_01_l"));
+	const USkeletalMeshComponent* HandMesh = Parent->GetBoneIndex(HandLBone) != INDEX_NONE ? Parent : AnimMesh;
+	const FVector LocalAxis = (Data->SecondaryGripLocal - Data->PrimaryGripLocal).GetSafeNormal();
+	const bool bHaveHand = HandMesh && HandMesh->GetBoneIndex(HandLBone) != INDEX_NONE && !LocalAxis.IsNearlyZero();
+
+	FVector PalmWorld = PrimaryWorld;
+	FVector Sep = FVector::ZeroVector;
+	float Gap = 0.f;
+	if (bHaveHand)
+	{
+		PalmWorld = HandMesh->GetSocketTransform(HandLBone, RTS_World).GetLocation();
+		if (HandMesh->GetBoneIndex(PalmBone) != INDEX_NONE)
+		{
+			PalmWorld = FMath::Lerp(PalmWorld, HandMesh->GetSocketTransform(PalmBone, RTS_World).GetLocation(), CVarGripPalmFrac.GetValueOnGameThread());
+		}
+		Sep = PalmWorld - PrimaryWorld;
+		Gap = Sep.Size();
+	}
+
+	// Weight: full while the hands are a plausible two-hand grip apart, fading to the authored attach for one-handed
+	// moments; the BH_HandIK_L montage curve (default 1) lets a clip opt out.
+	const bool bTwoHandPose = bHaveHand && Gap >= CVarGripMinHandGap.GetValueOnGameThread() && Gap <= CVarGripMaxHandGap.GetValueOnGameThread();
+	const float CurveAlpha = AnimMesh ? GetMontageLayeringValue(AnimMesh->GetAnimInstance(), TEXT("BH_HandIK_L"), 1.f) : 1.f;
+	const float TargetWeight = bTwoHandPose ? FMath::Clamp(CurveAlpha * CVarGripFrameWeight.GetValueOnGameThread(), 0.f, 1.f) : 0.f;
+	InOutWeight = FMath::FInterpTo(InOutWeight, TargetWeight, DeltaSeconds, CVarGripFrameBlendRate.GetValueOnGameThread());
+
+	if (InOutWeight < KINDA_SMALL_NUMBER || !bHaveHand)
+	{
+		if (!Weapon->GetRelativeTransform().Equals(Data->AuthoredRelative, 0.01f))
+		{
+			Weapon->SetRelativeTransform(Data->AuthoredRelative);
+		}
+		InOutPrevRotation = Authored.GetRotation();
+		bInOutHasPrevRotation = true;
+		return;
+	}
+
+	// Grip frame. The handle axis (primary -> secondary grip) points from the right hand to the left palm; the roll is the
+	// authored weapon Y with the axis component removed (Gram-Schmidt). No angle clamp.
+	const FVector Dir = Sep / FMath::Max(Gap, KINDA_SMALL_NUMBER);
+	const FQuat AuthoredRot = Authored.GetRotation();
+	FQuat FrameRot;
+	if (FMath::Abs(LocalAxis.Z) > 0.99f)
+	{
+		const FVector ZAxis = Dir * FMath::Sign(LocalAxis.Z);
+		const FVector AuthoredY = AuthoredRot.GetAxisY();
+		FVector YAxis = AuthoredY - ZAxis * FVector::DotProduct(AuthoredY, ZAxis);
+		if (YAxis.SizeSquared() < 1.e-4f)
+		{
+			YAxis = FVector::CrossProduct(ZAxis, AuthoredRot.GetAxisX());
+		}
+		YAxis.Normalize();
+		FrameRot = FRotationMatrix::MakeFromZY(ZAxis, YAxis).ToQuat();
+	}
+	else
+	{
+		// Handle axis is not weapon-Z (unusual data): shortest-arc from the authored rotation.
+		FrameRot = FQuat::FindBetweenNormals(AuthoredRot.RotateVector(LocalAxis), Dir) * AuthoredRot;
+	}
+
+	FQuat NewRotation = FQuat::Slerp(AuthoredRot, FrameRot, FMath::Clamp(InOutWeight, 0.f, 1.f)).GetNormalized();
+
+	// Rate limit (not an angle clamp): a clip cut or a degenerate hand axis must not whip the weapon more than MaxStepDeg per frame.
+	const float MaxStep = FMath::DegreesToRadians(CVarGripMaxStepDegPerSec.GetValueOnGameThread()) * FMath::Max(DeltaSeconds, 0.f);
+	if (bInOutHasPrevRotation && MaxStep > KINDA_SMALL_NUMBER)
+	{
+		const float Step = InOutPrevRotation.AngularDistance(NewRotation);
+		if (Step > MaxStep)
+		{
+			NewRotation = FQuat::Slerp(InOutPrevRotation, NewRotation, MaxStep / Step).GetNormalized();
+		}
+	}
+	InOutPrevRotation = NewRotation;
+	bInOutHasPrevRotation = true;
+	const FVector NewLocation = PrimaryWorld - NewRotation.RotateVector(Data->PrimaryGripLocal * Scale);
+	Weapon->SetWorldTransform(FTransform(NewRotation, NewLocation, Scale));
+}
+
 UMeshComponent* UBH_CombatFunctionLibrary::AttachWeaponMesh(ACharacter* Character, EBH_WeaponSlot Slot, const FBH_WeaponMeshSlot& MeshSlot)
 {
 	using namespace BH_CombatFunctionLibrary_Private;
@@ -876,11 +1144,18 @@ UMeshComponent* UBH_CombatFunctionLibrary::AttachWeaponMesh(ACharacter* Characte
 	NewComponent->ComponentTags.Add(WeaponSlotTag(Slot));
 
 	// Blade line for meshes without weapon_root / weapon_tip sockets (read by UANS_MeleeHitbox).
-	if (MeshSlot.bUseBladeOverride)
+	// Also carries the two-handed grip point (read by GetSecondaryGripIKTarget).
+	if (MeshSlot.bUseBladeOverride || MeshSlot.bTwoHandedGrip)
 	{
 		UBH_WeaponBladeData* BladeData = NewObject<UBH_WeaponBladeData>(NewComponent);
+		BladeData->bHasBladeLine = MeshSlot.bUseBladeOverride;
 		BladeData->RootLocal = MeshSlot.BladeRootLocal;
 		BladeData->TipLocal = MeshSlot.BladeTipLocal;
+		BladeData->bTwoHandedGrip = MeshSlot.bTwoHandedGrip;
+		BladeData->PrimaryGripLocal = MeshSlot.PrimaryGripLocal;
+		BladeData->AuthoredRelative = MeshSlot.RelativeTransform;
+		BladeData->SecondaryGripLocal = MeshSlot.SecondaryGripLocal;
+		BladeData->SecondaryGripRotLocal = MeshSlot.SecondaryGripRotLocal;
 		NewComponent->AddAssetUserData(BladeData);
 	}
 
@@ -895,6 +1170,20 @@ UMeshComponent* UBH_CombatFunctionLibrary::AttachWeaponMesh(ACharacter* Characte
 	NewComponent->AttachToComponent(ParentMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, SocketName);
 	NewComponent->SetRelativeTransform(MeshSlot.RelativeTransform);
 	Character->AddInstanceComponent(NewComponent);
+
+	// Two-handed main-hand weapon: make sure the post-animation aim driver exists on the character.
+	if (Slot == EBH_WeaponSlot::MainHand && MeshSlot.bTwoHandedGrip && !Character->FindComponentByClass<UBH_TwoHandAimComponent>())
+	{
+		UBH_TwoHandAimComponent* Aim = NewObject<UBH_TwoHandAimComponent>(Character, NAME_None, RF_Transient);
+		Aim->RegisterComponent();
+		Character->AddInstanceComponent(Aim);
+		TArray<USkeletalMeshComponent*> Meshes;
+		Character->GetComponents<USkeletalMeshComponent>(Meshes);
+		for (USkeletalMeshComponent* Mesh : Meshes)
+		{
+			Aim->AddTickPrerequisiteComponent(Mesh);
+		}
+	}
 
 	return NewComponent;
 }
