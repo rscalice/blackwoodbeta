@@ -17,15 +17,9 @@
 BLACKWOODHOLLOWBETA_API DECLARE_LOG_CATEGORY_EXTERN(LogBHCombat, Log, All);
 
 // ---------------------------------------------------------------------------
-// Weapon/combat STANCE is not duplicated here as gameplay tags. GASP's own
-// replicated OverlayPose enum (/GASPALS/OverlaySystem/Blueprints/Enum_OverlayPose)
-// is the single source of truth for "what's equipped" -- see
-// UBH_CombatFunctionLibrary::ApplyOverlayPoseByDisplayName(). Keeping a
-// parallel Stance.* tag hierarchy in sync with that enum by hand was the
-// wrong call; if ability activation ever needs to gate on weapon stance,
-// prefer reading OverlayPose directly (or mirror the *current* pose into a
-// single informational tag at the point it changes) rather than reviving a
-// hand-maintained tag-to-enum mapping table.
+// Weapon stance lives in the Stance.Weapon.* tags declared near the end of this header
+// (source of truth: UBH_StanceComponent::CurrentStance on ABH_CharacterBase descendants).
+// The legacy GASPALS OverlayPose path keeps working through the FName keys; see BH_Stance below.
 // ---------------------------------------------------------------------------
 // State.Combat.*  -- persistent/loose tags describing current combat state
 // ---------------------------------------------------------------------------
@@ -107,6 +101,31 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Equip_AttackPowe
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Equip_Defense);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Equip_MaxStamina);
 
+// ---------------------------------------------------------------------------
+// Phase 3: Stance.Weapon.* -- weapon stance (source of truth: UBH_StanceComponent::CurrentStance, replicated;
+// mirrored as a loose tag on the ASC on every machine)
+// ---------------------------------------------------------------------------
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Unarmed);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Greatsword);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_SwordShield);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_DualSword);
+
+namespace BH_Stance
+{
+	/** Legacy Enum_OverlayPose / loadout key -> tag. Accepts "SwordAndShield", "SwordShield", "Sword&Shield", "DualSword", "Greatsword", "Unarmed" (case-insensitive). Unknown -> empty tag. */
+	BLACKWOODHOLLOWBETA_API FGameplayTag FromLegacyName(FName LegacyName);
+
+	/** Tag -> legacy key used by the TMap<FName,...> ability maps and the weapon loadout asset: SwordShield -> "SwordAndShield", others by name. Non-stance tag -> NAME_None. */
+	BLACKWOODHOLLOWBETA_API FName ToLegacyName(FGameplayTag StanceTag);
+
+	/** Tag is a child of Stance.Weapon (the parent itself does not count). */
+	BLACKWOODHOLLOWBETA_API bool IsWeaponStance(FGameplayTag Tag);
+
+	/** Unarmed, Greatsword, SwordShield, DualSword. */
+	BLACKWOODHOLLOWBETA_API const TArray<FGameplayTag>& AllWeaponStances();
+}
+
 /**
  * Singleton accessor kept for readability at call sites and for parity with
  * the Lyra FGameplayTags pattern many UE5 GAS codebases already follow.
@@ -162,6 +181,12 @@ public:
 	// Phase 7C
 	FGameplayTag Data_Cooldown;
 	FGameplayTag Cooldown_Fragment_OverloadBurst;
+
+	// Phase 3 Stance.Weapon
+	FGameplayTag Stance_Weapon_Unarmed;
+	FGameplayTag Stance_Weapon_Greatsword;
+	FGameplayTag Stance_Weapon_SwordShield;
+	FGameplayTag Stance_Weapon_DualSword;
 
 protected:
 	void AddAllTags();

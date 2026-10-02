@@ -82,6 +82,53 @@ UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Equip_AttackPower, "Data.Equip.AttackPow
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Equip_Defense, "Data.Equip.Defense", "SetByCaller key: additive Defense bonus read by UAH_GE_EquipmentStatMod.");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Equip_MaxStamina, "Data.Equip.MaxStamina", "SetByCaller key: additive MaxStamina bonus read by UAH_GE_EquipmentStatMod.");
 
+// Phase 3: weapon stance
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon, "Stance.Weapon", "Parent of the weapon stance tags (UBH_StanceComponent).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_Unarmed, "Stance.Weapon.Unarmed", "No weapons drawn.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_Greatsword, "Stance.Weapon.Greatsword", "Two-handed greatsword stance.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_SwordShield, "Stance.Weapon.SwordShield", "Sword and shield stance (legacy key SwordAndShield).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_DualSword, "Stance.Weapon.DualSword", "Dual sword stance.");
+
+namespace BH_Stance
+{
+	FGameplayTag FromLegacyName(FName LegacyName)
+	{
+		const FString Name = LegacyName.ToString();
+		if (Name.Equals(TEXT("Unarmed"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Unarmed; }
+		if (Name.Equals(TEXT("Greatsword"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Greatsword; }
+		if (Name.Equals(TEXT("DualSword"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_DualSword; }
+		if (Name.Equals(TEXT("SwordAndShield"), ESearchCase::IgnoreCase)
+			|| Name.Equals(TEXT("SwordShield"), ESearchCase::IgnoreCase)
+			|| Name.Equals(TEXT("Sword&Shield"), ESearchCase::IgnoreCase))
+		{
+			return TAG_Stance_Weapon_SwordShield;
+		}
+		return FGameplayTag();
+	}
+
+	FName ToLegacyName(FGameplayTag StanceTag)
+	{
+		if (StanceTag == TAG_Stance_Weapon_Unarmed.GetTag()) { return FName(TEXT("Unarmed")); }
+		if (StanceTag == TAG_Stance_Weapon_Greatsword.GetTag()) { return FName(TEXT("Greatsword")); }
+		if (StanceTag == TAG_Stance_Weapon_SwordShield.GetTag()) { return FName(TEXT("SwordAndShield")); }
+		if (StanceTag == TAG_Stance_Weapon_DualSword.GetTag()) { return FName(TEXT("DualSword")); }
+		return NAME_None;
+	}
+
+	bool IsWeaponStance(FGameplayTag Tag)
+	{
+		return Tag.IsValid() && Tag != TAG_Stance_Weapon.GetTag() && Tag.MatchesTag(TAG_Stance_Weapon.GetTag());
+	}
+
+	const TArray<FGameplayTag>& AllWeaponStances()
+	{
+		static const TArray<FGameplayTag> Stances = {
+			TAG_Stance_Weapon_Unarmed.GetTag(), TAG_Stance_Weapon_Greatsword.GetTag(),
+			TAG_Stance_Weapon_SwordShield.GetTag(), TAG_Stance_Weapon_DualSword.GetTag() };
+		return Stances;
+	}
+}
+
 void FBH_GameplayTags::InitializeNativeTags()
 {
 	GameplayTags.AddAllTags();
@@ -136,4 +183,10 @@ void FBH_GameplayTags::AddAllTags()
 	// Phase 7C
 	AddTag(Data_Cooldown, "Data.Cooldown", "SetByCaller key: cooldown duration in seconds.");
 	AddTag(Cooldown_Fragment_OverloadBurst, "Cooldown.Fragment.OverloadBurst", "Heart-Fragment Overload Burst is on cooldown.");
+
+	// Phase 3: Stance.Weapon
+	AddTag(Stance_Weapon_Unarmed, "Stance.Weapon.Unarmed", "No weapons drawn.");
+	AddTag(Stance_Weapon_Greatsword, "Stance.Weapon.Greatsword", "Two-handed greatsword stance.");
+	AddTag(Stance_Weapon_SwordShield, "Stance.Weapon.SwordShield", "Sword and shield stance.");
+	AddTag(Stance_Weapon_DualSword, "Stance.Weapon.DualSword", "Dual sword stance.");
 }

@@ -11,6 +11,8 @@
 #include "Components/BPC_HeartFragment.h"
 #include "Combat/BH_LoadoutComponent.h"
 #include "Characters/BH_EnemyBase.h"
+#include "Characters/BH_CharacterBase.h"
+#include "Combat/BH_StanceComponent.h"
 #include "Engine/Texture2D.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemInterface.h"
@@ -242,7 +244,11 @@ UTexture2D* UBH_CombatFunctionLibrary::GetStanceIconForPose(const AActor* Charac
 	}
 
 	const UBH_WeaponLoadoutDataAsset* Loadouts = nullptr;
-	if (const FObjectProperty* Property = CastField<FObjectProperty>(Character->GetClass()->FindPropertyByName(FName(TEXT("WeaponLoadouts")))))
+	if (const UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(Character))
+	{
+		Loadouts = Stance->WeaponLoadouts;
+	}
+	else if (const FObjectProperty* Property = CastField<FObjectProperty>(Character->GetClass()->FindPropertyByName(FName(TEXT("WeaponLoadouts")))))
 	{
 		Loadouts = Cast<UBH_WeaponLoadoutDataAsset>(Property->GetObjectPropertyValue_InContainer(Character));
 	}
@@ -270,7 +276,11 @@ TSubclassOf<UGameplayAbility> UBH_CombatFunctionLibrary::GetMeleeAbilityForPose(
 	}
 
 	const UBH_WeaponLoadoutDataAsset* Loadouts = nullptr;
-	if (const FObjectProperty* Property = CastField<FObjectProperty>(Character->GetClass()->FindPropertyByName(FName(TEXT("WeaponLoadouts")))))
+	if (const UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(Character))
+	{
+		Loadouts = Stance->WeaponLoadouts;
+	}
+	else if (const FObjectProperty* Property = CastField<FObjectProperty>(Character->GetClass()->FindPropertyByName(FName(TEXT("WeaponLoadouts")))))
 	{
 		Loadouts = Cast<UBH_WeaponLoadoutDataAsset>(Property->GetObjectPropertyValue_InContainer(Character));
 	}
@@ -665,6 +675,10 @@ bool UBH_CombatFunctionLibrary::ApplyOverlayPoseByDisplayName(AActor* TargetChar
 	{
 		return false;
 	}
+	if (UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(TargetCharacter))
+	{
+		return TargetCharacter->HasAuthority() && Stance->SetStance(BH_Stance::FromLegacyName(FName(*OverlayPoseDisplayName)));
+	}
 
 	UEnum* OverlayPoseEnum = LoadOverlayPoseEnum();
 	if (!OverlayPoseEnum)
@@ -792,6 +806,10 @@ bool UBH_CombatFunctionLibrary::RequestStanceByName(AActor* TargetCharacter, con
 	{
 		return false;
 	}
+	if (UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(TargetCharacter))
+	{
+		return Stance->RequestStanceByLegacyName(FName(*OverlayPoseDisplayName));
+	}
 	if (UBH_StanceWatcherComponent* Watcher = UBH_StanceWatcherComponent::FindStanceWatcher(TargetCharacter))
 	{
 		Watcher->RequestStance(OverlayPoseDisplayName);
@@ -803,6 +821,11 @@ bool UBH_CombatFunctionLibrary::RequestStanceByName(AActor* TargetCharacter, con
 
 FString UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(const AActor* TargetCharacter)
 {
+	if (const UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(TargetCharacter))
+	{
+		return Stance->GetCurrentStanceLegacyName().ToString();
+	}
+
 	using namespace BH_CombatFunctionLibrary_Private;
 
 	int64 Value = 0;
@@ -1532,6 +1555,17 @@ bool UBH_CombatFunctionLibrary::SetCharacterWantsToStrafe(APawn* Pawn, bool bVal
 	if (!Pawn)
 	{
 		return false;
+	}
+
+	if (ABH_CharacterBase* BHCharacter = Cast<ABH_CharacterBase>(Pawn))
+	{
+		UE_LOG(LogBHCombat, Verbose, TEXT("SetCharacterWantsToStrafe: ABH_CharacterBase fast path (bLockOnStrafe=%d)"), bValue ? 1 : 0);
+		if (OutPrevious)
+		{
+			*OutPrevious = BHCharacter->IsLockOnStrafeActive();
+		}
+		BHCharacter->SetLockOnStrafe(bValue);
+		return true;
 	}
 
 	// CBP_SandboxCharacter: replicated struct "CharacterInputState" (UserDefinedStruct, members carry mangled names).
