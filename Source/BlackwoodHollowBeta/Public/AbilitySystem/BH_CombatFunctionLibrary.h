@@ -30,6 +30,7 @@ class ACharacter;
 class UMeshComponent;
 class USkeletalMeshComponent;
 class UAnimInstance;
+class UAnimMontage;
 class UBH_WeaponLoadoutDataAsset;
 class USkeletalMesh;
 class APawn;
@@ -283,6 +284,13 @@ public:
 	//  * Grip offset (FBH_WeaponMeshSlot::RelativeTransform in our DA_WeaponLoadouts):
 	//    how one particular WEAPON sits in that hand. Saved in our own content.
 	// Console (PIE, player 0): BH.Weapon.NudgeSocket / BH.Weapon.NudgeGrip / BH.Weapon.PrintTuning.
+
+	/**
+	 * Editor only (content authoring from Python): replaces the montage's composite sections (parallel arrays: name, start time,
+	 * next section; NAME_None = end) and recalculates its play length from the slot tracks. Python cannot write either.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Editor", meta = (DevelopmentOnly))
+	static void EditorSetMontageLayout(UAnimMontage* Montage, const TArray<FName>& SectionNames, const TArray<float>& SectionTimes, const TArray<FName>& NextSections);
 
 	/** Reads a socket's bone and transform relative to that bone (mesh sockets first, then skeleton sockets). */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons|Tuning")

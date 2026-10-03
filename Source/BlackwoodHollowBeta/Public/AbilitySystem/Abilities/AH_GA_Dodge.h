@@ -87,6 +87,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Montages", meta = (ClampMin = "0.05"))
 	float RootMotionTranslationScale = 0.82f;
 
+	/** Per-stance override of RootMotionTranslationScale (key = stance legacy name, e.g. "Greatsword_B"), for stances whose roll clip travels a different distance. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Montages", meta = (ClampMin = "0.05"))
+	TMap<FName, float> StanceRootMotionScale;
+
 	/** Authored at play rate 1.0 (montage seconds); the timers divide by DodgePlayRate. Seconds after activation when State.Combat.Invulnerable is granted. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|IFrames", meta = (ClampMin = "0.0"))
 	float IFrameStart = 0.03f;

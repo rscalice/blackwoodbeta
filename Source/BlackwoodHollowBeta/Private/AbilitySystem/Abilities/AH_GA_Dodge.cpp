@@ -2,6 +2,7 @@
 
 #include "AbilitySystem/Abilities/AH_GA_Dodge.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "Combat/BH_CombatFeel.h"
 #include "AbilitySystemComponent.h"
@@ -134,6 +135,15 @@ void UAH_GA_Dodge::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 		return;
 	}
 
+	// A combat ability draws the weapon (authority only; replicates through the stance component).
+	if (HasAuthority(&ActivationInfo))
+	{
+		if (UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(GetAvatarActorFromActorInfo()))
+		{
+			StanceComp->NotifyCombatActivity();
+		}
+	}
+
 	UE_LOG(LogBHCombat, Log, TEXT("Dodge: %s -> %s (%s)"), *GetNameSafe(Avatar), *UEnum::GetValueAsString(Direction), *Montage->GetName());
 
 	// Exhale vocal (cosmetic; the dodge slide SFX is a TODO: no asset yet).
@@ -149,7 +159,9 @@ void UAH_GA_Dodge::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 	// Shorter, tamer roll: scale root-motion travel for the duration of the dodge (both machines run this ability).
 	if (ACharacter* MutableCharacter = Cast<ACharacter>(Avatar))
 	{
-		MutableCharacter->SetAnimRootMotionTranslationScale(RootMotionTranslationScale);
+		const FString StanceName = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(Avatar);
+		const float* StanceScale = StanceName.IsEmpty() ? nullptr : StanceRootMotionScale.Find(FName(*StanceName));
+		MutableCharacter->SetAnimRootMotionTranslationScale(StanceScale ? *StanceScale : RootMotionTranslationScale);
 		ScaledCharacter = MutableCharacter;
 	}
 

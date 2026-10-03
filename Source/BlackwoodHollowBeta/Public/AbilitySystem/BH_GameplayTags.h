@@ -110,6 +110,11 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Unarmed
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Greatsword);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_SwordShield);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_DualSword);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Greatsword_B);
+
+// Weapon drawn / sheathed (UBH_StanceComponent::bWeaponDrawn, replicated; mirrored as loose tags on every machine, exactly one present)
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Weapon_Drawn);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Weapon_Sheathed);
 
 namespace BH_Stance
 {
@@ -122,7 +127,7 @@ namespace BH_Stance
 	/** Tag is a child of Stance.Weapon (the parent itself does not count). */
 	BLACKWOODHOLLOWBETA_API bool IsWeaponStance(FGameplayTag Tag);
 
-	/** Unarmed, Greatsword, SwordShield, DualSword. */
+	/** Unarmed, Greatsword, SwordShield, DualSword, Greatsword_B. */
 	BLACKWOODHOLLOWBETA_API const TArray<FGameplayTag>& AllWeaponStances();
 }
 
@@ -187,6 +192,11 @@ public:
 	FGameplayTag Stance_Weapon_Greatsword;
 	FGameplayTag Stance_Weapon_SwordShield;
 	FGameplayTag Stance_Weapon_DualSword;
+	FGameplayTag Stance_Weapon_Greatsword_B;
+
+	// Weapon state
+	FGameplayTag State_Weapon_Drawn;
+	FGameplayTag State_Weapon_Sheathed;
 
 protected:
 	void AddAllTags();

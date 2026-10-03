@@ -1427,6 +1427,39 @@ namespace BH_CombatFunctionLibrary_Private
 			PrintTuning(Character);
 		}));
 
+	static FAutoConsoleCommandWithWorldAndArgs CmdStanceSet(
+		TEXT("BH.Stance.Set"),
+		TEXT("BH.Stance.Set <LegacyName> -- request a weapon stance for player 0 (Unarmed, Greatsword, Greatsword_B, SwordAndShield, DualSword)."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			ACharacter* Character = GetTuningCharacter(World);
+			UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(Character);
+			if (!StanceComp || Args.Num() < 1 || !StanceComp->RequestStanceByLegacyName(FName(*Args[0])))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Usage: BH.Stance.Set <LegacyName> (needs a pawn with a stance component, valid and allowed name)"));
+			}
+		}));
+
+	static FAutoConsoleCommandWithWorldAndArgs CmdWeaponDraw(
+		TEXT("BH.Weapon.Draw"),
+		TEXT("BH.Weapon.Draw [0|1] -- draw (1) or sheath (0) player 0's weapon; no argument toggles."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(GetTuningCharacter(World));
+			if (!StanceComp)
+			{
+				return;
+			}
+			if (Args.Num() < 1)
+			{
+				StanceComp->ToggleWeaponDrawn();
+			}
+			else
+			{
+				StanceComp->RequestWeaponDrawn(FCString::Atoi(*Args[0]) != 0);
+			}
+		}));
+
 	static FAutoConsoleCommandWithWorld CmdPrintTuning(
 		TEXT("BH.Weapon.PrintTuning"),
 		TEXT("Logs player 0's weapon socket transforms and grip offsets."),
@@ -1434,6 +1467,34 @@ namespace BH_CombatFunctionLibrary_Private
 		{
 			PrintTuning(GetTuningCharacter(World));
 		}));
+}
+
+void UBH_CombatFunctionLibrary::EditorSetMontageLayout(UAnimMontage* Montage, const TArray<FName>& SectionNames, const TArray<float>& SectionTimes, const TArray<FName>& NextSections)
+{
+#if WITH_EDITOR
+	if (!Montage || SectionNames.Num() != SectionTimes.Num() || SectionNames.Num() != NextSections.Num())
+	{
+		return;
+	}
+	Montage->Modify();
+	Montage->CompositeSections.Reset();
+	for (int32 Index = 0; Index < SectionNames.Num(); ++Index)
+	{
+		Montage->AddAnimCompositeSection(SectionNames[Index], SectionTimes[Index]);
+	}
+	for (FCompositeSection& Section : Montage->CompositeSections)
+	{
+		const int32 Found = SectionNames.IndexOfByKey(Section.SectionName);
+		Section.NextSectionName = Found != INDEX_NONE ? NextSections[Found] : NAME_None;
+	}
+	float Longest = 0.f;
+	for (const FSlotAnimationTrack& Slot : Montage->SlotAnimTracks)
+	{
+		Longest = FMath::Max(Longest, Slot.AnimTrack.GetLength());
+	}
+	Montage->SetCompositeLength(Longest);
+	Montage->MarkPackageDirty();
+#endif
 }
 
 bool UBH_CombatFunctionLibrary::GetMeshSocketTransform(const USkeletalMesh* Mesh, FName SocketName, FTransform& OutRelativeTransform, FName& OutBoneName)

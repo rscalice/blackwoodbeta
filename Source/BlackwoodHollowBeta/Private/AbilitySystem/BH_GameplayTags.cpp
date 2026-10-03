@@ -88,6 +88,11 @@ UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_Unarmed, "Stance.Weapon.Unarmed
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_Greatsword, "Stance.Weapon.Greatsword", "Two-handed greatsword stance.");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_SwordShield, "Stance.Weapon.SwordShield", "Sword and shield stance (legacy key SwordAndShield).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_DualSword, "Stance.Weapon.DualSword", "Dual sword stance.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_Greatsword_B, "Stance.Weapon.Greatsword_B", "Greatsword stance, animation set B (evaluation twin of Greatsword; legacy key Greatsword_B).");
+
+// Weapon drawn / sheathed
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Weapon_Drawn, "State.Weapon.Drawn", "Weapon is drawn: combat locomotion / hold pose (UBH_StanceComponent).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Weapon_Sheathed, "State.Weapon.Sheathed", "Weapon is sheathed / relaxed (UBH_StanceComponent).");
 
 namespace BH_Stance
 {
@@ -96,6 +101,7 @@ namespace BH_Stance
 		const FString Name = LegacyName.ToString();
 		if (Name.Equals(TEXT("Unarmed"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Unarmed; }
 		if (Name.Equals(TEXT("Greatsword"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Greatsword; }
+		if (Name.Equals(TEXT("Greatsword_B"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Greatsword_B; }
 		if (Name.Equals(TEXT("DualSword"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_DualSword; }
 		if (Name.Equals(TEXT("SwordAndShield"), ESearchCase::IgnoreCase)
 			|| Name.Equals(TEXT("SwordShield"), ESearchCase::IgnoreCase)
@@ -110,6 +116,7 @@ namespace BH_Stance
 	{
 		if (StanceTag == TAG_Stance_Weapon_Unarmed.GetTag()) { return FName(TEXT("Unarmed")); }
 		if (StanceTag == TAG_Stance_Weapon_Greatsword.GetTag()) { return FName(TEXT("Greatsword")); }
+		if (StanceTag == TAG_Stance_Weapon_Greatsword_B.GetTag()) { return FName(TEXT("Greatsword_B")); }
 		if (StanceTag == TAG_Stance_Weapon_SwordShield.GetTag()) { return FName(TEXT("SwordAndShield")); }
 		if (StanceTag == TAG_Stance_Weapon_DualSword.GetTag()) { return FName(TEXT("DualSword")); }
 		return NAME_None;
@@ -124,7 +131,8 @@ namespace BH_Stance
 	{
 		static const TArray<FGameplayTag> Stances = {
 			TAG_Stance_Weapon_Unarmed.GetTag(), TAG_Stance_Weapon_Greatsword.GetTag(),
-			TAG_Stance_Weapon_SwordShield.GetTag(), TAG_Stance_Weapon_DualSword.GetTag() };
+			TAG_Stance_Weapon_SwordShield.GetTag(), TAG_Stance_Weapon_DualSword.GetTag(),
+			TAG_Stance_Weapon_Greatsword_B.GetTag() };
 		return Stances;
 	}
 }
@@ -189,4 +197,9 @@ void FBH_GameplayTags::AddAllTags()
 	AddTag(Stance_Weapon_Greatsword, "Stance.Weapon.Greatsword", "Two-handed greatsword stance.");
 	AddTag(Stance_Weapon_SwordShield, "Stance.Weapon.SwordShield", "Sword and shield stance.");
 	AddTag(Stance_Weapon_DualSword, "Stance.Weapon.DualSword", "Dual sword stance.");
+	AddTag(Stance_Weapon_Greatsword_B, "Stance.Weapon.Greatsword_B", "Greatsword stance, animation set B.");
+
+	// Weapon state
+	AddTag(State_Weapon_Drawn, "State.Weapon.Drawn", "Weapon is drawn (combat locomotion).");
+	AddTag(State_Weapon_Sheathed, "State.Weapon.Sheathed", "Weapon is sheathed (relaxed locomotion).");
 }

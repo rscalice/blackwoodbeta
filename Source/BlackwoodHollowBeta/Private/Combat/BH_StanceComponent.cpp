@@ -4,12 +4,18 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "Combat/BH_LoadoutComponent.h"
+#include "Combat/BH_LockOnComponent.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
 #include "Characters/BH_StanceMovementProfile.h"
 #include "UI/BH_HUDWidget.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemInterface.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "Components/MeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Engine/World.h"
+#include "GameFramework/Controller.h"
 #include "GameFramework/Character.h"
 #include "Net/UnrealNetwork.h"
 
@@ -24,6 +30,7 @@ void UBH_StanceComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UBH_StanceComponent, CurrentStance);
+	DOREPLIFETIME(UBH_StanceComponent, bWeaponDrawn);
 }
 
 void UBH_StanceComponent::BeginPlay()
@@ -39,10 +46,26 @@ void UBH_StanceComponent::BeginPlay()
 	{
 		ApplyStanceLocal(FGameplayTag(), CurrentStance);
 	}
+
+	ApplyWeaponDrawnLocal(bWeaponDrawn, false); // initial mirror (sheathed), no transition montage
+}
+
+void UBH_StanceComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (const UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(AutoSheathTimer);
+	}
+	Super::EndPlay(EndPlayReason);
 }
 
 UBH_StanceMovementProfile* UBH_StanceComponent::GetActiveMovementProfile() const
 {
+	// A stance without its own relaxed animation set uses the Neutral locomotion while sheathed: Default profile speeds match those clips.
+	if (!bWeaponDrawn && !StancesWithRelaxedSet.Contains(CurrentStance))
+	{
+		return DefaultMovementProfile.Get();
+	}
 	const TObjectPtr<UBH_StanceMovementProfile>* Found = MovementProfiles.Find(CurrentStance);
 	return Found && *Found ? Found->Get() : DefaultMovementProfile.Get();
 }
@@ -63,7 +86,9 @@ bool UBH_StanceComponent::IsStanceAllowed(FGameplayTag Stance) const
 	{
 		return true;
 	}
-	return Stance == TAG_Stance_Weapon_Unarmed.GetTag() || Loadout->AvailableStances.Contains(BH_Stance::ToLegacyName(Stance));
+	// Greatsword_B is the animation-set-B twin of Greatsword: allowed whenever Greatsword is.
+	return Stance == TAG_Stance_Weapon_Unarmed.GetTag() || Loadout->AvailableStances.Contains(BH_Stance::ToLegacyName(Stance))
+		|| (Stance == TAG_Stance_Weapon_Greatsword_B.GetTag() && Loadout->AvailableStances.Contains(BH_Stance::ToLegacyName(TAG_Stance_Weapon_Greatsword.GetTag())));
 }
 
 UBH_StanceComponent* UBH_StanceComponent::FindStanceComponent(const AActor* Actor)
@@ -123,6 +148,10 @@ bool UBH_StanceComponent::SetStance(FGameplayTag NewStance)
 	const FGameplayTag Old = CurrentStance;
 	CurrentStance = NewStance;
 	ApplyStanceLocal(Old, NewStance);
+	if (NewStance == TAG_Stance_Weapon_Unarmed.GetTag() && bWeaponDrawn)
+	{
+		SetWeaponDrawn(false); // Unarmed is always sheathed
+	}
 	Owner->ForceNetUpdate();
 	return true;
 }
@@ -186,4 +215,157 @@ UAbilitySystemComponent* UBH_StanceComponent::ResolveASC() const
 		return Interface->GetAbilitySystemComponent();
 	}
 	return Owner ? Owner->FindComponentByClass<UAbilitySystemComponent>() : nullptr;
+}
+
+// ============================================================================
+// Weapon drawn / sheathed
+// ============================================================================
+
+bool UBH_StanceComponent::SetWeaponDrawn(bool bDrawn)
+{
+	AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority())
+	{
+		return false;
+	}
+	if (bDrawn && CurrentStance == TAG_Stance_Weapon_Unarmed.GetTag())
+	{
+		return false; // nothing to draw
+	}
+	if (bDrawn == bWeaponDrawn)
+	{
+		RestartAutoSheathTimer(); // activity while already drawn just pushes the sheath time out
+		return true;
+	}
+
+	bWeaponDrawn = bDrawn;
+	ApplyWeaponDrawnLocal(bDrawn, true);
+	RestartAutoSheathTimer();
+	Owner->ForceNetUpdate();
+	return true;
+}
+
+bool UBH_StanceComponent::RequestWeaponDrawn(bool bDrawn)
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return false;
+	}
+	if (Owner->HasAuthority())
+	{
+		return SetWeaponDrawn(bDrawn);
+	}
+	const APawn* Pawn = Cast<APawn>(Owner);
+	if (Pawn && Pawn->IsLocallyControlled())
+	{
+		ServerSetWeaponDrawn(bDrawn);
+		return true;
+	}
+	return false;
+}
+
+void UBH_StanceComponent::ToggleWeaponDrawn()
+{
+	RequestWeaponDrawn(!bWeaponDrawn);
+}
+
+void UBH_StanceComponent::NotifyCombatActivity()
+{
+	SetWeaponDrawn(true);
+}
+
+void UBH_StanceComponent::ServerSetWeaponDrawn_Implementation(bool bDrawn)
+{
+	SetWeaponDrawn(bDrawn);
+}
+
+bool UBH_StanceComponent::ServerSetWeaponDrawn_Validate(bool bDrawn)
+{
+	return true;
+}
+
+void UBH_StanceComponent::OnRep_WeaponDrawn()
+{
+	ApplyWeaponDrawnLocal(bWeaponDrawn, true);
+}
+
+void UBH_StanceComponent::ApplyWeaponDrawnLocal(bool bDrawn, bool bPlayMontage)
+{
+	if (UAbilitySystemComponent* ASC = bMirrorStanceAsLooseTag ? ResolveASC() : nullptr)
+	{
+		ASC->SetLooseGameplayTagCount(TAG_State_Weapon_Drawn, bDrawn ? 1 : 0);
+		ASC->SetLooseGameplayTagCount(TAG_State_Weapon_Sheathed, bDrawn ? 0 : 1);
+	}
+
+	if (bPlayMontage)
+	{
+		const FBH_WeaponStateMontages* Montages = WeaponStateMontages.Find(CurrentStance);
+		UAnimMontage* Montage = Montages ? (bDrawn ? Montages->Draw.Get() : Montages->Sheath.Get()) : nullptr;
+		const ACharacter* Character = Cast<ACharacter>(GetOwner());
+		UAnimInstance* AnimInstance = Character && Character->GetMesh() ? Character->GetMesh()->GetAnimInstance() : nullptr;
+		if (Montage && AnimInstance)
+		{
+			AnimInstance->Montage_Play(Montage, 1.f); // cosmetic UpperBody montage, never through the ASC
+		}
+	}
+
+	OnWeaponDrawnChanged.Broadcast(bDrawn);
+}
+
+void UBH_StanceComponent::RestartAutoSheathTimer()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	FTimerManager& Timers = World->GetTimerManager();
+	Timers.ClearTimer(AutoSheathTimer);
+	if (bWeaponDrawn && AutoSheathDelay > 0.f)
+	{
+		Timers.SetTimer(AutoSheathTimer, this, &UBH_StanceComponent::AutoSheathTick, AutoSheathDelay, false);
+	}
+}
+
+void UBH_StanceComponent::AutoSheathTick()
+{
+	if (!bWeaponDrawn)
+	{
+		return;
+	}
+
+	bool bBusy = false;
+	if (const APawn* Pawn = Cast<APawn>(GetOwner()))
+	{
+		if (const AController* Controller = Pawn->GetController())
+		{
+			const UBH_LockOnComponent* LockOn = Controller->FindComponentByClass<UBH_LockOnComponent>();
+			bBusy = LockOn && LockOn->IsLockedOn();
+		}
+	}
+	if (!bBusy)
+	{
+		if (const UAbilitySystemComponent* ASC = ResolveASC())
+		{
+			for (const FGameplayTag& Busy : { TAG_State_Combat_Attacking.GetTag(), TAG_State_Combat_Blocking.GetTag(), TAG_State_Combat_Parrying.GetTag(),
+				TAG_State_Combat_Dodging.GetTag(), TAG_State_Combat_Staggered.GetTag(), TAG_State_Combat_PostureBroken.GetTag() })
+			{
+				if (ASC->HasMatchingGameplayTag(Busy))
+				{
+					bBusy = true;
+					break;
+				}
+			}
+		}
+	}
+
+	if (bBusy)
+	{
+		RestartAutoSheathTimer();
+	}
+	else
+	{
+		SetWeaponDrawn(false);
+	}
 }

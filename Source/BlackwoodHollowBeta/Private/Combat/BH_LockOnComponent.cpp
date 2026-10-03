@@ -3,6 +3,7 @@
 #include "Combat/BH_LockOnComponent.h"
 #include "Characters/BH_EnemyBase.h"
 #include "Combat/BH_CombatIdentityComponent.h"
+#include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
@@ -225,6 +226,15 @@ void UBH_LockOnComponent::SetLockedTargetInternal(AActor* NewTarget, bool bNotif
 	}
 
 	OnLockedTargetChanged.Broadcast(Old, NewTarget);
+
+	// Acquiring a lock-on draws the weapon (server side; the draw state replicates through the stance component).
+	if (NewTarget && GetOwner() && GetOwner()->HasAuthority() && GetPC())
+	{
+		if (UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(GetPC()->GetPawn()))
+		{
+			StanceComp->NotifyCombatActivity();
+		}
+	}
 }
 
 void UBH_LockOnComponent::Server_SetLockedTarget_Implementation(AActor* NewTarget)

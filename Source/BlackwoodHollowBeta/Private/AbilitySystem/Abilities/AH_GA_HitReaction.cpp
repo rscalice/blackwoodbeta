@@ -2,6 +2,7 @@
 
 #include "AbilitySystem/Abilities/AH_GA_HitReaction.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
@@ -115,6 +116,15 @@ void UAH_GA_HitReaction::ActivateAbility(const FGameplayAbilitySpecHandle Handle
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
+	}
+
+	// A combat ability draws the weapon (authority only; replicates through the stance component).
+	if (HasAuthority(&ActivationInfo))
+	{
+		if (UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(GetAvatarActorFromActorInfo()))
+		{
+			StanceComp->NotifyCombatActivity();
+		}
 	}
 
 	AActor* Avatar = GetAvatarActorFromActorInfo();
