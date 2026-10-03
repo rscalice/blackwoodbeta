@@ -2,6 +2,8 @@
 
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "Combat/BH_StanceWatcherComponent.h"
+#include "Combat/BH_StanceComponent.h"
+#include "Characters/BH_CharacterBase.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
@@ -69,6 +71,23 @@ void UBH_CombatIdentityComponent::BeginPlay()
 		if (WeaponLoadouts && !Watcher->FallbackLoadouts)
 		{
 			Watcher->FallbackLoadouts = WeaponLoadouts;
+		}
+	}
+
+	// ABH_CharacterBase descendants (motion-matching enemies): the replicated base team mirrors ours, and the native
+	// stance component takes our loadouts when it has none of its own.
+	if (Owner->HasAuthority())
+	{
+		if (ABH_CharacterBase* BaseCharacter = Cast<ABH_CharacterBase>(Owner))
+		{
+			BaseCharacter->SetGenericTeamId(BH_CombatTeam::ToGenericTeamId(CombatTeam));
+		}
+	}
+	if (UBH_StanceComponent* NativeStance = UBH_StanceComponent::FindStanceComponent(Owner))
+	{
+		if (WeaponLoadouts && !NativeStance->WeaponLoadouts)
+		{
+			NativeStance->WeaponLoadouts = WeaponLoadouts;
 		}
 	}
 
@@ -221,6 +240,14 @@ void UBH_CombatIdentityComponent::ApplyStartingStance()
 {
 	if (AActor* Owner = GetOwner())
 	{
+		if (StartingStanceTag.IsValid())
+		{
+			if (UBH_StanceComponent* NativeStance = UBH_StanceComponent::FindStanceComponent(Owner))
+			{
+				NativeStance->SetStance(StartingStanceTag);
+				return;
+			}
+		}
 		if (!StartingStance.IsNone())
 		{
 			UBH_CombatFunctionLibrary::ApplyOverlayPoseByDisplayName(Owner, StartingStance.ToString());

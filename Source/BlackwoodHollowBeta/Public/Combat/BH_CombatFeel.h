@@ -15,6 +15,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "Engine/DataAsset.h"
 #include "Camera/CameraShakeBase.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
@@ -168,6 +169,13 @@ public:
 	/** Seconds a ribbon sample lives (= tail fade after the swing). Keyed like TrailMaterials. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Trail")
 	TMap<FName, float> TrailLifetimes;
+
+	/** Tag-keyed twins (Stance.Weapon.*) of TrailMaterials / TrailLifetimes; read first for the stance key, the legacy maps are the fallback ("Echo" / "Corrupted" stay legacy). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Trail", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, TObjectPtr<UMaterialInterface>> TrailMaterialsByTag;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Trail", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, float> TrailLifetimesByTag;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Trail", meta = (ClampMin = "0.02"))
 	float DefaultTrailLifetime = 0.12f;

@@ -3,6 +3,7 @@
 #include "UI/BH_StanceRadialComponent.h"
 #include "Combat/BH_LoadoutComponent.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
+#include "AbilitySystem/BH_GameplayTags.h"
 #include "RadialSelectorType.h"
 #include "RadialSelectorMenuLayout.h"
 #include "EnhancedInputComponent.h"
@@ -21,6 +22,10 @@ UBH_StanceRadialComponent::UBH_StanceRadialComponent()
 	StanceDisplayNames.Add(FName(TEXT("DualSword")), NSLOCTEXT("BHStance", "DS", "Dual Swords"));
 	StanceDisplayNames.Add(FName(TEXT("Greatsword")), NSLOCTEXT("BHStance", "GS", "Greatsword"));
 
+	StanceDisplayNamesByTag.Add(TAG_Stance_Weapon_SwordShield.GetTag(), NSLOCTEXT("BHStance", "SnS", "Sword & Shield"));
+	StanceDisplayNamesByTag.Add(TAG_Stance_Weapon_DualSword.GetTag(), NSLOCTEXT("BHStance", "DS", "Dual Swords"));
+	StanceDisplayNamesByTag.Add(TAG_Stance_Weapon_Greatsword.GetTag(), NSLOCTEXT("BHStance", "GS", "Greatsword"));
+
 	// Hold-to-open, release-to-confirm (we drive open/close ourselves; see header).
 	ActivationMode = ERadialSelectorActivationMode::Hold;
 	ConfirmTrigger = ERadialSelectorConfirmTrigger::OnActivationInput;
@@ -34,7 +39,8 @@ void UBH_StanceRadialComponent::BeginPlay()
 	// The base component wants MenuData while it initialises; start with the default cycle and rebuild once a pawn is bound.
 	if (!MenuData)
 	{
-		RebuildFromStances({ FName(TEXT("SwordAndShield")), FName(TEXT("DualSword")), FName(TEXT("Greatsword")) });
+		RebuildFromStances({ BH_Stance::ToLegacyName(TAG_Stance_Weapon_SwordShield.GetTag()), BH_Stance::ToLegacyName(TAG_Stance_Weapon_DualSword.GetTag()),
+			BH_Stance::ToLegacyName(TAG_Stance_Weapon_Greatsword.GetTag()) });
 	}
 
 	Super::BeginPlay();
@@ -150,7 +156,12 @@ void UBH_StanceRadialComponent::RebuildFromStances(const TArray<FName>& Stances)
 	{
 		FRadialSelectorSegment Segment;
 		Segment.Identifier = Stance;
-		const FText* Friendly = StanceDisplayNames.Find(Stance);
+		const FGameplayTag StanceTag = BH_Stance::FromLegacyName(Stance);
+		const FText* Friendly = StanceTag.IsValid() ? StanceDisplayNamesByTag.Find(StanceTag) : nullptr;
+		if (!Friendly)
+		{
+			Friendly = StanceDisplayNames.Find(Stance);
+		}
 		Segment.DisplayName = Friendly ? *Friendly : FText::FromName(Stance);
 		Segment.Icon = UBH_CombatFunctionLibrary::GetStanceIconForPose(Pawn, Stance);
 		Data->Segments.Add(Segment);

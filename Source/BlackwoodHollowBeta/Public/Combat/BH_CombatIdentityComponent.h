@@ -15,6 +15,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "Components/ActorComponent.h"
 #include "Engine/TimerHandle.h"
 #include "Combat/BH_CombatTeam.h"
@@ -64,6 +65,10 @@ public:
 	/** GASP overlay pose (Enum_OverlayPose display name) applied on the server shortly after BeginPlay. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Setup")
 	FName StartingStance = TEXT("SwordAndShield");
+
+	/** Tag-keyed twin of StartingStance, applied through the native UBH_StanceComponent when set (motion-matching enemies leave both empty and use the stance component's DefaultStance). Wins over StartingStance. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Setup", meta = (Categories = "Stance.Weapon"))
+	FGameplayTag StartingStanceTag;
 
 	/** Seconds after BeginPlay before the starting stance is applied (GASP's own setup must have run first). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Setup", meta = (ClampMin = "0.0"))

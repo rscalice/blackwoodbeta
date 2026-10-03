@@ -16,6 +16,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "Components/RadialSelectorComponent.h"
 #include "BH_StanceRadialComponent.generated.h"
 
@@ -45,6 +46,10 @@ public:
 	/** Friendly wheel labels per stance (Identifier = stance name is always the lookup key). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|StanceRadial")
 	TMap<FName, FText> StanceDisplayNames;
+
+	/** Tag-keyed twin of StanceDisplayNames (Stance.Weapon.*); read first, the legacy map is the fallback. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|StanceRadial", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, FText> StanceDisplayNamesByTag;
 
 	/** Seconds between checks for a (new) controlled pawn / loadout component to bind to. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|StanceRadial", meta = (ClampMin = "0.05"))

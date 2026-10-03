@@ -4,6 +4,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "Engine/DataAsset.h"
 #include "Combat/BH_WeaponTypes.h"
 #include "BH_WeaponLoadoutDataAsset.generated.h"
@@ -30,6 +31,13 @@ public:
 	/** Enum_OverlayPose display name -> meshes to attach. FName keys match case-insensitively. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout")
 	TMap<FName, FBH_OverlayWeaponLoadout> LoadoutsByOverlayPose;
+
+	/** Tag-keyed twin of LoadoutsByOverlayPose (Stance.Weapon.*); read first, the legacy map is the fallback. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Loadout", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, FBH_OverlayWeaponLoadout> LoadoutsByStance;
+
+	/** Mutable entry for a legacy pose name: the tag map first, then the legacy map. */
+	FBH_OverlayWeaponLoadout* FindLoadoutEntry(FName OverlayPoseDisplayName);
 
 	/** @return true and fills OutLoadout if an entry exists for OverlayPoseDisplayName. */
 	UFUNCTION(BlueprintPure, Category = "Loadout")

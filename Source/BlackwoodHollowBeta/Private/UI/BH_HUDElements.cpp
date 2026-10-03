@@ -415,6 +415,14 @@ void UBH_VitalsClusterWidget::HandleStanceChanged(const FString& StanceName)
 	}
 	if (!Icon)
 	{
+		const FGameplayTag StanceTag = BH_Stance::FromLegacyName(FName(*StanceName));
+		if (const TObjectPtr<UTexture2D>* ByTag = StanceTag.IsValid() ? StanceIconsByTag.Find(StanceTag) : nullptr)
+		{
+			Icon = ByTag->Get();
+		}
+	}
+	if (!Icon)
+	{
 		for (const TPair<FString, TObjectPtr<UTexture2D>>& Entry : StanceIcons)
 		{
 			if (Entry.Key.Equals(StanceName, ESearchCase::IgnoreCase))

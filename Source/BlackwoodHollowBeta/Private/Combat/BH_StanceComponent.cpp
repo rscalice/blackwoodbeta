@@ -194,7 +194,7 @@ void UBH_StanceComponent::MirrorLooseTag(FGameplayTag Old, FGameplayTag New) con
 	}
 }
 
-void UBH_StanceComponent::EquipWeaponsFor(FGameplayTag New) const
+void UBH_StanceComponent::EquipWeaponsFor(FGameplayTag New)
 {
 	ACharacter* Character = Cast<ACharacter>(GetOwner());
 	if (!Character || !WeaponLoadouts)
@@ -203,6 +203,29 @@ void UBH_StanceComponent::EquipWeaponsFor(FGameplayTag New) const
 	}
 	TArray<UMeshComponent*> Attached;
 	UBH_CombatFunctionLibrary::EquipWeaponsForOverlayPose(Character, WeaponLoadouts, BH_Stance::ToLegacyName(New).ToString(), Attached);
+	// The meshes were just respawned in the hand: put them where the drawn state says (no transition montage).
+	ApplyWeaponAttachment(bWeaponDrawn);
+}
+
+void UBH_StanceComponent::ApplyWeaponAttachment(bool bInHand)
+{
+	bWeaponsInHand = bInHand;
+	if (ACharacter* Character = Cast<ACharacter>(GetOwner()))
+	{
+		UBH_CombatFunctionLibrary::SetWeaponMeshSheathed(Character, EBH_WeaponSlot::MainHand, !bInHand);
+		UBH_CombatFunctionLibrary::SetWeaponMeshSheathed(Character, EBH_WeaponSlot::OffHand, !bInHand);
+	}
+}
+
+void UBH_StanceComponent::HandleWeaponAttachNotify(bool bToHand)
+{
+	ApplyWeaponAttachment(bToHand);
+}
+
+void UBH_StanceComponent::OnWeaponTransitionMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	// Safety net: an interrupted draw / sheath montage never leaves the weapon mid-air.
+	ApplyWeaponAttachment(bWeaponDrawn);
 }
 
 UAbilitySystemComponent* UBH_StanceComponent::ResolveASC() const
@@ -296,6 +319,7 @@ void UBH_StanceComponent::ApplyWeaponDrawnLocal(bool bDrawn, bool bPlayMontage)
 		ASC->SetLooseGameplayTagCount(TAG_State_Weapon_Sheathed, bDrawn ? 0 : 1);
 	}
 
+	bool bMontagePlayed = false;
 	if (bPlayMontage)
 	{
 		const FBH_WeaponStateMontages* Montages = WeaponStateMontages.Find(CurrentStance);
@@ -304,8 +328,18 @@ void UBH_StanceComponent::ApplyWeaponDrawnLocal(bool bDrawn, bool bPlayMontage)
 		UAnimInstance* AnimInstance = Character && Character->GetMesh() ? Character->GetMesh()->GetAnimInstance() : nullptr;
 		if (Montage && AnimInstance)
 		{
-			AnimInstance->Montage_Play(Montage, 1.f); // cosmetic UpperBody montage, never through the ASC
+			// cosmetic UpperBody montage, never through the ASC; the BH Weapon Attach notify moves the weapon at the grab / release frame
+			if (AnimInstance->Montage_Play(Montage, 1.f) > 0.f)
+			{
+				bMontagePlayed = true;
+				FOnMontageEnded EndDelegate = FOnMontageEnded::CreateUObject(this, &UBH_StanceComponent::OnWeaponTransitionMontageEnded);
+				AnimInstance->Montage_SetEndDelegate(EndDelegate, Montage);
+			}
 		}
+	}
+	if (!bMontagePlayed)
+	{
+		ApplyWeaponAttachment(bDrawn); // no clip (Unarmed, stance without montages, late joiner, initial mirror): snap
 	}
 
 	OnWeaponDrawnChanged.Broadcast(bDrawn);

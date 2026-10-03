@@ -44,4 +44,22 @@ public:
 
 	UPROPERTY()
 	FVector TipLocal = FVector::ZeroVector;
+
+	/** Hand socket the weapon was attached to (drawn), and the sheathed socket / offset copied from the slot. */
+	UPROPERTY()
+	FName HandSocket = NAME_None;
+
+	UPROPERTY()
+	FName SheathedSocket = NAME_None;
+
+	UPROPERTY()
+	FTransform SheathedRelative = FTransform::Identity;
+
+	/** The hand-attached relative transform (AuthoredRelative follows the active attachment). */
+	UPROPERTY()
+	FTransform HandRelative = FTransform::Identity;
+
+	/** True while the weapon rides on SheathedSocket (the two-hand grip driver stays off). */
+	UPROPERTY()
+	bool bSheathedOnBack = false;
 };

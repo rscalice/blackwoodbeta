@@ -78,6 +78,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain", meta = (ClampMin = "0"))
 	float AssistTurnSpeed = 360.f;
 
+	/** Inside AttackRange + this the approach walks (gait Walk) instead of running. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain", meta = (ClampMin = "0"))
+	float WalkInDistance = 150.f;
+
+	/** Farther than this from the target the approach sprints. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain", meta = (ClampMin = "0"))
+	float SprintDistance = 1200.f;
+
 	/** Relative weights for 1 / 2 / 3 swing combos. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain", meta = (ClampMin = "0"))
 	float ComboWeight1 = 30.f;

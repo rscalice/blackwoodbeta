@@ -35,6 +35,7 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Attackin
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_HyperArmor);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_ComboWindow);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_PostureRegenDelayed);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_MovementLocked);
 
 // ---------------------------------------------------------------------------
 // Event.Combat.*  -- momentary gameplay events sent via SendGameplayEventToActor
@@ -128,6 +129,18 @@ namespace BH_Stance
 
 	/** Unarmed, Greatsword, SwordShield, DualSword. */
 	BLACKWOODHOLLOWBETA_API const TArray<FGameplayTag>& AllWeaponStances();
+
+	/** Tag-keyed map first, legacy FName-keyed map as the fallback (Phase 6 migration; the legacy maps are removed in Phase 7). */
+	template <typename T>
+	const T* FindForStance(const TMap<FGameplayTag, T>& TagMap, const TMap<FName, T>& LegacyMap, FGameplayTag Stance)
+	{
+		if (const T* Found = TagMap.Find(Stance))
+		{
+			return Found;
+		}
+		const FName Legacy = ToLegacyName(Stance);
+		return Legacy.IsNone() ? nullptr : LegacyMap.Find(Legacy);
+	}
 }
 
 /**

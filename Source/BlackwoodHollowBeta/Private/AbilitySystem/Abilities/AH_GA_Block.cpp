@@ -108,6 +108,15 @@ void UAH_GA_Block::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 	// Stance-specific guard (e.g. both hands on the greatsword hilt); SnS / DS and anything unlisted use GuardMontage.
 	ActiveGuardMontage = GuardMontage;
 	{
+		AActor* StanceAvatar = ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr;
+		const FGameplayTag StanceTag = UBH_StanceComponent::FindStanceComponent(StanceAvatar) ? UBH_StanceComponent::GetStanceTagOf(StanceAvatar) : FGameplayTag();
+		const TObjectPtr<UAnimMontage>* TagFound = StanceTag.IsValid() ? StanceGuardMontagesByTag.Find(StanceTag) : nullptr;
+		if (TagFound && *TagFound)
+		{
+			ActiveGuardMontage = *TagFound;
+		}
+		else
+		{
 		const FString Stance = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
 		if (!Stance.IsEmpty())
 		{
@@ -118,6 +127,7 @@ void UAH_GA_Block::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 					ActiveGuardMontage = *Found;
 				}
 			}
+		}
 		}
 	}
 

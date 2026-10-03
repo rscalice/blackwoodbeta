@@ -92,8 +92,13 @@ EBH_DodgeDirection UAH_GA_Dodge::ResolveDodgeDirection(const ACharacter* Charact
 
 UAnimMontage* UAH_GA_Dodge::PickMontage(const AActor* Avatar, EBH_DodgeDirection Direction) const
 {
-	const FString Stance = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(Avatar);
-	const FBH_DodgeMontageSet* Set = Stance.IsEmpty() ? nullptr : DirectionalMontages.Find(FName(*Stance));
+	const FGameplayTag StanceTag = UBH_StanceComponent::FindStanceComponent(Avatar) ? UBH_StanceComponent::GetStanceTagOf(Avatar) : FGameplayTag();
+	const FBH_DodgeMontageSet* Set = StanceTag.IsValid() ? DirectionalMontagesByTag.Find(StanceTag) : nullptr;
+	if (!Set)
+	{
+		const FString Stance = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(Avatar);
+		Set = Stance.IsEmpty() ? nullptr : DirectionalMontages.Find(FName(*Stance));
+	}
 	if (!Set)
 	{
 		Set = &DefaultMontages;
@@ -159,8 +164,13 @@ void UAH_GA_Dodge::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 	// Shorter, tamer roll: scale root-motion travel for the duration of the dodge (both machines run this ability).
 	if (ACharacter* MutableCharacter = Cast<ACharacter>(Avatar))
 	{
-		const FString StanceName = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(Avatar);
-		const float* StanceScale = StanceName.IsEmpty() ? nullptr : StanceRootMotionScale.Find(FName(*StanceName));
+		const FGameplayTag StanceTag = UBH_StanceComponent::FindStanceComponent(Avatar) ? UBH_StanceComponent::GetStanceTagOf(Avatar) : FGameplayTag();
+		const float* StanceScale = StanceTag.IsValid() ? StanceRootMotionScaleByTag.Find(StanceTag) : nullptr;
+		if (!StanceScale)
+		{
+			const FString StanceName = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(Avatar);
+			StanceScale = StanceName.IsEmpty() ? nullptr : StanceRootMotionScale.Find(FName(*StanceName));
+		}
 		MutableCharacter->SetAnimRootMotionTranslationScale(StanceScale ? *StanceScale : RootMotionTranslationScale);
 		ScaledCharacter = MutableCharacter;
 	}

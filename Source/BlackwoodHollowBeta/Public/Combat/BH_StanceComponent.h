@@ -16,6 +16,7 @@ class UAbilitySystemComponent;
 class UBH_StanceMovementProfile;
 class UBH_WeaponLoadoutDataAsset;
 class UAnimMontage;
+class USkeletalMeshComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnStanceChanged, FGameplayTag, OldStance, FGameplayTag, NewStance);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnWeaponDrawnChanged, bool, bDrawn);
@@ -140,6 +141,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BH|Stance|Weapon State")
 	void NotifyCombatActivity();
 
+	/** Called by UBH_AN_WeaponAttach on every machine: weapons to the hand (true) or to their sheathed socket (false). */
+	void HandleWeaponAttachNotify(bool bToHand);
+
+	/** True while the equipped weapons ride in the hand (local, cosmetic). */
+	UFUNCTION(BlueprintPure, Category = "BH|Stance|Weapon State")
+	bool AreWeaponsInHand() const { return bWeaponsInHand; }
+
 protected:
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentStance, VisibleInstanceOnly, BlueprintReadOnly, Category = "BH|Stance")
 	FGameplayTag CurrentStance;
@@ -163,7 +171,9 @@ protected:
 private:
 	void ApplyStanceLocal(FGameplayTag Old, FGameplayTag New);
 	void MirrorLooseTag(FGameplayTag Old, FGameplayTag New) const;
-	void EquipWeaponsFor(FGameplayTag New) const;
+	void EquipWeaponsFor(FGameplayTag New);
+	void ApplyWeaponAttachment(bool bInHand);
+	void OnWeaponTransitionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 	UAbilitySystemComponent* ResolveASC() const;
 
 	void ApplyWeaponDrawnLocal(bool bDrawn, bool bPlayMontage);
@@ -171,4 +181,5 @@ private:
 	void AutoSheathTick();
 
 	FTimerHandle AutoSheathTimer;
+	bool bWeaponsInHand = true;
 };

@@ -50,6 +50,14 @@ struct BLACKWOODHOLLOWBETA_API FBH_WeaponMeshSlot
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon")
 	FTransform RelativeTransform = FTransform::Identity;
 
+	/** Socket the weapon rides on while the weapon is sheathed (e.g. weapon_back_socket). None = it stays in the hand. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Sheathed")
+	FName SheathedSocket = NAME_None;
+
+	/** Offset relative to SheathedSocket while sheathed. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weapon|Sheathed")
+	FTransform SheathedRelativeTransform = FTransform::Identity;
+
 	/**
 	 * Per-weapon blade line for UANS_MeleeHitbox, used when the mesh has no weapon_root / weapon_tip sockets.
 	 * BladeRootLocal / BladeTipLocal are in the weapon COMPONENT's local space (guard side / tip side).

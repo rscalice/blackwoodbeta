@@ -95,6 +95,28 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|Movement")
 	float GetGroundFrictionOr(float Fallback) const;
 
+	// -- AI gait (GASP reads IA_Move for the desired gait, which is zero for AI) --------------------------------------
+
+	/** Gait the AI controller wants (Walk close to the target, Run, Sprint far away). Replicated so simulated proxies pick the same locomotion rows. */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "BH|Movement")
+	EBH_Gait AIDesiredGait = EBH_Gait::Run;
+
+	/** Authority only. */
+	UFUNCTION(BlueprintCallable, Category = "BH|Movement")
+	void SetAIDesiredGait(EBH_Gait NewGait);
+
+	UFUNCTION(BlueprintPure, Category = "BH|Movement")
+	EBH_Gait GetAIDesiredGait() const { return AIDesiredGait; }
+
+	// -- Combat movement lock (State.Combat.MovementLocked, ActivationOwnedTags of melee attacks / hit reactions) --
+
+	/** True while the ASC carries State.Combat.MovementLocked: profile speeds / acceleration read 0 and braking is CombatLockBrakingDeceleration. Root motion is unaffected. */
+	UFUNCTION(BlueprintPure, Category = "BH|Movement")
+	bool IsCombatMovementLocked() const;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Movement")
+	float CombatLockBrakingDeceleration = 2000.f;
+
 	/** Not pure: updates the braking band latch. Call once per tick (from CalculateBrakingDeceleration). */
 	UFUNCTION(BlueprintCallable, Category = "BH|Movement")
 	float ComputeBrakingDecelerationOr(bool bHasMovementInput, float Fallback);
@@ -115,6 +137,9 @@ protected:
 	virtual void OnRep_PlayerState() override;
 	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	/** Input is ignored while IsCombatMovementLocked (unless forced), so the ABP never sees a start / pivot during a swing. */
+	virtual void AddMovementInput(FVector WorldDirection, float ScaleValue = 1.0f, bool bForce = false) override;
 
 	UFUNCTION(Server, Reliable)
 	void ServerSetLockOnStrafe(bool bEnabled);

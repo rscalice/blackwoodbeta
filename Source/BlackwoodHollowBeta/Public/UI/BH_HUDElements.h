@@ -17,6 +17,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "UI/BH_HUDWidget.h"
 #include "BH_HUDElements.generated.h"
 
@@ -226,6 +227,10 @@ public:
 	/** Enum_OverlayPose display name -> emblem texture. Poses without an entry hide the emblem. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|HUD")
 	TMap<FString, TObjectPtr<UTexture2D>> StanceIcons;
+
+	/** Tag-keyed twin of StanceIcons (Stance.Weapon.*); read first, the legacy map is the fallback. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|HUD", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, TObjectPtr<UTexture2D>> StanceIconsByTag;
 
 	/** Show "cur / max" over the health bar. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|HUD")

@@ -233,6 +233,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons")
 	static UMeshComponent* AttachWeaponMesh(ACharacter* Character, EBH_WeaponSlot Slot, const FBH_WeaponMeshSlot& MeshSlot);
 
+	/**
+	 * Re-attaches the weapon in Slot (no respawn): bSheathed = its SheathedSocket + SheathedRelativeTransform (when the slot has
+	 * a sheathed socket and the mesh has it), else the hand socket + the authored grip. Cosmetic / local.
+	 * @return true if a weapon was found.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons")
+	static bool SetWeaponMeshSheathed(ACharacter* Character, EBH_WeaponSlot Slot, bool bSheathed);
+
 	/** Destroys every weapon mesh component previously spawned by this library on Character. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons")
 	static void UnequipWeaponMeshes(ACharacter* Character);
@@ -291,6 +299,13 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Editor", meta = (DevelopmentOnly))
 	static void EditorSetMontageLayout(UAnimMontage* Montage, const TArray<FName>& SectionNames, const TArray<float>& SectionTimes, const TArray<FName>& NextSections);
+
+	/**
+	 * Editor only (content authoring from Python, where socket name / bone are read-only): adds a mesh socket, or updates it
+	 * when a socket of that name exists. Marks the mesh package dirty; save the mesh afterwards.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Editor", meta = (DevelopmentOnly))
+	static bool EditorAddMeshSocket(USkeletalMesh* Mesh, FName SocketName, FName BoneName, const FTransform& RelativeTransform);
 
 	/** Reads a socket's bone and transform relative to that bone (mesh sockets first, then skeleton sockets). */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons|Tuning")

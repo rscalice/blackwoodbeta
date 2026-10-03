@@ -28,6 +28,7 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Attacking, "State.Combat.Attacking");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Combat_HyperArmor, "State.Combat.HyperArmor", "Hit reactions cannot stagger this actor (heavy weapon swing); damage still applies.");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_ComboWindow, "State.Combat.ComboWindow");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_PostureRegenDelayed, "State.Combat.PostureRegenDelayed");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Combat_MovementLocked, "State.Combat.MovementLocked", "Movement input is ignored (full-body attack); root motion still moves the capsule.");
 
 // Event.Combat.*
 UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Combat_Hit, "Event.Combat.Hit");

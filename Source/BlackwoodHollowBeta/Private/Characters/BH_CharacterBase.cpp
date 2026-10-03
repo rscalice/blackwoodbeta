@@ -3,6 +3,7 @@
 #include "Characters/BH_CharacterBase.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
+#include "AbilitySystem/BH_GameplayTags.h"
 #include "Combat/BH_StanceComponent.h"
 #include "Characters/BH_StanceMovementProfile.h"
 #include "AbilitySystemComponent.h"
@@ -26,6 +27,7 @@ void ABH_CharacterBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(ABH_CharacterBase, CombatTeam);
 	DOREPLIFETIME(ABH_CharacterBase, bLockOnStrafe);
+	DOREPLIFETIME(ABH_CharacterBase, AIDesiredGait);
 }
 
 void ABH_CharacterBase::PossessedBy(AController* NewController)
@@ -126,8 +128,34 @@ UBH_StanceMovementProfile* ABH_CharacterBase::GetMovementProfile() const
 	return StanceComponent ? StanceComponent->GetActiveMovementProfile() : nullptr;
 }
 
+void ABH_CharacterBase::SetAIDesiredGait(EBH_Gait NewGait)
+{
+	if (HasAuthority())
+	{
+		AIDesiredGait = NewGait;
+	}
+}
+
+bool ABH_CharacterBase::IsCombatMovementLocked() const
+{
+	return AbilitySystemComponent && AbilitySystemComponent->HasMatchingGameplayTag(TAG_State_Combat_MovementLocked);
+}
+
+void ABH_CharacterBase::AddMovementInput(FVector WorldDirection, float ScaleValue, bool bForce)
+{
+	if (!bForce && IsCombatMovementLocked())
+	{
+		return;
+	}
+	Super::AddMovementInput(WorldDirection, ScaleValue, bForce);
+}
+
 FVector ABH_CharacterBase::GetGaitSpeedsOr(FVector Fallback) const
 {
+	if (IsCombatMovementLocked())
+	{
+		return FVector::ZeroVector;
+	}
 	const UBH_StanceMovementProfile* Profile = GetMovementProfile();
 	return Profile ? Profile->GetGaitSettings(CurrentGait).Speeds : Fallback;
 }
@@ -140,6 +168,10 @@ FVector ABH_CharacterBase::GetCrouchSpeedsOr(FVector Fallback) const
 
 float ABH_CharacterBase::GetMaxAccelerationOr(float Fallback) const
 {
+	if (IsCombatMovementLocked())
+	{
+		return 0.f;
+	}
 	const UBH_StanceMovementProfile* Profile = GetMovementProfile();
 	return Profile ? Profile->GetMaxAccelerationFor(CurrentGait, GetVelocity().Size2D()) : Fallback;
 }
@@ -152,6 +184,11 @@ float ABH_CharacterBase::GetGroundFrictionOr(float Fallback) const
 
 float ABH_CharacterBase::ComputeBrakingDecelerationOr(bool bHasMovementInput, float Fallback)
 {
+	if (IsCombatMovementLocked())
+	{
+		BrakingBand.Reset();
+		return CombatLockBrakingDeceleration;
+	}
 	const UBH_StanceMovementProfile* Profile = GetMovementProfile();
 	if (!Profile)
 	{
@@ -184,6 +221,10 @@ float ABH_CharacterBase::GetMaxAccelerationFor(EBH_Gait Gait, float Speed2D) con
 
 float ABH_CharacterBase::GetBrakingDeceleration(bool bHasMovementInput) const
 {
+	if (IsCombatMovementLocked())
+	{
+		return CombatLockBrakingDeceleration;
+	}
 	const UBH_StanceMovementProfile* Profile = GetMovementProfile();
 	if (!Profile)
 	{

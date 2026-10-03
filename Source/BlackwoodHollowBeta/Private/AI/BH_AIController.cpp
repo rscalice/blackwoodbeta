@@ -7,6 +7,10 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/Abilities/AH_GA_MeleeAttack_Base.h"
+#include "Characters/BH_CharacterBase.h"
+#include "Characters/BH_CharacterTypes.h"
+#include "Combat/BH_StanceComponent.h"
+#include "GenericTeamAgentInterface.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Abilities/GameplayAbility.h"
@@ -33,6 +37,10 @@ void ABH_AIController::OnPossess(APawn* InPawn)
 	if (const UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(InPawn))
 	{
 		SetGenericTeamId(BH_CombatTeam::ToGenericTeamId(Identity->CombatTeam));
+	}
+	else if (const IGenericTeamAgentInterface* PawnAgent = Cast<IGenericTeamAgentInterface>(InPawn))
+	{
+		SetGenericTeamId(PawnAgent->GetGenericTeamId());
 	}
 
 	// GASP only turns a character toward the controller's rotation while WantsToStrafe is set (default true).
@@ -166,6 +174,13 @@ void ABH_AIController::SetState(EBH_AIState NewState)
 	UE_LOG(LogBHCombat, Verbose, TEXT("%s brain: %d -> %d"), *GetNameSafe(GetPawn()), static_cast<int32>(State), static_cast<int32>(NewState));
 	State = NewState;
 	StateTime = 0.f;
+	if (NewState != EBH_AIState::Approach)
+	{
+		if (ABH_CharacterBase* BHPawn = Cast<ABH_CharacterBase>(GetPawn()))
+		{
+			BHPawn->SetAIDesiredGait(EBH_Gait::Run); // movement is stopped / locked outside Approach
+		}
+	}
 }
 
 // ============================================================================
@@ -271,6 +286,11 @@ void ABH_AIController::SetTarget(AActor* NewTarget)
 			WatchedTargetASC = NewASC;
 		}
 		SetFocus(NewTarget);
+		// Acquiring a target draws the weapon (authority; replicates through the stance component).
+		if (const UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(GetPawn()))
+		{
+			const_cast<UBH_StanceComponent*>(Stance)->NotifyCombatActivity();
+		}
 		if (State == EBH_AIState::Idle)
 		{
 			SetState(EBH_AIState::Approach);
@@ -408,6 +428,12 @@ void ABH_AIController::TickApproach(float DeltaSeconds)
 
 	SetFocus(T);
 	const float Dist = GetDistanceToTarget();
+
+	// GASP derives the gait from IA_Move (zero for AI): hand it the desired gait through the replicated base property.
+	if (ABH_CharacterBase* BHPawn = Cast<ABH_CharacterBase>(Me))
+	{
+		BHPawn->SetAIDesiredGait(Dist >= SprintDistance ? EBH_Gait::Sprint : (Dist <= AttackRange + WalkInDistance ? EBH_Gait::Walk : EBH_Gait::Run));
+	}
 
 	if (Dist <= AttackRange)
 	{

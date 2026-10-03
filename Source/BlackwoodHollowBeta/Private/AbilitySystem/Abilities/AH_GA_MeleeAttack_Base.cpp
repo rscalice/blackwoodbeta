@@ -28,6 +28,7 @@ UAH_GA_MeleeAttack_Base::UAH_GA_MeleeAttack_Base()
 	SetAssetTags(DefaultAssetTags);
 
 	ActivationOwnedTags.AddTag(TAG_State_Combat_Attacking);
+	ActivationOwnedTags.AddTag(TAG_State_Combat_MovementLocked);
 
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Staggered);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_PostureBroken);

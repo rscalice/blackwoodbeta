@@ -72,6 +72,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Montages")
 	TMap<FName, FBH_DodgeMontageSet> DirectionalMontages;
 
+	/** Tag-keyed twin of DirectionalMontages (Stance.Weapon.*); read first, the legacy map is the fallback. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Montages", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, FBH_DodgeMontageSet> DirectionalMontagesByTag;
+
 	/** Used when the current stance has no entry in DirectionalMontages. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Montages")
 	FBH_DodgeMontageSet DefaultMontages;
@@ -90,6 +94,10 @@ public:
 	/** Per-stance override of RootMotionTranslationScale (key = stance legacy name, e.g. "Greatsword"), for stances whose roll clip travels a different distance. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Montages", meta = (ClampMin = "0.05"))
 	TMap<FName, float> StanceRootMotionScale;
+
+	/** Tag-keyed twin of StanceRootMotionScale; read first, the legacy map is the fallback. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Montages", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, float> StanceRootMotionScaleByTag;
 
 	/** Authored at play rate 1.0 (montage seconds); the timers divide by DodgePlayRate. Seconds after activation when State.Combat.Invulnerable is granted. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|IFrames", meta = (ClampMin = "0.0"))

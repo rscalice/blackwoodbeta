@@ -4,6 +4,11 @@
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
+#include "AbilitySystem/Abilities/AH_GA_Dodge.h"
+#include "AbilitySystem/Abilities/AH_GA_HitReaction.h"
+#include "AbilitySystem/Abilities/AH_GA_PostureBreak.h"
+#include "Combat/BH_CombatFeel.h"
+#include "UI/BH_HUDElements.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
 #include "Combat/BH_WeaponBladeData.h"
 #include "Combat/BH_StanceWatcherComponent.h"
@@ -212,7 +217,7 @@ bool UBH_CombatFunctionLibrary::SetupCombatCharacter(AActor* OwningActor, TSubcl
 	// component of the same class on the character wins (no duplicate is added).
 	if (APawn* Pawn = Cast<APawn>(OwningActor))
 	{
-		if (!Cast<ABH_EnemyBase>(Pawn) && !Pawn->FindComponentByClass<UBH_LoadoutComponent>())
+		if (!Cast<ABH_EnemyBase>(Pawn) && !UBH_CombatIdentityComponent::Find(Pawn) && !Pawn->FindComponentByClass<UBH_LoadoutComponent>())
 		{
 			UBH_LoadoutComponent* Loadout = NewObject<UBH_LoadoutComponent>(Pawn, TEXT("Loadout"));
 			Pawn->AddInstanceComponent(Loadout);
@@ -1018,7 +1023,7 @@ void UBH_CombatFunctionLibrary::ApplyTwoHandAim(ACharacter* Character, float Del
 	const UBH_WeaponBladeData* Data = Weapon ? Weapon->GetAssetUserData<UBH_WeaponBladeData>() : nullptr;
 	USkeletalMeshComponent* AnimMesh = Character->GetMesh();
 	USkeletalMeshComponent* Parent = Weapon ? Cast<USkeletalMeshComponent>(Weapon->GetAttachParent()) : nullptr;
-	if (!Data || !Data->bTwoHandedGrip || !Parent)
+	if (!Data || !Data->bTwoHandedGrip || !Parent || Data->bSheathedOnBack)
 	{
 		InOutWeight = 0.f;
 		bInOutHasPrevRotation = false;
@@ -1168,7 +1173,6 @@ UMeshComponent* UBH_CombatFunctionLibrary::AttachWeaponMesh(ACharacter* Characte
 
 	// Blade line for meshes without weapon_root / weapon_tip sockets (read by UANS_MeleeHitbox).
 	// Also carries the two-handed grip point (read by GetSecondaryGripIKTarget).
-	if (MeshSlot.bUseBladeOverride || MeshSlot.bTwoHandedGrip)
 	{
 		UBH_WeaponBladeData* BladeData = NewObject<UBH_WeaponBladeData>(NewComponent);
 		BladeData->bHasBladeLine = MeshSlot.bUseBladeOverride;
@@ -1179,6 +1183,10 @@ UMeshComponent* UBH_CombatFunctionLibrary::AttachWeaponMesh(ACharacter* Characte
 		BladeData->AuthoredRelative = MeshSlot.RelativeTransform;
 		BladeData->SecondaryGripLocal = MeshSlot.SecondaryGripLocal;
 		BladeData->SecondaryGripRotLocal = MeshSlot.SecondaryGripRotLocal;
+		BladeData->HandSocket = SocketName;
+		BladeData->HandRelative = MeshSlot.RelativeTransform;
+		BladeData->SheathedSocket = MeshSlot.SheathedSocket;
+		BladeData->SheathedRelative = MeshSlot.SheathedRelativeTransform;
 		NewComponent->AddAssetUserData(BladeData);
 	}
 
@@ -1209,6 +1217,47 @@ UMeshComponent* UBH_CombatFunctionLibrary::AttachWeaponMesh(ACharacter* Characte
 	}
 
 	return NewComponent;
+}
+
+bool UBH_CombatFunctionLibrary::SetWeaponMeshSheathed(ACharacter* Character, EBH_WeaponSlot Slot, bool bSheathed)
+{
+	UMeshComponent* Weapon = GetEquippedWeaponComponent(Character, Slot);
+	UBH_WeaponBladeData* Data = Weapon ? Weapon->GetAssetUserData<UBH_WeaponBladeData>() : nullptr;
+	if (!Weapon || !Data)
+	{
+		return false;
+	}
+
+	FName Socket = Data->HandSocket;
+	FTransform Relative = Data->HandRelative;
+	bool bOnBack = false;
+	if (bSheathed && !Data->SheathedSocket.IsNone())
+	{
+		USkeletalMeshComponent* BackParent = FindWeaponAttachMesh(Character, Data->SheathedSocket);
+		if (BackParent && BackParent->DoesSocketExist(Data->SheathedSocket))
+		{
+			Socket = Data->SheathedSocket;
+			Relative = Data->SheathedRelative;
+			bOnBack = true;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SetWeaponMeshSheathed: '%s' has no socket '%s' -- the weapon stays in the hand."), *GetNameSafe(Character), *Data->SheathedSocket.ToString());
+		}
+	}
+
+	if (USkeletalMeshComponent* Parent = FindWeaponAttachMesh(Character, Socket))
+	{
+		if (Weapon->GetAttachParent() != Parent || Weapon->GetAttachSocketName() != Socket)
+		{
+			Weapon->AttachToComponent(Parent, FAttachmentTransformRules::SnapToTargetNotIncludingScale, Socket);
+		}
+		Weapon->SetRelativeTransform(Relative);
+		Data->AuthoredRelative = Relative;
+		Data->bSheathedOnBack = bOnBack;
+		return true;
+	}
+	return false;
 }
 
 void UBH_CombatFunctionLibrary::UnequipWeaponMeshes(ACharacter* Character)
@@ -1460,6 +1509,111 @@ namespace BH_CombatFunctionLibrary_Private
 			}
 		}));
 
+#if WITH_EDITOR
+	static FString StanceKeyToString(const FName& Key) { return Key.ToString(); }
+	static FString StanceKeyToString(const FString& Key) { return Key; }
+
+	/** Copies the legacy FName / FString keyed stance maps into their Stance.Weapon.* tag twins (never overwrites a tag entry). */
+	template <typename TObj, typename TKey, typename TValue>
+	static int32 MigrateStanceMap(TObj* Object, const TMap<TKey, TValue>& Legacy, TMap<FGameplayTag, TValue>& ByTag)
+	{
+		int32 Added = 0;
+		for (const TPair<TKey, TValue>& Pair : Legacy)
+		{
+			const FGameplayTag Tag = BH_Stance::FromLegacyName(FName(*StanceKeyToString(Pair.Key)));
+			if (Tag.IsValid() && !ByTag.Contains(Tag))
+			{
+				if (Added == 0)
+				{
+					Object->Modify();
+				}
+				ByTag.Add(Tag, Pair.Value);
+				++Added;
+			}
+		}
+		if (Added > 0)
+		{
+			Object->MarkPackageDirty();
+		}
+		return Added;
+	}
+
+	template <typename TObj>
+	static bool IsMigratable(const TObj* Object)
+	{
+		const FString ClassName = Object->GetClass()->GetName();
+		return !Object->HasAnyFlags(RF_Transient) && !ClassName.StartsWith(TEXT("SKEL_")) && !ClassName.StartsWith(TEXT("REINST_"))
+			&& !Object->GetPackage()->HasAnyPackageFlags(PKG_PlayInEditor);
+	}
+
+	static void MigrateLegacyStanceMaps()
+	{
+		int32 Total = 0;
+		const auto Report = [&Total](const UObject* Object, const TCHAR* Map, int32 Added)
+		{
+			Total += Added;
+			UE_LOG(LogTemp, Display, TEXT("[BH Migrate] %s . %s : %d entries copied"), *GetNameSafe(Object), Map, Added);
+		};
+		for (TObjectIterator<UAH_GA_Block> It(RF_NoFlags); It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("StanceGuardMontages"), MigrateStanceMap(*It, It->StanceGuardMontages, It->StanceGuardMontagesByTag));
+			}
+		}
+		for (TObjectIterator<UAH_GA_Dodge> It(RF_NoFlags); It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("DirectionalMontages"), MigrateStanceMap(*It, It->DirectionalMontages, It->DirectionalMontagesByTag));
+				Report(*It, TEXT("StanceRootMotionScale"), MigrateStanceMap(*It, It->StanceRootMotionScale, It->StanceRootMotionScaleByTag));
+			}
+		}
+		for (TObjectIterator<UAH_GA_HitReaction> It(RF_NoFlags); It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("StanceHitMontages"), MigrateStanceMap(*It, It->StanceHitMontages, It->StanceHitMontagesByTag));
+			}
+		}
+		for (TObjectIterator<UAH_GA_PostureBreak> It(RF_NoFlags); It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("StancePostureBreakMontages"), MigrateStanceMap(*It, It->StancePostureBreakMontages, It->StancePostureBreakMontagesByTag));
+			}
+		}
+		for (TObjectIterator<UBH_VitalsClusterWidget> It(RF_NoFlags); It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("StanceIcons"), MigrateStanceMap(*It, It->StanceIcons, It->StanceIconsByTag));
+			}
+		}
+		for (TObjectIterator<UBH_CombatFeelSettings> It; It; ++It)
+		{
+			if (!It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("TrailMaterials"), MigrateStanceMap(*It, It->TrailMaterials, It->TrailMaterialsByTag));
+				Report(*It, TEXT("TrailLifetimes"), MigrateStanceMap(*It, It->TrailLifetimes, It->TrailLifetimesByTag));
+			}
+		}
+		for (TObjectIterator<UBH_WeaponLoadoutDataAsset> It; It; ++It)
+		{
+			if (!It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("LoadoutsByOverlayPose"), MigrateStanceMap(*It, It->LoadoutsByOverlayPose, It->LoadoutsByStance));
+			}
+		}
+		UE_LOG(LogTemp, Display, TEXT("[BH Migrate] done: %d entries copied. Compile and save the touched assets."), Total);
+	}
+
+	static FAutoConsoleCommand CmdMigrateStanceMaps(
+		TEXT("BH.Stance.MigrateLegacyMaps"),
+		TEXT("Editor: copies every loaded legacy FName/FString keyed stance map (guard / hit / posture-break / dodge montages, trail tables, loadout DA, vitals icons) into its Stance.Weapon.* tag twin."),
+		FConsoleCommandDelegate::CreateStatic(&MigrateLegacyStanceMaps));
+#endif
+
 	static FAutoConsoleCommandWithWorld CmdPrintTuning(
 		TEXT("BH.Weapon.PrintTuning"),
 		TEXT("Logs player 0's weapon socket transforms and grip offsets."),
@@ -1509,6 +1663,32 @@ bool UBH_CombatFunctionLibrary::GetMeshSocketTransform(const USkeletalMesh* Mesh
 	OutRelativeTransform = FTransform(Socket->RelativeRotation, Socket->RelativeLocation, Socket->RelativeScale);
 	OutBoneName = Socket->BoneName;
 	return true;
+}
+
+bool UBH_CombatFunctionLibrary::EditorAddMeshSocket(USkeletalMesh* Mesh, FName SocketName, FName BoneName, const FTransform& RelativeTransform)
+{
+#if WITH_EDITOR
+	if (!Mesh || SocketName.IsNone() || Mesh->GetRefSkeleton().FindBoneIndex(BoneName) == INDEX_NONE)
+	{
+		return false;
+	}
+	Mesh->Modify();
+	USkeletalMeshSocket* Socket = Mesh->FindSocket(SocketName);
+	if (!Socket)
+	{
+		Socket = NewObject<USkeletalMeshSocket>(Mesh, NAME_None, RF_Transactional);
+		Socket->SocketName = SocketName;
+		Mesh->AddSocket(Socket);
+	}
+	Socket->BoneName = BoneName;
+	Socket->RelativeLocation = RelativeTransform.GetLocation();
+	Socket->RelativeRotation = RelativeTransform.Rotator();
+	Socket->RelativeScale = RelativeTransform.GetScale3D();
+	Mesh->MarkPackageDirty();
+	return true;
+#else
+	return false;
+#endif
 }
 
 bool UBH_CombatFunctionLibrary::SetMeshSocketTransform(USkeletalMesh* Mesh, FName SocketName, const FTransform& RelativeTransform, bool bMarkAssetDirty)
@@ -1579,6 +1759,12 @@ bool UBH_CombatFunctionLibrary::SetEquippedWeaponOffset(ACharacter* Character, E
 		return false;
 	}
 	Weapon->SetRelativeTransform(RelativeTransform);
+	if (UBH_WeaponBladeData* Data = Weapon->GetAssetUserData<UBH_WeaponBladeData>())
+	{
+		// Keep the sheathed / hand offsets in step so a draw / sheath toggle does not revert a live nudge.
+		(Data->bSheathedOnBack ? Data->SheathedRelative : Data->HandRelative) = RelativeTransform;
+		Data->AuthoredRelative = RelativeTransform;
+	}
 	return true;
 }
 
@@ -1591,7 +1777,7 @@ bool UBH_CombatFunctionLibrary::StoreEquippedWeaponOffsetInLoadout(ACharacter* C
 		return false;
 	}
 
-	FBH_OverlayWeaponLoadout* Entry = Loadouts->LoadoutsByOverlayPose.Find(FName(*PoseName));
+	FBH_OverlayWeaponLoadout* Entry = Loadouts->FindLoadoutEntry(FName(*PoseName));
 	if (!Entry)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("StoreEquippedWeaponOffsetInLoadout: %s has no entry for overlay pose '%s'."), *Loadouts->GetName(), *PoseName);
@@ -1602,7 +1788,16 @@ bool UBH_CombatFunctionLibrary::StoreEquippedWeaponOffsetInLoadout(ACharacter* C
 	Loadouts->Modify();
 #endif
 	FBH_WeaponMeshSlot& MeshSlot = Slot == EBH_WeaponSlot::OffHand ? Entry->OffHand : Entry->MainHand;
-	MeshSlot.RelativeTransform = Weapon->GetRelativeTransform();
+	// While the weapon rides on its sheathed socket the nudged offset is the sheathed one.
+	const UBH_WeaponBladeData* BladeData = const_cast<UMeshComponent*>(Weapon)->GetAssetUserData<UBH_WeaponBladeData>();
+	if (BladeData && BladeData->bSheathedOnBack)
+	{
+		MeshSlot.SheathedRelativeTransform = Weapon->GetRelativeTransform();
+	}
+	else
+	{
+		MeshSlot.RelativeTransform = Weapon->GetRelativeTransform();
+	}
 	Loadouts->MarkPackageDirty();
 	return true;
 }
