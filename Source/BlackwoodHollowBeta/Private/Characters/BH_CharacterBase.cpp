@@ -4,6 +4,7 @@
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "Combat/BH_StanceComponent.h"
+#include "Characters/BH_StanceMovementProfile.h"
 #include "AbilitySystemComponent.h"
 #include "AIController.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -118,4 +119,80 @@ void ABH_CharacterBase::SetGaitFromByte(uint8 GaitByte)
 FGameplayTag ABH_CharacterBase::GetWeaponStance() const
 {
 	return StanceComponent ? StanceComponent->GetCurrentStance() : FGameplayTag();
+}
+
+UBH_StanceMovementProfile* ABH_CharacterBase::GetMovementProfile() const
+{
+	return StanceComponent ? StanceComponent->GetActiveMovementProfile() : nullptr;
+}
+
+FVector ABH_CharacterBase::GetGaitSpeedsOr(FVector Fallback) const
+{
+	const UBH_StanceMovementProfile* Profile = GetMovementProfile();
+	return Profile ? Profile->GetGaitSettings(CurrentGait).Speeds : Fallback;
+}
+
+FVector ABH_CharacterBase::GetCrouchSpeedsOr(FVector Fallback) const
+{
+	const UBH_StanceMovementProfile* Profile = GetMovementProfile();
+	return Profile ? Profile->CrouchSpeeds : Fallback;
+}
+
+float ABH_CharacterBase::GetMaxAccelerationOr(float Fallback) const
+{
+	const UBH_StanceMovementProfile* Profile = GetMovementProfile();
+	return Profile ? Profile->GetMaxAccelerationFor(CurrentGait, GetVelocity().Size2D()) : Fallback;
+}
+
+float ABH_CharacterBase::GetGroundFrictionOr(float Fallback) const
+{
+	const UBH_StanceMovementProfile* Profile = GetMovementProfile();
+	return Profile ? Profile->GetGroundFrictionFor(CurrentGait, GetVelocity().Size2D()) : Fallback;
+}
+
+float ABH_CharacterBase::ComputeBrakingDecelerationOr(bool bHasMovementInput, float Fallback)
+{
+	const UBH_StanceMovementProfile* Profile = GetMovementProfile();
+	if (!Profile)
+	{
+		BrakingBand.Reset();
+		return Fallback;
+	}
+	if (bHasMovementInput)
+	{
+		BrakingBand.Reset();
+		return Profile->BrakingDecelerationWithInput;
+	}
+	if (!BrakingBand.IsSet())
+	{
+		BrakingBand = Profile->GetBrakingBandForSpeed(GetVelocity().Size2D());
+	}
+	return Profile->GetGaitSettings(*BrakingBand).BrakingDecelerationNoInput;
+}
+
+FVector ABH_CharacterBase::GetGaitSpeeds(EBH_Gait Gait) const
+{
+	const UBH_StanceMovementProfile* Profile = GetMovementProfile();
+	return Profile ? Profile->GetGaitSettings(Gait).Speeds : FVector::ZeroVector;
+}
+
+float ABH_CharacterBase::GetMaxAccelerationFor(EBH_Gait Gait, float Speed2D) const
+{
+	const UBH_StanceMovementProfile* Profile = GetMovementProfile();
+	return Profile ? Profile->GetMaxAccelerationFor(Gait, Speed2D) : 0.f;
+}
+
+float ABH_CharacterBase::GetBrakingDeceleration(bool bHasMovementInput) const
+{
+	const UBH_StanceMovementProfile* Profile = GetMovementProfile();
+	if (!Profile)
+	{
+		return 0.f;
+	}
+	if (bHasMovementInput)
+	{
+		return Profile->BrakingDecelerationWithInput;
+	}
+	const EBH_Gait Band = BrakingBand.IsSet() ? *BrakingBand : Profile->GetBrakingBandForSpeed(GetVelocity().Size2D());
+	return Profile->GetGaitSettings(Band).BrakingDecelerationNoInput;
 }

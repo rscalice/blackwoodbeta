@@ -12,6 +12,7 @@
 #include "BH_StanceComponent.generated.h"
 
 class UAbilitySystemComponent;
+class UBH_StanceMovementProfile;
 class UBH_WeaponLoadoutDataAsset;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnStanceChanged, FGameplayTag, OldStance, FGameplayTag, NewStance);
@@ -34,6 +35,17 @@ public:
 	/** Weapon meshes per stance (legacy-keyed loadout asset). Attached on every machine on stance change. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Stance")
 	TObjectPtr<UBH_WeaponLoadoutDataAsset> WeaponLoadouts;
+
+	/** Movement profile per weapon stance (exact tag match). Missing stance -> DefaultMovementProfile -> nullptr (BP values). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Movement", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, TObjectPtr<UBH_StanceMovementProfile>> MovementProfiles;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Movement")
+	TObjectPtr<UBH_StanceMovementProfile> DefaultMovementProfile;
+
+	/** MovementProfiles entry for the current stance, else DefaultMovementProfile (may be null). */
+	UFUNCTION(BlueprintPure, Category = "BH|Movement")
+	UBH_StanceMovementProfile* GetActiveMovementProfile() const;
 
 	/** Mirror CurrentStance as a loose gameplay tag on the owner's ASC (every machine). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Stance")

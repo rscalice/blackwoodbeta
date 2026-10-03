@@ -18,6 +18,7 @@
 class UAbilitySystemComponent;
 class UAH_AttributeSet;
 class UBH_StanceComponent;
+class UBH_StanceMovementProfile;
 class UGameplayAbility;
 
 UCLASS(Abstract, Blueprintable)
@@ -75,6 +76,40 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|Stance")
 	FGameplayTag GetWeaponStance() const;
 
+	// -- Per-stance movement profile (the BP passes its own value as Fallback when no profile is set) --
+
+	/** Active profile from the stance component, or nullptr. */
+	UFUNCTION(BlueprintPure, Category = "BH|Movement")
+	UBH_StanceMovementProfile* GetMovementProfile() const;
+
+	/** Profile speeds for CurrentGait (set by SetGaitFromByte earlier in the same tick). */
+	UFUNCTION(BlueprintPure, Category = "BH|Movement")
+	FVector GetGaitSpeedsOr(FVector Fallback) const;
+
+	UFUNCTION(BlueprintPure, Category = "BH|Movement")
+	FVector GetCrouchSpeedsOr(FVector Fallback) const;
+
+	UFUNCTION(BlueprintPure, Category = "BH|Movement")
+	float GetMaxAccelerationOr(float Fallback) const;
+
+	UFUNCTION(BlueprintPure, Category = "BH|Movement")
+	float GetGroundFrictionOr(float Fallback) const;
+
+	/** Not pure: updates the braking band latch. Call once per tick (from CalculateBrakingDeceleration). */
+	UFUNCTION(BlueprintCallable, Category = "BH|Movement")
+	float ComputeBrakingDecelerationOr(bool bHasMovementInput, float Fallback);
+
+	/** Explicit-gait variants for other callers (AI, HUD). Zero when no profile. */
+	UFUNCTION(BlueprintPure, Category = "BH|Movement")
+	FVector GetGaitSpeeds(EBH_Gait Gait) const;
+
+	UFUNCTION(BlueprintPure, Category = "BH|Movement")
+	float GetMaxAccelerationFor(EBH_Gait Gait, float Speed2D) const;
+
+	/** Latched band, no side effects. Zero when no profile. */
+	UFUNCTION(BlueprintPure, Category = "BH|Movement")
+	float GetBrakingDeceleration(bool bHasMovementInput) const;
+
 protected:
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void OnRep_PlayerState() override;
@@ -106,4 +141,7 @@ private:
 	EBH_Gait CurrentGait = EBH_Gait::Run;
 
 	bool bAbilitiesGranted = false;
+
+	/** Speed band latched on the first no-input tick of a stop (Gait flips on release, so it cannot be used). */
+	TOptional<EBH_Gait> BrakingBand;
 };

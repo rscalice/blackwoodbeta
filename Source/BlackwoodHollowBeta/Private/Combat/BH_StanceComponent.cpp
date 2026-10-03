@@ -5,6 +5,7 @@
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "Combat/BH_LoadoutComponent.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
+#include "Characters/BH_StanceMovementProfile.h"
 #include "UI/BH_HUDWidget.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemInterface.h"
@@ -38,6 +39,12 @@ void UBH_StanceComponent::BeginPlay()
 	{
 		ApplyStanceLocal(FGameplayTag(), CurrentStance);
 	}
+}
+
+UBH_StanceMovementProfile* UBH_StanceComponent::GetActiveMovementProfile() const
+{
+	const TObjectPtr<UBH_StanceMovementProfile>* Found = MovementProfiles.Find(CurrentStance);
+	return Found && *Found ? Found->Get() : DefaultMovementProfile.Get();
 }
 
 FName UBH_StanceComponent::GetCurrentStanceLegacyName() const
