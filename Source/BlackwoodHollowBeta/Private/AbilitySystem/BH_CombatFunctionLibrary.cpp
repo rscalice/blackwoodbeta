@@ -1429,7 +1429,7 @@ namespace BH_CombatFunctionLibrary_Private
 
 	static FAutoConsoleCommandWithWorldAndArgs CmdStanceSet(
 		TEXT("BH.Stance.Set"),
-		TEXT("BH.Stance.Set <LegacyName> -- request a weapon stance for player 0 (Unarmed, Greatsword, Greatsword_B, SwordAndShield, DualSword)."),
+		TEXT("BH.Stance.Set <LegacyName> -- request a weapon stance for player 0 (Unarmed, Greatsword, SwordAndShield, DualSword)."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 		{
 			ACharacter* Character = GetTuningCharacter(World);

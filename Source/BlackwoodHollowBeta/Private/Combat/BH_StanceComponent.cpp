@@ -86,9 +86,7 @@ bool UBH_StanceComponent::IsStanceAllowed(FGameplayTag Stance) const
 	{
 		return true;
 	}
-	// Greatsword_B is the animation-set-B twin of Greatsword: allowed whenever Greatsword is.
-	return Stance == TAG_Stance_Weapon_Unarmed.GetTag() || Loadout->AvailableStances.Contains(BH_Stance::ToLegacyName(Stance))
-		|| (Stance == TAG_Stance_Weapon_Greatsword_B.GetTag() && Loadout->AvailableStances.Contains(BH_Stance::ToLegacyName(TAG_Stance_Weapon_Greatsword.GetTag())));
+	return Stance == TAG_Stance_Weapon_Unarmed.GetTag() || Loadout->AvailableStances.Contains(BH_Stance::ToLegacyName(Stance));
 }
 
 UBH_StanceComponent* UBH_StanceComponent::FindStanceComponent(const AActor* Actor)

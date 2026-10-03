@@ -87,7 +87,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Montages", meta = (ClampMin = "0.05"))
 	float RootMotionTranslationScale = 0.82f;
 
-	/** Per-stance override of RootMotionTranslationScale (key = stance legacy name, e.g. "Greatsword_B"), for stances whose roll clip travels a different distance. */
+	/** Per-stance override of RootMotionTranslationScale (key = stance legacy name, e.g. "Greatsword"), for stances whose roll clip travels a different distance. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Dodge|Montages", meta = (ClampMin = "0.05"))
 	TMap<FName, float> StanceRootMotionScale;
 
