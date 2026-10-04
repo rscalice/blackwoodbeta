@@ -15,6 +15,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
 #include "Net/UnrealNetwork.h"
 
 ABH_LoadoutPad::ABH_LoadoutPad()
@@ -40,7 +41,7 @@ ABH_LoadoutPad::ABH_LoadoutPad()
 
 	AmbientFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("AmbientFX"));
 	AmbientFX->SetupAttachment(PadTrigger);
-	AmbientFX->SetAutoActivate(true);
+	AmbientFX->SetAutoActivate(false); // pad FX only play when a player uses the pad
 
 	LabelWidget = CreateDefaultSubobject<UWidgetComponent>(TEXT("LabelWidget"));
 	LabelWidget->SetupAttachment(PadTrigger);
@@ -73,6 +74,13 @@ void ABH_LoadoutPad::OnConstruction(const FTransform& Transform)
 void ABH_LoadoutPad::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// The pad FX play on use only. Switch it off here too: instances / BP children may still carry bAutoActivate=true
+	// (SetAutoActivate is not callable after construction, so this just deactivates).
+	if (AmbientFX)
+	{
+		AmbientFX->Deactivate();
+	}
 
 	// Label: every machine writes its own copy of the text (the widget is not replicated).
 	if (LabelWidget)
@@ -216,13 +224,9 @@ void ABH_LoadoutPad::ApplyPadActiveState()
 	}
 	if (AmbientFX)
 	{
-		if (bPadActive)
+		if (!bPadActive)
 		{
-			AmbientFX->Activate();
-		}
-		else
-		{
-			AmbientFX->Deactivate();
+			AmbientFX->Deactivate(); // never activated here: the pad FX only play on use (MulticastPlayApplyFX)
 		}
 	}
 	if (LabelWidget)
@@ -303,10 +307,32 @@ void ABH_LoadoutPad::HandleBeginOverlap(UPrimitiveComponent* OverlappedComponent
 
 void ABH_LoadoutPad::MulticastPlayApplyFX_Implementation(APawn* Pawn)
 {
-	if (GetNetMode() == NM_DedicatedServer || !Pawn || !ApplyBurstFX)
+	if (GetNetMode() == NM_DedicatedServer)
 	{
 		return;
 	}
-	UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, ApplyBurstFX, Pawn->GetActorLocation(), Pawn->GetActorRotation(),
-		FVector::OneVector, /*bAutoDestroy*/ true, /*bAutoActivate*/ true);
+	if (Pawn && ApplyBurstFX)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, ApplyBurstFX, Pawn->GetActorLocation(), Pawn->GetActorRotation(),
+			FVector::OneVector, /*bAutoDestroy*/ true, /*bAutoActivate*/ true);
+	}
+
+	// The pad's own effect plays once per use; a looping asset is switched off again after PadFXPlayTime.
+	if (AmbientFX && AmbientFX->GetAsset())
+	{
+		AmbientFX->ResetSystem();
+		AmbientFX->Activate(true);
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimer(PadFXStopTimer, this, &ABH_LoadoutPad::StopPadFX, FMath::Max(PadFXPlayTime, 0.1f), false);
+		}
+	}
+}
+
+void ABH_LoadoutPad::StopPadFX()
+{
+	if (AmbientFX)
+	{
+		AmbientFX->Deactivate();
+	}
 }

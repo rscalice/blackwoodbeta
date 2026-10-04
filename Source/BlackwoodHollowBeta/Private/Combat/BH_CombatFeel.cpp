@@ -2,12 +2,21 @@
 
 #include "Combat/BH_CombatFeel.h"
 #include "Combat/BH_CombatIdentityComponent.h"
+#include "Combat/BH_StanceComponent.h"
+#include "AbilitySystem/AH_AttributeSet.h"
+#include "AbilitySystem/BH_GameplayTags.h"
+#include "AbilitySystemBlueprintLibrary.h"
+#include "AbilitySystemComponent.h"
+#include "Characters/BH_CharacterBase.h"
 #include "Cues/BH_CameraShakes.h"
 #include "Cues/BH_CueUtils.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/PointLightComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/RootMotionSource.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
@@ -95,6 +104,14 @@ UBH_CombatFeelSettings::UBH_CombatFeelSettings()
 {
 	Tiers.SetNum(4);
 
+	// Animation freeze (hit-stop) and pushback: separate properties (not Tiers[]) so an already-saved DA_CombatFeel picks up these defaults.
+	FreezeDurationByTier = { 0.06f, 0.09f, 0.13f, 0.18f };
+	PushbackDistanceByTier = { 25.f, 50.f, 110.f, 180.f };
+	PushbackDurationByTier = { 0.12f, 0.15f, 0.2f, 0.25f };
+	PushbackStanceMultipliers.Add(TAG_Stance_Weapon_Greatsword, 1.4f);
+	PushbackStanceMultipliers.Add(TAG_Stance_Weapon_DualSword, 0.8f);
+	PushbackStanceMultipliers.Add(TAG_Stance_Weapon_SwordShield, 1.f);
+
 	Tiers[0].ShakeClass = UBH_CameraShake_Light::StaticClass();
 	Tiers[0].HitStopDuration = 0.03f;
 
@@ -112,6 +129,16 @@ UBH_CombatFeelSettings::UBH_CombatFeelSettings()
 	Tiers[3].FlashRadius = 500.f;
 
 	TrailLifetimes.Add(TEXT("Greatsword"), 0.18f);
+}
+
+float UBH_CombatFeelSettings::GetFreezeDuration(EBH_ImpactTier Tier) const
+{
+	const int32 Index = static_cast<int32>(Tier);
+	if (FreezeDurationByTier.IsValidIndex(Index))
+	{
+		return FreezeDurationByTier[Index];
+	}
+	return Tiers.IsValidIndex(Index) ? Tiers[Index].HitStopDuration : 0.f;
 }
 
 const UBH_CombatFeelSettings* UBH_CombatFeelSettings::Get()
@@ -157,8 +184,19 @@ EBH_ImpactTier UBH_CombatFeelLibrary::Escalate(EBH_ImpactTier Tier)
 	return static_cast<EBH_ImpactTier>(FMath::Min(static_cast<int32>(Tier) + 1, static_cast<int32>(EBH_ImpactTier::Massive)));
 }
 
+void UBH_CombatFeelLibrary::ApplyTierFreeze(AActor* Actor, EBH_ImpactTier Tier, float Factor, bool bBlocked)
+{
+	const UBH_CombatFeelSettings* Settings = UBH_CombatFeelSettings::Get();
+	if (!Actor || !Settings->bEnableAnimFreeze)
+	{
+		return;
+	}
+	const float Duration = Settings->GetFreezeDuration(Tier) * Factor * (bBlocked ? Settings->FreezeBlockedFactor : 1.f);
+	BH_CueUtils::ApplyHitStop(Actor, Duration, Settings->FreezeAnimRateScale);
+}
+
 void UBH_CombatFeelLibrary::PlayImpactFeel(const UObject* WorldContext, EBH_ImpactTier Tier, AActor* Instigator, AActor* Victim, FVector Location,
-	bool bEscalateForVictim, bool bInstigatorOnlyShake)
+	bool bEscalateForVictim, bool bInstigatorOnlyShake, bool bBlocked, bool bSkipFreeze)
 {
 	UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
 	if (!World || World->GetNetMode() == NM_DedicatedServer)
@@ -172,13 +210,13 @@ void UBH_CombatFeelLibrary::PlayImpactFeel(const UObject* WorldContext, EBH_Impa
 	}
 	const FBH_ImpactTierSettings& TierData = Settings->Tiers[static_cast<int32>(Tier)];
 
-	// Hit-stop: both fighters, every machine (cosmetic).
-	if (TierData.HitStopDuration > 0.f)
+	// Animation freeze (hit-stop): both fighters, every machine (cosmetic; attacker x1.0, victim x1.15 by default).
+	if (!bSkipFreeze)
 	{
-		BH_CueUtils::ApplyHitStop(Instigator, TierData.HitStopDuration);
+		ApplyTierFreeze(Instigator, Tier, Settings->FreezeAttackerFactor, bBlocked);
 		if (Victim != Instigator)
 		{
-			BH_CueUtils::ApplyHitStop(Victim, TierData.HitStopDuration);
+			ApplyTierFreeze(Victim, Tier, Settings->FreezeVictimFactor, bBlocked);
 		}
 	}
 
@@ -243,9 +281,101 @@ void UBH_CombatFeelLibrary::PlayImpactFeel(const UObject* WorldContext, EBH_Impa
 		}
 	}
 
-	UE_LOG(LogBHFeel, Verbose, TEXT("PlayImpactFeel: tier=%s shakeTier=%s instigator=%s victim=%s hitstop=%.2f flash=%.0f localInvolved=%d shake=%s scale=%.2f"),
-		TierName(Tier), TierName(ShakeTier), *GetNameSafe(Instigator), *GetNameSafe(Victim), TierData.HitStopDuration, TierData.FlashIntensity,
+	UE_LOG(LogBHFeel, Verbose, TEXT("PlayImpactFeel: tier=%s shakeTier=%s instigator=%s victim=%s freeze=%.2f blocked=%d skipFreeze=%d flash=%.0f localInvolved=%d shake=%s scale=%.2f"),
+		TierName(Tier), TierName(ShakeTier), *GetNameSafe(Instigator), *GetNameSafe(Victim), Settings->GetFreezeDuration(Tier), bBlocked ? 1 : 0, bSkipFreeze ? 1 : 0, TierData.FlashIntensity,
 		bLocalInvolved ? 1 : 0, Shake ? *Shake->GetClass()->GetName() : TEXT("none"), Scale);
+}
+
+// ----------------------------------------------------------------------------
+// Pushback
+// ----------------------------------------------------------------------------
+
+bool UBH_CombatFeelLibrary::ApplyPushbackSource(ACharacter* Character, const FVector& Direction, float Distance, float Duration, uint16 Id)
+{
+	UCharacterMovementComponent* Movement = Character ? Character->GetCharacterMovement() : nullptr;
+	const FVector FlatDirection = Direction.GetSafeNormal2D();
+	if (!Movement || FlatDirection.IsNearlyZero() || Distance <= 0.f || Duration <= KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	// Constant force: velocity = Distance / Duration for Duration seconds, so the pawn travels about Distance. Additive, so it stacks
+	// with montage root motion and normal input instead of replacing them; zero Z, and Z is ignored when accumulating.
+	TSharedPtr<FRootMotionSource_ConstantForce> Source = MakeShared<FRootMotionSource_ConstantForce>();
+	Source->InstanceName = FName(*FString::Printf(TEXT("BH_Pushback_%u"), static_cast<uint32>(Id)));
+	Source->AccumulateMode = ERootMotionAccumulateMode::Additive;
+	Source->Priority = 5;
+	Source->Force = FlatDirection * (Distance / Duration);
+	Source->Duration = Duration;
+	Source->StrengthOverTime = nullptr;
+	Source->Settings.SetFlag(ERootMotionSourceSettingsFlags::IgnoreZAccumulate);
+	Source->FinishVelocityParams.Mode = ERootMotionFinishVelocityMode::ClampVelocity;
+	Source->FinishVelocityParams.SetVelocity = FVector::ZeroVector;
+	Source->FinishVelocityParams.ClampVelocity = 0.f;
+	Movement->ApplyRootMotionSource(Source);
+	return true;
+}
+
+bool UBH_CombatFeelLibrary::ApplyHitPushback(AActor* Attacker, AActor* Victim, EBH_ImpactTier Tier, bool bBlocked)
+{
+	ACharacter* VictimCharacter = Cast<ACharacter>(Victim);
+	if (!VictimCharacter || !Attacker || Attacker == Victim || !VictimCharacter->HasAuthority())
+	{
+		return false;
+	}
+	const UBH_CombatFeelSettings* Settings = UBH_CombatFeelSettings::Get();
+	const int32 Index = static_cast<int32>(Tier);
+	if (!Settings->bEnablePushback || !Settings->PushbackDistanceByTier.IsValidIndex(Index) || !Settings->PushbackDurationByTier.IsValidIndex(Index))
+	{
+		return false;
+	}
+
+	// The break montage owns a broken victim; a dead one needs no nudge.
+	if (const UAbilitySystemComponent* VictimASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Victim))
+	{
+		if (VictimASC->HasMatchingGameplayTag(TAG_State_Combat_PostureBroken) || VictimASC->HasMatchingGameplayTag(TAG_State_Combat_Dead))
+		{
+			return false;
+		}
+		if (VictimASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetHealthAttribute())
+			&& VictimASC->GetNumericAttribute(UAH_AttributeSet::GetHealthAttribute()) <= 0.f)
+		{
+			return false;
+		}
+	}
+
+	const FGameplayTag AttackerStance = UBH_StanceComponent::GetStanceTagOf(Attacker);
+	const float* StanceMultiplier = AttackerStance.IsValid() ? Settings->PushbackStanceMultipliers.Find(AttackerStance) : nullptr;
+	const float Distance = Settings->PushbackDistanceByTier[Index]
+		* (StanceMultiplier ? *StanceMultiplier : Settings->DefaultPushbackStanceMultiplier)
+		* (bBlocked ? Settings->BlockedPushbackFactor : 1.f);
+	const float Duration = FMath::Max(Settings->PushbackDurationByTier[Index], 0.02f);
+	const FVector Direction = (Victim->GetActorLocation() - Attacker->GetActorLocation()).GetSafeNormal2D();
+
+	static uint16 GPushbackId = 0;
+	GPushbackId = (GPushbackId == TNumericLimits<uint16>::Max()) ? 1 : GPushbackId + 1; // 0 stays unused
+	const uint16 Id = GPushbackId;
+
+	if (!ApplyPushbackSource(VictimCharacter, Direction, Distance, Duration, Id))
+	{
+		return false;
+	}
+
+	// A remote client victim predicts its own movement: give its owner the identical source. A locally controlled (host) or
+	// server-owned (AI) victim needs nothing extra: the server's source IS the prediction / is replicated to simulated proxies.
+	bool bSentToOwner = false;
+	if (Settings->bPredictPushbackOnOwningClient && VictimCharacter->GetRemoteRole() == ROLE_AutonomousProxy)
+	{
+		if (ABH_CharacterBase* BHVictim = Cast<ABH_CharacterBase>(VictimCharacter))
+		{
+			BHVictim->Client_ApplyHitPushback(Direction, Distance, Duration, Id);
+			bSentToOwner = true;
+		}
+	}
+
+	UE_LOG(LogBHFeel, Verbose, TEXT("Pushback: attacker=%s victim=%s tier=%s blocked=%d stance=%s dist=%.0f dur=%.2f id=%u clientRPC=%d"),
+		*GetNameSafe(Attacker), *GetNameSafe(Victim), TierName(Tier), bBlocked ? 1 : 0, *AttackerStance.ToString(), Distance, Duration, static_cast<uint32>(Id), bSentToOwner ? 1 : 0);
+	return true;
 }
 
 const UBH_VoiceSetDataAsset* UBH_CombatFeelLibrary::ResolveVoiceSet(const AActor* Actor)

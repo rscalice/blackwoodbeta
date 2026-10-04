@@ -220,16 +220,19 @@ void UBH_StanceRadialComponent::CycleStance()
 	}
 
 	TArray<FString> Cycle;
-	if (const UBH_LoadoutComponent* Loadout = UBH_LoadoutComponent::FindLoadoutComponent(Pawn))
+	const UBH_LoadoutComponent* Loadout = UBH_LoadoutComponent::FindLoadoutComponent(Pawn);
+	if (Loadout)
 	{
+		// A loadout exists: its list is authoritative. An empty list (e.g. items not replicated yet) means do nothing,
+		// never fall back to the legacy cycle (the server would reject stances the pawn does not own).
 		for (const FName& Stance : Loadout->AvailableStances)
 		{
 			Cycle.Add(Stance.ToString());
 		}
 	}
-	if (Cycle.IsEmpty())
+	else
 	{
-		// No equipment-derived stances (yet): keep the legacy fixed cycle on the controller.
+		// No loadout component at all: keep the legacy fixed cycle on the controller.
 		if (const FArrayProperty* ArrayProp = CastField<FArrayProperty>(PC->GetClass()->FindPropertyByName(FName(TEXT("StanceCycle")))))
 		{
 			if (CastField<FStrProperty>(ArrayProp->Inner))

@@ -139,7 +139,7 @@ bool UBH_StanceComponent::SetStance(FGameplayTag NewStance)
 	}
 	if (!IsStanceAllowed(NewStance))
 	{
-		UE_LOG(LogBHCombat, Verbose, TEXT("%s: stance '%s' rejected."), *GetNameSafe(Owner), *NewStance.ToString());
+		UE_LOG(LogBHCombat, Log, TEXT("%s: stance '%s' rejected."), *GetNameSafe(Owner), *NewStance.ToString());
 		return false;
 	}
 
@@ -156,7 +156,10 @@ bool UBH_StanceComponent::SetStance(FGameplayTag NewStance)
 
 void UBH_StanceComponent::ServerSetStance_Implementation(FGameplayTag NewStance)
 {
-	SetStance(NewStance);
+	if (!SetStance(NewStance))
+	{
+		UE_LOG(LogBHCombat, Warning, TEXT("%s: client stance request '%s' rejected."), *GetNameSafe(GetOwner()), *NewStance.ToString());
+	}
 }
 
 bool UBH_StanceComponent::ServerSetStance_Validate(FGameplayTag NewStance)

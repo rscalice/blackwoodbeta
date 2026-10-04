@@ -1,6 +1,7 @@
 // Blackwood Hollow - melee AI brain (implementation)
 
 #include "AI/BH_AIController.h"
+#include "AI/BH_AttackTokenSubsystem.h"
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "Combat/BH_CombatTeam.h"
 #include "AbilitySystem/AH_AttributeSet.h"
@@ -57,6 +58,7 @@ void ABH_AIController::OnUnPossess()
 		UBH_CombatFunctionLibrary::HandleBlockInput(GetPawn(), FindGrantedAbilityClass(TAG_Ability_Combat_Block), false);
 		bBlocking = false;
 	}
+	ReleaseAttackToken();
 	SetTarget(nullptr);
 	Super::OnUnPossess();
 }
@@ -266,6 +268,9 @@ void ABH_AIController::SetTarget(AActor* NewTarget)
 		return;
 	}
 
+	// A token is per target: give the old target's back before switching (or losing) it.
+	ReleaseAttackToken();
+
 	// Stop listening to the previous target's attack state.
 	if (UAbilitySystemComponent* OldASC = WatchedTargetASC.Get())
 	{
@@ -399,6 +404,7 @@ void ABH_AIController::TickDefend(float DeltaSeconds)
 
 void ABH_AIController::EnterPaused()
 {
+	ReleaseAttackToken();
 	StopMovement();
 	ClearFocus(EAIFocusPriority::Gameplay);
 	if (bBlocking)
@@ -456,6 +462,12 @@ void ABH_AIController::TickApproach(float DeltaSeconds)
 		}
 		if (AggressionTimeLeft <= 0.f && GetAngleToTarget() <= AttackFacingAngle && GetStamina() >= MinStaminaToSwing && !IsAbilityActive(FindGrantedAbilityClass(TAG_Ability_Combat_Dodge)))
 		{
+			// Swarm mutex: only the token holder swings; everyone else menaces from a distance.
+			if (!AcquireAttackToken())
+			{
+				EnterCircle();
+				return;
+			}
 			BeginAttack();
 		}
 		return;
@@ -489,6 +501,7 @@ void ABH_AIController::BeginAttack()
 	UClass* MeleeClass = FindGrantedAbilityClass(TAG_Ability_Combat_MeleeAttack);
 	if (!Me || !MeleeClass)
 	{
+		ReleaseAttackToken(); // nothing to swing with: do not sit on the target's token
 		return;
 	}
 
@@ -524,6 +537,7 @@ void ABH_AIController::BeginAttack()
 		ComboLength = 0;
 		++StatFailedAttackStarts;
 		UE_LOG(LogBHCombat, Verbose, TEXT("%s brain: swing start rejected, retry in %.2fs"), *GetNameSafe(Me), FailedAttackRetryDelay);
+		ReleaseAttackToken(); // a failed start never keeps the token (BeginRecover would release it too)
 		BeginRecover(/*bAllowBackstep*/ false, FailedAttackRetryDelay);
 	}
 }
@@ -588,6 +602,7 @@ void ABH_AIController::TickAttack(float DeltaSeconds)
 
 void ABH_AIController::BeginRecover(bool bAllowBackstep, float OverrideRecoverTime)
 {
+	ReleaseAttackToken(); // combo finished (or never started): the next attacker may go after the handoff cooldown
 	StopMovement();
 	RecoverTimeLeft = OverrideRecoverTime >= 0.f ? OverrideRecoverTime : FMath::FRandRange(RecoverTimeMin, FMath::Max(RecoverTimeMin, RecoverTimeMax));
 	SetState(EBH_AIState::Recover);
@@ -636,6 +651,163 @@ void ABH_AIController::TickRecover(float DeltaSeconds)
 	if (RecoverTimeLeft <= 0.f)
 	{
 		SetState(Target.IsValid() ? EBH_AIState::Approach : EBH_AIState::Idle);
+	}
+}
+
+// ============================================================================
+// Attack tokens / Circle
+// ============================================================================
+
+bool ABH_AIController::AcquireAttackToken()
+{
+	if (!bUseAttackTokens || !UBH_AttackTokenSubsystem::bEnableAttackTokens)
+	{
+		return true;
+	}
+	AActor* T = Target.Get();
+	UBH_AttackTokenSubsystem* Tokens = UBH_AttackTokenSubsystem::Get(this);
+	if (!T || !Tokens)
+	{
+		return true; // no subsystem (should not happen on the server): never deadlock the AI
+	}
+	return Tokens->RequestToken(T, this);
+}
+
+void ABH_AIController::ReleaseAttackToken()
+{
+	AActor* T = Target.Get();
+	if (UBH_AttackTokenSubsystem* Tokens = T ? UBH_AttackTokenSubsystem::Get(this) : nullptr)
+	{
+		Tokens->ReleaseToken(T, this);
+	}
+}
+
+void ABH_AIController::EnterCircle()
+{
+	StopMovement();
+	++StatTokenWaits;
+	CircleDir = FMath::RandBool() ? 1.f : -1.f;
+	CircleFlipTimeLeft = FMath::FRandRange(CircleFlipTimeMin, FMath::Max(CircleFlipTimeMin, CircleFlipTimeMax));
+	CircleBlockedTimer = 0.f;
+	CircleGraceTimeLeft = 0.5f;
+	FeintTimeLeft = 0.f;
+	SetState(EBH_AIState::Circle);
+}
+
+void ABH_AIController::TickCircle(float DeltaSeconds)
+{
+	APawn* Me = GetPawn();
+	AActor* T = Target.Get();
+	if (!Me || !T)
+	{
+		SetState(EBH_AIState::Idle);
+		return;
+	}
+	StatCircleTime += DeltaSeconds;
+
+	SetFocus(T);
+	if (ABH_CharacterBase* BHPawn = Cast<ABH_CharacterBase>(Me))
+	{
+		BHPawn->SetAIDesiredGait(EBH_Gait::Walk); // a menacing prowl (SetState resets to Run outside Approach)
+	}
+	FaceTarget(DeltaSeconds, 10.f);
+
+	// Ask every tick (cheap): the subsystem keeps us a fresh waiter and hands the token to the best-scored one.
+	if (AcquireAttackToken())
+	{
+		SetState(EBH_AIState::Approach); // run in (Approach picks the run gait at this range) and swing
+		return;
+	}
+
+	const FVector MyLocation = Me->GetActorLocation();
+	FVector ToTarget = T->GetActorLocation() - MyLocation;
+	ToTarget.Z = 0.0;
+	const float Dist = static_cast<float>(ToTarget.Size());
+	FVector Dir = ToTarget.GetSafeNormal();
+	if (Dir.IsNearlyZero())
+	{
+		Dir = Me->GetActorForwardVector().GetSafeNormal2D();
+	}
+
+	// Flip: on a timer, or when we are not getting anywhere (a wall / another body in the way).
+	bool bFlip = false;
+	CircleFlipTimeLeft -= DeltaSeconds;
+	if (CircleFlipTimeLeft <= 0.f)
+	{
+		bFlip = true;
+	}
+	if (CircleGraceTimeLeft > 0.f)
+	{
+		CircleGraceTimeLeft -= DeltaSeconds;
+		CircleBlockedTimer = 0.f;
+	}
+	else if (FeintTimeLeft <= 0.f)
+	{
+		CircleBlockedTimer = Me->GetVelocity().Size2D() < CircleBlockedSpeed ? CircleBlockedTimer + DeltaSeconds : 0.f;
+		if (CircleBlockedTimer >= CircleBlockedTime)
+		{
+			bFlip = true;
+		}
+	}
+	if (bFlip)
+	{
+		CircleDir = -CircleDir;
+		CircleFlipTimeLeft = FMath::FRandRange(CircleFlipTimeMin, FMath::Max(CircleFlipTimeMin, CircleFlipTimeMax));
+		CircleBlockedTimer = 0.f;
+		CircleGraceTimeLeft = 0.5f;
+		if (FeintTimeLeft <= 0.f && FMath::FRand() < CircleFeintChance)
+		{
+			FeintTimeLeft = CircleFeintDuration; // a quick step in and back out; no token, never an attack
+		}
+	}
+
+	// Feint: half the time toward the target, half back.
+	if (FeintTimeLeft > 0.f)
+	{
+		FeintTimeLeft -= DeltaSeconds;
+		const float Phase = FeintTimeLeft > CircleFeintDuration * 0.5f ? 1.f : -1.f;
+		Me->AddMovementInput(Dir, Phase);
+		return;
+	}
+
+	// Strafe along the tangent, nudged back into the [Min, Max] ring.
+	const FVector Tangent = FVector::CrossProduct(FVector::UpVector, Dir) * CircleDir;
+	float Radial = 0.f; // + toward the target
+	if (Dist < CircleRadiusMin)
+	{
+		Radial = -FMath::Clamp((CircleRadiusMin - Dist) / 60.f, 0.4f, 1.f);
+	}
+	else if (Dist > CircleRadiusMax)
+	{
+		Radial = FMath::Clamp((Dist - CircleRadiusMax) / 120.f, 0.4f, 1.f);
+	}
+
+	// Separation: do not stack on the other circling AIs.
+	FVector Push = FVector::ZeroVector;
+	if (CircleSeparationRadius > 0.f && GetWorld())
+	{
+		for (FConstControllerIterator It = GetWorld()->GetControllerIterator(); It; ++It)
+		{
+			const ABH_AIController* Other = Cast<ABH_AIController>(It->Get());
+			const APawn* OtherPawn = (Other && Other != this) ? Other->GetPawn() : nullptr;
+			if (!OtherPawn)
+			{
+				continue;
+			}
+			FVector Away = MyLocation - OtherPawn->GetActorLocation();
+			Away.Z = 0.0;
+			const float OtherDist = static_cast<float>(Away.Size());
+			if (OtherDist < CircleSeparationRadius)
+			{
+				Push += (OtherDist > KINDA_SMALL_NUMBER ? Away / OtherDist : Tangent) * (1.f - OtherDist / CircleSeparationRadius);
+			}
+		}
+	}
+
+	const FVector Move = (Tangent + Dir * Radial + Push * CircleSeparationWeight).GetClampedToMaxSize(1.0);
+	if (!Move.IsNearlyZero())
+	{
+		Me->AddMovementInput(Move.GetSafeNormal(), static_cast<float>(Move.Size()));
 	}
 }
 
@@ -700,7 +872,7 @@ void ABH_AIController::Tick(float DeltaSeconds)
 	}
 
 	// (Re)acquire between fights.
-	if (State == EBH_AIState::Idle || State == EBH_AIState::Approach || State == EBH_AIState::Recover)
+	if (State == EBH_AIState::Idle || State == EBH_AIState::Approach || State == EBH_AIState::Recover || State == EBH_AIState::Circle)
 	{
 		ScanTimer -= DeltaSeconds;
 		if (ScanTimer <= 0.f)
@@ -717,6 +889,7 @@ void ABH_AIController::Tick(float DeltaSeconds)
 	case EBH_AIState::Attack: TickAttack(DeltaSeconds); break;
 	case EBH_AIState::Recover: TickRecover(DeltaSeconds); break;
 	case EBH_AIState::Defend: TickDefend(DeltaSeconds); break;
+	case EBH_AIState::Circle: TickCircle(DeltaSeconds); break;
 	default: break;
 	}
 }

@@ -5,6 +5,7 @@
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Combat/BH_StanceComponent.h"
+#include "Combat/BH_CombatFeel.h"
 #include "Characters/BH_StanceMovementProfile.h"
 #include "AbilitySystemComponent.h"
 #include "AIController.h"
@@ -105,6 +106,15 @@ void ABH_CharacterBase::ServerSetLockOnStrafe_Implementation(bool bEnabled)
 
 void ABH_CharacterBase::OnRep_LockOnStrafe()
 {
+}
+
+void ABH_CharacterBase::Client_ApplyHitPushback_Implementation(FVector Direction, float Distance, float Duration, uint16 Id)
+{
+	// Autonomous proxy only (the server never RPCs itself): same source as the server applied, so the next move agrees.
+	if (!HasAuthority())
+	{
+		UBH_CombatFeelLibrary::ApplyPushbackSource(this, Direction, Distance, Duration, Id);
+	}
 }
 
 EBH_RotationMode ABH_CharacterBase::GetRotationMode() const

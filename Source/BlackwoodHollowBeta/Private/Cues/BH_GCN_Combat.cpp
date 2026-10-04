@@ -98,7 +98,7 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 	{
 		Tier = EBH_ImpactTier::Heavy;
 	}
-	UBH_CombatFeelLibrary::PlayImpactFeel(Attacker ? Attacker : Victim, Tier, Attacker, Victim, ImpactLocation, /*bEscalateForVictim*/ !bBlocked, false);
+	UBH_CombatFeelLibrary::PlayImpactFeel(Attacker ? Attacker : Victim, Tier, Attacker, Victim, ImpactLocation, /*bEscalateForVictim*/ !bBlocked, false, /*bBlocked*/ bBlocked);
 
 	if (Victim && !bBlocked)
 	{
@@ -151,8 +151,10 @@ bool UBH_GCN_ParrySuccess::OnExecute_Implementation(AActor* MyTarget, const FGam
 	const FVector Midpoint = (ParrierLocation + AttackerLocation) * 0.5 + FVector(0.0, 0.0, ParryFXHeight);
 	const FVector Normal = FVector(Parameters.Normal);
 
-	// Heavy feel: hit-stop on both, camera punch only for the local parrier (a local player who merely got parried gets no big shake).
-	UBH_CombatFeelLibrary::PlayImpactFeel(Parrier ? Parrier : Attacker, EBH_ImpactTier::Heavy, Parrier, Attacker, Midpoint, false, /*bInstigatorOnlyShake*/ true);
+	// Heavy feel: camera punch only for the local parrier (a local player who merely got parried gets no big shake).
+	// The animation freeze is the attacker's alone (the parrier keeps moving so the counter feels responsive): bSkipFreeze + an explicit attacker freeze.
+	UBH_CombatFeelLibrary::PlayImpactFeel(Parrier ? Parrier : Attacker, EBH_ImpactTier::Heavy, Parrier, Attacker, Midpoint, false, /*bInstigatorOnlyShake*/ true, false, /*bSkipFreeze*/ true);
+	UBH_CombatFeelLibrary::ApplyTierFreeze(Attacker, UBH_CombatFeelSettings::Get()->ParryFreezeTier, 1.f, false);
 
 	BH_CueUtils::PlayCueFX(Parrier ? Parrier : Attacker, ParryFX, Midpoint, Normal.IsNearlyZero() ? FRotator::ZeroRotator : Normal.Rotation(), Attenuation);
 	return true;

@@ -132,6 +132,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|Movement")
 	float GetBrakingDeceleration(bool bHasMovementInput) const;
 
+	/**
+	 * Owning-client twin of a server pushback (UBH_CombatFeelLibrary::ApplyHitPushback): applies the identical constant-force root
+	 * motion source (same id / force / duration) so the autonomous proxy's prediction agrees with the server and is not corrected
+	 * for it. Unreliable: a lost packet just means a small server correction.
+	 */
+	UFUNCTION(Client, Unreliable)
+	void Client_ApplyHitPushback(FVector Direction, float Distance, float Duration, uint16 Id);
+
 protected:
 	virtual void PossessedBy(AController* NewController) override;
 	virtual void OnRep_PlayerState() override;

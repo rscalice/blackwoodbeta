@@ -8,7 +8,8 @@
 //
 // Components
 //   PadTrigger   UBoxComponent root (profile "Trigger"; overlap events). Server-only gameplay logic.
-//   AmbientFX    UNiagaraComponent, auto-activating loop. Asset comes from AmbientFXAsset (per instance / BP child).
+//   AmbientFX    UNiagaraComponent, NOT auto-activating: the pad FX only play when a player uses the pad (multicast, every
+//                non-dedicated machine, stopped again after PadFXPlayTime). Asset comes from AmbientFXAsset (per instance / BP child).
 //   LabelWidget  UWidgetComponent, ~250 cm above the pad. WORLD space (see below). Widget class is chosen in a BP child
 //                or on the placed instance; contract with that widget: a UTextBlock named "LabelText" (preset name) and
 //                an optional UTextBlock named "SubText" ("Set A: <stance>  |  Set B: <stance>"). Both are looked up with
@@ -21,8 +22,9 @@
 // fixed size and pile them up. The billboard tick is cheap (one yaw per frame) and stops while the pad is inactive.
 //
 // Replication / cosmetics
-//   bPadActive (replicated, OnRep) drives collision, the ambient FX and label visibility on EVERY machine.
-//   MulticastPlayApplyFX (NetMulticast, Unreliable) spawns ApplyBurstFX at the pawn: purely cosmetic, a lost packet is fine.
+//   bPadActive (replicated, OnRep) drives collision and label visibility on EVERY machine (and switches the pad FX off).
+//   MulticastPlayApplyFX (NetMulticast, Unreliable) spawns ApplyBurstFX at the pawn and plays the pad's AmbientFX once:
+//   purely cosmetic, a lost packet is fine.
 //   OnLoadoutApplied / K2_OnLoadoutApplied fire on the server after a successful apply.
 //
 // "Temporary" pads: the server binds OnWaveStarted on every entry of WaveSpawners; the first wave start calls
@@ -71,9 +73,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|LoadoutPad")
 	TArray<FBH_StarterLoadoutEntry> Preset;
 
-	/** Looping ambient effect (applied to AmbientFX). */
+	/** Pad effect (applied to AmbientFX); plays only when a player uses the pad. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|LoadoutPad|FX")
 	TObjectPtr<UNiagaraSystem> AmbientFXAsset;
+
+	/** Seconds the pad's own effect stays on after a use (it is switched off again after this long). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|LoadoutPad|FX", meta = (ClampMin = "0.1"))
+	float PadFXPlayTime = 2.0f;
 
 	/** One-shot effect spawned at the pawn when the preset is applied (all machines). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|LoadoutPad|FX")
@@ -125,6 +131,9 @@ protected:
 	UFUNCTION()
 	void OnRep_PadActive();
 
+	/** Timer callback: switches the pad's own effect off again. */
+	void StopPadFX();
+
 private:
 	UFUNCTION()
 	void HandleBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp,
@@ -156,6 +165,8 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_PadActive)
 	bool bPadActive = true;
+
+	FTimerHandle PadFXStopTimer;
 
 	/** Server: last successful/attempted use per pawn (world seconds). */
 	TMap<TWeakObjectPtr<APawn>, double> LastUseTimes;

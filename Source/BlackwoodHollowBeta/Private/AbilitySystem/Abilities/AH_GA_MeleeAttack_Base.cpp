@@ -16,6 +16,7 @@
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimMontage.h"
 #include "Combat/BH_LockOnComponent.h"
+#include "Combat/BH_CombatFeel.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Controller.h"
 
@@ -545,6 +546,17 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 		if (SelfSpec.IsValid())
 		{
 			SourceASC->ApplyGameplayEffectSpecToSelf(*SelfSpec.Data.Get());
+		}
+	}
+
+	// Tiered pushback (server only; see BH_CombatFeel.h). Not parried (returned above). The tier is the damage tier as if unblocked;
+	// ApplyHitPushback halves the distance for a blocked hit and skips dead / posture-broken victims.
+	if (DamageApplied > 0.f)
+	{
+		if (AActor* PushAttacker = GetAvatarActorFromActorInfo())
+		{
+			const EBH_ImpactTier PushTier = UBH_CombatFeelLibrary::TierForHit(DamageApplied, GetStepPostureMultiplier(ComboStep) * HitboxMultiplier, false, false);
+			UBH_CombatFeelLibrary::ApplyHitPushback(PushAttacker, Target, PushTier, bBlockedByTarget);
 		}
 	}
 

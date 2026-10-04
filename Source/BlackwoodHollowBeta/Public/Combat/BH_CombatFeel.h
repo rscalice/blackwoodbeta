@@ -11,6 +11,17 @@
 //   Posture broken ....................... Massive for the local player when they break someone or are broken.
 //   Kill ................................. a fatal hit is at least Heavy.
 // Hit-stop uses the un-escalated tier; the shake uses the escalated one. Both come from DA_CombatFeel.
+//
+// TWO-FIGHTER ANIMATION FREEZE (the "hit-stop"): a cosmetic freeze of BOTH fighters' skeletal mesh animation, set on every
+// machine from the hit cue. It sets USkeletalMeshComponent::GlobalAnimRateScale (near zero) for a per-tier duration from
+// DA_CombatFeel (Freeze* properties). Victim freezes FreezeVictimFactor x longer, blocked hits FreezeBlockedFactor x.
+// It never touches actor or global time dilation, so movement, physics and server timers keep running.
+// Overlap safe (BH_CueUtils::ApplyHitStop): the original rate is saved once, the freeze lasts until the LATEST end time.
+//
+// TIERED PUSHBACK (server, gameplay): UBH_CombatFeelLibrary::ApplyHitPushback, called from UAH_GA_MeleeAttack_Base::OnHitDealt
+// after damage. Additive constant-force root motion on the victim's CharacterMovement, horizontal only, distance / duration
+// per tier x stance multiplier (x BlockedPushbackFactor when blocked). Remote client victims get an identical source applied
+// locally through ABH_CharacterBase::Client_ApplyHitPushback so their prediction agrees with the server.
 
 #pragma once
 
@@ -60,7 +71,7 @@ struct BLACKWOODHOLLOWBETA_API FBH_ImpactTierSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impact", meta = (ClampMin = "0.0"))
 	float ShakeScale = 1.f;
 
-	/** Seconds both actors' skeletal meshes freeze. */
+	/** LEGACY freeze length. Only used when UBH_CombatFeelSettings::FreezeDurationByTier has no entry for this tier. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Impact", meta = (ClampMin = "0.0"))
 	float HitStopDuration = 0.05f;
 
@@ -135,6 +146,68 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact", meta = (ClampMin = "0.0"))
 	float SpectatorShakeScale = 0.3f;
 
+	// -- Two-fighter animation freeze (hit-stop) ------------------------------------------
+
+	/** Master switch for the animation freeze. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Freeze")
+	bool bEnableAnimFreeze = true;
+
+	/** Seconds of freeze per tier (Light, Medium, Heavy, Massive), for the attacker; see FreezeVictimFactor. A missing entry falls back to the tier's HitStopDuration. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Freeze")
+	TArray<float> FreezeDurationByTier;
+
+	/** Multiplier on the freeze length for the attacker. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Freeze", meta = (ClampMin = "0.0"))
+	float FreezeAttackerFactor = 1.f;
+
+	/** Multiplier on the freeze length for the victim (the victim holds the pose a little longer, which sells the hit). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Freeze", meta = (ClampMin = "0.0"))
+	float FreezeVictimFactor = 1.15f;
+
+	/** Multiplier on the freeze length when the hit was blocked. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Freeze", meta = (ClampMin = "0.0"))
+	float FreezeBlockedFactor = 0.6f;
+
+	/** GlobalAnimRateScale during the freeze (0 = fully stopped; a hair above 0 keeps a faint crawl). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Freeze", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+	float FreezeAnimRateScale = 0.02f;
+
+	/** Parry success: the freeze tier for the parried attacker (only the attacker freezes). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Freeze")
+	EBH_ImpactTier ParryFreezeTier = EBH_ImpactTier::Heavy;
+
+	/** Freeze length for Tier (attacker, unmodified by the factors). */
+	float GetFreezeDuration(EBH_ImpactTier Tier) const;
+
+	// -- Tiered pushback ----------------------------------------------------------------
+
+	/** Master switch for ApplyHitPushback. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Pushback")
+	bool bEnablePushback = true;
+
+	/** Horizontal push distance in cm per tier (Light, Medium, Heavy, Massive). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Pushback")
+	TArray<float> PushbackDistanceByTier;
+
+	/** Push duration in seconds per tier. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Pushback")
+	TArray<float> PushbackDurationByTier;
+
+	/** A blocked hit pushes this fraction of the distance. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Pushback", meta = (ClampMin = "0.0"))
+	float BlockedPushbackFactor = 0.5f;
+
+	/** Distance multiplier by the ATTACKER's weapon stance (Stance.Weapon.*). Unlisted stances use DefaultPushbackStanceMultiplier. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Pushback", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, float> PushbackStanceMultipliers;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Pushback", meta = (ClampMin = "0.0"))
+	float DefaultPushbackStanceMultiplier = 1.f;
+
+	/** Send the owning client of a remote victim the same root motion source (unreliable) so its prediction matches the server. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Pushback")
+	bool bPredictPushbackOnOwningClient = true;
+
 	/** Hit tier thresholds (see TierForHit). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Tiers")
 	float LightDamageMax = 15.f;
@@ -202,7 +275,29 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel", meta = (WorldContext = "WorldContext"))
 	static void PlayImpactFeel(const UObject* WorldContext, EBH_ImpactTier Tier, AActor* Instigator, AActor* Victim, FVector Location,
-		bool bEscalateForVictim = false, bool bInstigatorOnlyShake = false);
+		bool bEscalateForVictim = false, bool bInstigatorOnlyShake = false, bool bBlocked = false, bool bSkipFreeze = false);
+
+	/**
+	 * Cosmetic animation freeze of one actor for the Tier's duration x Factor (x FreezeBlockedFactor when bBlocked).
+	 * Skipped on dedicated servers. See the freeze notes at the top of this file.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel")
+	static void ApplyTierFreeze(AActor* Actor, EBH_ImpactTier Tier, float Factor = 1.f, bool bBlocked = false);
+
+	/**
+	 * Server only. Pushes Victim away from Attacker (horizontal) by the Tier's distance x attacker-stance multiplier
+	 * (x BlockedPushbackFactor when bBlocked) with a constant-force root motion source. No-op for dead / posture-broken victims,
+	 * non-characters and non-authority callers. Remote client victims also get Client_ApplyHitPushback.
+	 * @return true if a push was applied.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel")
+	static bool ApplyHitPushback(AActor* Attacker, AActor* Victim, EBH_ImpactTier Tier, bool bBlocked);
+
+	/**
+	 * Applies the pushback root motion source on Character's movement component (any machine). Direction is flattened and
+	 * normalised; Id makes the InstanceName so a server source and its client twin match each other. Returns false if invalid.
+	 */
+	static bool ApplyPushbackSource(class ACharacter* Character, const FVector& Direction, float Distance, float Duration, uint16 Id);
 
 	/** The voice set for Actor (identity component's VoiceSet, or the player's default). May be null. */
 	static const UBH_VoiceSetDataAsset* ResolveVoiceSet(const AActor* Actor);

@@ -18,11 +18,12 @@ DECLARE_LOG_CATEGORY_EXTERN(LogBHCue, Log, All);
 namespace BH_CueUtils
 {
 	/**
-	 * Freezes every USkeletalMeshComponent on Actor (GlobalAnimRateScale = 0) for Duration seconds of world time,
-	 * then restores the previous value. Overlapping calls extend the freeze but the original rate is stored /
-	 * restored exactly once. No global time dilation. Cosmetic: skipped on dedicated servers.
+	 * Freezes every USkeletalMeshComponent on Actor (GlobalAnimRateScale = FreezeScale, near zero) for Duration seconds of
+	 * world time, then restores the previous value. Overlap safe: the original rate is stored once per mesh, every call
+	 * pushes the mesh's end time out (never in), and only the timer that reaches the LATEST end time restores. No actor or
+	 * global time dilation. Cosmetic: skipped on dedicated servers.
 	 */
-	void ApplyHitStop(AActor* Actor, float Duration);
+	void ApplyHitStop(AActor* Actor, float Duration, float FreezeScale = 0.f);
 
 	/** The local player controller whose pawn is one of the given actors (nullptr if none on this machine). */
 	APlayerController* FindLocalControllerInvolving(const AActor* A, const AActor* B);

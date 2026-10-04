@@ -6,6 +6,9 @@
 //   -> Attack (a 1-3 swing combo fed through HandleMeleeAttackInput) -> Recover (optional backstep)
 //   Defend: reactive -- when the target starts attacking close by, roll parry / block / nothing.
 //   Paused: Staggered / PostureBroken / Dead -- movement stopped, focus cleared, resumes by itself.
+//   Attack tokens (UBH_AttackTokenSubsystem): before BeginAttack the brain must hold the target's token. Denied -> Circle:
+//   a menacing wait at CircleRadiusMin..Max strafing around the target, asking for the token every tick; granted -> Approach
+//   (run in) and swing. The token is released when the combo ends, on pause, target change, unpossess and a failed start.
 // Server only (AI controllers do not exist on clients). Abilities are looked up by their asset tags
 // (Ability.Combat.MeleeAttack / Block / Parry / Dodge) among those granted to the pawn, so any BP ability works.
 // Team comes from the pawn's UBH_CombatIdentityComponent at possession.
@@ -29,7 +32,8 @@ enum class EBH_AIState : uint8
 	Attack,
 	Recover,
 	Defend,
-	Paused
+	Paused,
+	Circle
 };
 
 UCLASS(Blueprintable)
@@ -184,6 +188,51 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain")
 	bool bDirectMoveFallback = true;
 
+	// -- Attack tokens / circling (BH|Brain|Tokens) ---------------------------------------
+
+	/** Ask UBH_AttackTokenSubsystem for the target's attack token before swinging; without it the brain circles. false = swing freely (old behaviour). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain|Tokens")
+	bool bUseAttackTokens = true;
+
+	/** Circle: closer than this to the target the brain steps back. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain|Tokens", meta = (ClampMin = "0"))
+	float CircleRadiusMin = 300.f;
+
+	/** Circle: farther than this from the target the brain steps in. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain|Tokens", meta = (ClampMin = "0"))
+	float CircleRadiusMax = 450.f;
+
+	/** Seconds between strafe direction flips (random in the range). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain|Tokens", meta = (ClampMin = "0.1"))
+	float CircleFlipTimeMin = 1.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain|Tokens", meta = (ClampMin = "0.1"))
+	float CircleFlipTimeMax = 3.0f;
+
+	/** Chance per strafe flip to also feint: a quick step toward the target and back (no token needed, never an attack). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain|Tokens", meta = (ClampMin = "0", ClampMax = "1"))
+	float CircleFeintChance = 0.1f;
+
+	/** Total seconds of a feint (half in, half out). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain|Tokens", meta = (ClampMin = "0.1"))
+	float CircleFeintDuration = 0.7f;
+
+	/** Other AIs within this distance push the circling brain away (anti stacking). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain|Tokens", meta = (ClampMin = "0"))
+	float CircleSeparationRadius = 200.f;
+
+	/** Strength of that separation push relative to the strafe input (1 = as strong as the strafe). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain|Tokens", meta = (ClampMin = "0"))
+	float CircleSeparationWeight = 1.2f;
+
+	/** Strafing slower than this (cm/s, after a short grace period) counts as blocked and flips the direction. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain|Tokens", meta = (ClampMin = "0"))
+	float CircleBlockedSpeed = 25.f;
+
+	/** Seconds of blocked strafing before the flip. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain|Tokens", meta = (ClampMin = "0.05"))
+	float CircleBlockedTime = 0.4f;
+
 	// -- Debug counters (this session) ---------------------------------------------------
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "BH|Brain|Stats")
@@ -210,6 +259,14 @@ public:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "BH|Brain|Stats")
 	int32 StatFailedAttackStarts = 0;
 
+	/** Times the brain was denied an attack token and went to Circle. */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "BH|Brain|Stats")
+	int32 StatTokenWaits = 0;
+
+	/** Total seconds spent in the Circle state. */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "BH|Brain|Stats")
+	float StatCircleTime = 0.f;
+
 protected:
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void OnUnPossess() override;
@@ -226,6 +283,13 @@ private:
 	void TickAttack(float DeltaSeconds);
 	void TickRecover(float DeltaSeconds);
 	void TickDefend(float DeltaSeconds);
+	void TickCircle(float DeltaSeconds);
+
+	/** Asks the token subsystem for the current target's token (true when tokens are off / unavailable). */
+	bool AcquireAttackToken();
+	/** Gives the current target's token back (safe when none is held). */
+	void ReleaseAttackToken();
+	void EnterCircle();
 
 	void BeginAttack();
 	/** OverrideRecoverTime < 0 = roll RecoverTimeMin..Max. bAllowBackstep = false skips the backstep roll (failed swing starts). */
@@ -271,4 +335,11 @@ private:
 	bool bBlocking = false;
 	float ReactionTimeLeft = 0.f;
 	float DefendTimeLeft = 0.f;
+
+	// Circle
+	float CircleDir = 1.f;
+	float CircleFlipTimeLeft = 0.f;
+	float CircleBlockedTimer = 0.f;
+	float CircleGraceTimeLeft = 0.f;
+	float FeintTimeLeft = 0.f;
 };

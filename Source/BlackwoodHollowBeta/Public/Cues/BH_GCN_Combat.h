@@ -11,6 +11,7 @@
 // Tunables (shake classes, durations, Niagara/sound) live on those Blueprint CDOs.
 //
 // Parameter convention (see UAH_GA_MeleeAttack_Base::OnHitDealt / UAH_GA_Parry / UAH_AttributeSet):
+//   (Pushback is NOT a cue: it is applied on the server in OnHitDealt, see UBH_CombatFeelLibrary::ApplyHitPushback.)
 //   Hit:           MyTarget = attacker, SourceObject = victim, Normal = attacker->victim, RawMagnitude = damage,
 //                  Location = blade impact point (zero if unknown), AggregatedSourceTags has Combat.HitResult.Blocked
 //                  when the victim blocked the hit. Abilities may fire a child tag (GameplayCue.Combat.Hit.ShieldBash)
@@ -74,7 +75,7 @@ public:
 	float MinSoundInterval = 0.1f;
 };
 
-/** Heavy-tier feel (hit-stop on both, camera punch for the local parrier) and the clash FX. */
+/** Heavy-tier feel (animation freeze on the parried attacker only, camera punch for the local parrier) and the clash FX. */
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API UBH_GCN_ParrySuccess : public UGameplayCueNotify_Static
 {
