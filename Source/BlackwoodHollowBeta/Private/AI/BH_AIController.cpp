@@ -443,7 +443,7 @@ void ABH_AIController::TickApproach(float DeltaSeconds)
 		}
 		FaceTarget(DeltaSeconds, 5.f);
 		AggressionTimeLeft -= DeltaSeconds;
-		if (Dist < MinAttackDistance)
+		if (Dist < MinAttackDistance && bBackOffWhenTooClose)
 		{
 			// Too close for the blade arc to connect: ease back (still facing the target via focus) before swinging.
 			FVector Away = (Me->GetActorLocation() - T->GetActorLocation()).GetSafeNormal2D();
@@ -470,7 +470,10 @@ void ABH_AIController::TickApproach(float DeltaSeconds)
 		MoveReissueTimer = 0.6f; // re-target periodically so a moving goal is tracked
 		// The path-following reach test adds the agent's radius to the acceptance radius: take it out again so the
 		// move ends inside AttackRange (centre to centre).
-		const float AcceptRadius = FMath::Max(0.f, AttackRange - AcceptanceSlack - Me->GetSimpleCollisionRadius());
+		// Never stop inside the attack band's lower edge (MinAttackDistance + margin), otherwise drift pushes us under
+		// MinAttackDistance and the back-off / re-approach loop stalls. Clamped so it can't exceed AttackRange.
+		const float DesiredStop = FMath::Min(FMath::Max(AttackRange - AcceptanceSlack, MinAttackDistance + MinAttackBandMargin), AttackRange);
+		const float AcceptRadius = FMath::Max(0.f, DesiredStop - Me->GetSimpleCollisionRadius());
 		MoveToActor(T, AcceptRadius, /*bStopOnOverlap*/ false, /*bUsePathfinding*/ true, /*bCanStrafe*/ true);
 	}
 	if (bDirectMoveFallback && GetMoveStatus() != EPathFollowingStatus::Moving)
@@ -502,7 +505,7 @@ void ABH_AIController::BeginAttack()
 		}
 	}
 
-	ComboLength = RollComboLength();
+	ComboLength = RollComboLength(); // planned swing count; reset below if the press is rejected
 	if (UBH_CombatFunctionLibrary::HandleMeleeAttackInput(Me, MeleeClass))
 	{
 		++StatCombosStarted;
@@ -515,9 +518,13 @@ void ABH_AIController::BeginAttack()
 	}
 	else
 	{
-		// Could not start (stamina / blocked by a state tag): back off briefly instead of retrying every tick.
+		// Could not start (stamina / blocked by a state tag): no combo happened, so reset the plan and wait a short
+		// beat instead of retrying every tick. No backstep: nothing was swung.
 		bAttackStarted = false;
-		BeginRecover();
+		ComboLength = 0;
+		++StatFailedAttackStarts;
+		UE_LOG(LogBHCombat, Verbose, TEXT("%s brain: swing start rejected, retry in %.2fs"), *GetNameSafe(Me), FailedAttackRetryDelay);
+		BeginRecover(/*bAllowBackstep*/ false, FailedAttackRetryDelay);
 	}
 }
 
@@ -579,22 +586,32 @@ void ABH_AIController::TickAttack(float DeltaSeconds)
 	}
 }
 
-void ABH_AIController::BeginRecover()
+void ABH_AIController::BeginRecover(bool bAllowBackstep, float OverrideRecoverTime)
 {
 	StopMovement();
-	RecoverTimeLeft = FMath::FRandRange(RecoverTimeMin, FMath::Max(RecoverTimeMin, RecoverTimeMax));
+	RecoverTimeLeft = OverrideRecoverTime >= 0.f ? OverrideRecoverTime : FMath::FRandRange(RecoverTimeMin, FMath::Max(RecoverTimeMin, RecoverTimeMax));
 	SetState(EBH_AIState::Recover);
 
-	if (bAttackStarted || ComboLength > 0)
+	if (bAllowBackstep && (bAttackStarted || ComboLength > 0))
 	{
-		if (FMath::FRand() < BackstepChance && GetStamina() >= BackstepMinStamina)
+		const UWorld* World = GetWorld();
+		const float Now = World ? World->GetTimeSeconds() : 0.f;
+		const bool bOffCooldown = (Now - LastBackstepTime) >= BackstepCooldown;
+		const bool bAllowedByChain = !(bNoConsecutiveBacksteps && bLastComboBackstepped);
+
+		bool bBackstepped = false;
+		if (bOffCooldown && bAllowedByChain && FMath::FRand() < BackstepChance && GetStamina() >= BackstepMinStamina)
 		{
 			// No movement input at the moment of the press -> the dodge picks the backstep.
 			if (UBH_CombatFunctionLibrary::HandleDodgeInput(GetPawn()))
 			{
 				++StatBacksteps;
+				LastBackstepTime = Now;
+				bBackstepped = true;
 			}
 		}
+		// Only combo-ending recoveries update the chain; failed swing starts (bAllowBackstep == false) leave it alone.
+		bLastComboBackstepped = bBackstepped;
 	}
 	bAttackStarted = false;
 	ComboLength = 0;
@@ -608,6 +625,11 @@ void ABH_AIController::TickRecover(float DeltaSeconds)
 		{
 			return; // let a backstep finish before the timer runs
 		}
+	}
+	if (RecoverChaseDistance > 0.f && Target.IsValid() && GetDistanceToTarget() > AttackRange + RecoverChaseDistance)
+	{
+		SetState(EBH_AIState::Approach); // target slipped away: apply pressure instead of idling out the timer
+		return;
 	}
 	FaceTarget(DeltaSeconds, 10.f);
 	RecoverTimeLeft -= DeltaSeconds;

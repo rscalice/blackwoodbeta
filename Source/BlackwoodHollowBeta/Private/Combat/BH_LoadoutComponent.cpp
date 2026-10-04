@@ -2,6 +2,7 @@
 
 #include "Combat/BH_LoadoutComponent.h"
 #include "Items/BH_WeaponItem.h"
+#include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/BH_GameplayTags.h"
@@ -26,6 +27,30 @@ namespace BH_LoadoutComponent_Private
 	{
 		const UEnum* Enum = StaticEnum<EBH_EquipSlot>();
 		return Enum ? Enum->GetNameStringByValue(static_cast<int64>(Slot)) : FString();
+	}
+
+	/** Single source of truth for the stance rules (header comment): used by live items and by preset previews. */
+	static FName StanceFromGrips(const UBH_WeaponItem* Main, const UBH_WeaponItem* Off)
+	{
+		if (!Main)
+		{
+			return NAME_None;
+		}
+		if (Main->GripType == EBH_WeaponGripType::TwoHanded)
+		{
+			return FName(TEXT("Greatsword"));
+		}
+		if (Off && Off->GripType == EBH_WeaponGripType::OneHanded)
+		{
+			return FName(TEXT("DualSword"));
+		}
+		// Off-hand item (shield), or main alone: sword-and-shield is the one-handed fallback stance.
+		return FName(TEXT("SwordAndShield"));
+	}
+
+	static const UBH_WeaponItem* GetWeaponCDO(const UClass* ItemClass)
+	{
+		return ItemClass ? Cast<UBH_WeaponItem>(ItemClass->GetDefaultObject()) : nullptr;
 	}
 }
 
@@ -95,6 +120,7 @@ void UBH_LoadoutComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ReconcileTimer);
+		World->GetTimerManager().ClearTimer(PresetTimer);
 	}
 	if (Equipment)
 	{
@@ -161,22 +187,29 @@ bool UBH_LoadoutComponent::IsOffHandLocked(EBH_LoadoutSet Set) const
 FName UBH_LoadoutComponent::GetStanceForSet(EBH_LoadoutSet Set) const
 {
 	const UBH_WeaponItem* Main = GetItemInSlot(UBH_EquipmentLibrary::GetMainSlot(Set));
-	if (!Main)
-	{
-		return NAME_None;
-	}
-	if (Main->GripType == EBH_WeaponGripType::TwoHanded)
-	{
-		return FName(TEXT("Greatsword"));
-	}
+	return BH_LoadoutComponent_Private::StanceFromGrips(Main, Main ? GetItemInSlot(UBH_EquipmentLibrary::GetOffSlot(Set)) : nullptr);
+}
 
-	const UBH_WeaponItem* Off = GetItemInSlot(UBH_EquipmentLibrary::GetOffSlot(Set));
-	if (Off && Off->GripType == EBH_WeaponGripType::OneHanded)
+FName UBH_LoadoutComponent::GetStanceNameForPreset(const TArray<FBH_StarterLoadoutEntry>& Entries, EBH_LoadoutSet Set)
+{
+	using namespace BH_LoadoutComponent_Private;
+
+	const UBH_WeaponItem* Main = nullptr;
+	const UBH_WeaponItem* Off = nullptr;
+	for (const FBH_StarterLoadoutEntry& Entry : Entries)
 	{
-		return FName(TEXT("DualSword"));
+		if (!Entry.bEquip || !UBH_EquipmentLibrary::IsWeaponSlot(Entry.Slot) || UBH_EquipmentLibrary::GetSlotLoadoutSet(Entry.Slot) != Set)
+		{
+			continue;
+		}
+		const UBH_WeaponItem* CDO = GetWeaponCDO(Entry.ItemClass.LoadSynchronous());
+		if (!CDO)
+		{
+			continue;
+		}
+		(UBH_EquipmentLibrary::IsOffHandSlot(Entry.Slot) ? Off : Main) = CDO;
 	}
-	// Off-hand item (shield), or main alone: sword-and-shield is the one-handed fallback stance.
-	return FName(TEXT("SwordAndShield"));
+	return StanceFromGrips(Main, Off);
 }
 
 bool UBH_LoadoutComponent::GetActiveLoadoutSet(EBH_LoadoutSet& OutSet) const
@@ -353,6 +386,258 @@ bool UBH_LoadoutComponent::UnequipWeaponSlot(EBH_EquipSlot Slot, FText& OutReaso
 	EvaluateAvailableStances();
 	RefreshStatMods();
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Presets (server)
+// ---------------------------------------------------------------------------
+
+bool UBH_LoadoutComponent::ApplyLoadoutPreset(const TArray<FBH_StarterLoadoutEntry>& Entries, FText& OutReason)
+{
+	using namespace BH_LoadoutComponent_Private;
+
+	auto Fail = [&OutReason](const FString& Message)
+	{
+		OutReason = FText::FromString(Message);
+		UE_LOG(LogBHLoadout, Warning, TEXT("ApplyLoadoutPreset failed: %s"), *Message);
+		return false;
+	};
+
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return Fail(TEXT("Applying a loadout preset is server-authoritative"));
+	}
+	if (Entries.Num() == 0)
+	{
+		return Fail(TEXT("Preset is empty"));
+	}
+	UNarrativeInventoryComponent* Inventory = GetInventory();
+	if (!Inventory || !Equipment)
+	{
+		return Fail(TEXT("Inventory is not ready yet (PlayerState not assigned)"));
+	}
+
+	// -- 1. Validate everything before touching any state ----------------------------------------------------------
+	TArray<UClass*> Classes;
+	int32 UsedSlotMask = 0;
+	const UBH_WeaponItem* MainCDO[2] = { nullptr, nullptr };
+	bool bHasOff[2] = { false, false };
+	for (const FBH_StarterLoadoutEntry& Entry : Entries)
+	{
+		UClass* ItemClass = Entry.ItemClass.LoadSynchronous();
+		const UBH_WeaponItem* CDO = GetWeaponCDO(ItemClass);
+		if (!CDO)
+		{
+			return Fail(FString::Printf(TEXT("Preset item class could not be loaded: %s"), *Entry.ItemClass.ToString()));
+		}
+		Classes.Add(ItemClass);
+		if (!Entry.bEquip)
+		{
+			continue;
+		}
+		if (!UBH_EquipmentLibrary::IsWeaponSlot(Entry.Slot))
+		{
+			return Fail(FString::Printf(TEXT("%s: %s is not a weapon slot"), *ItemClass->GetName(), *SlotName(Entry.Slot)));
+		}
+		const bool bOff = UBH_EquipmentLibrary::IsOffHandSlot(Entry.Slot);
+		if ((CDO->GripType == EBH_WeaponGripType::TwoHanded && bOff) || (CDO->GripType == EBH_WeaponGripType::OffHand && !bOff))
+		{
+			return Fail(FString::Printf(TEXT("%s does not fit slot %s"), *ItemClass->GetName(), *SlotName(Entry.Slot)));
+		}
+		const int32 Bit = 1 << static_cast<int32>(Entry.Slot);
+		if (UsedSlotMask & Bit)
+		{
+			return Fail(FString::Printf(TEXT("Slot %s is used twice in the preset"), *SlotName(Entry.Slot)));
+		}
+		UsedSlotMask |= Bit;
+
+		const int32 SetIndex = static_cast<int32>(UBH_EquipmentLibrary::GetSlotLoadoutSet(Entry.Slot));
+		if (bOff)
+		{
+			bHasOff[SetIndex] = true;
+		}
+		else
+		{
+			MainCDO[SetIndex] = CDO;
+		}
+	}
+	for (int32 SetIndex = 0; SetIndex < 2; ++SetIndex)
+	{
+		if (bHasOff[SetIndex] && MainCDO[SetIndex] && MainCDO[SetIndex]->GripType == EBH_WeaponGripType::TwoHanded)
+		{
+			return Fail(TEXT("Preset puts an off-hand item under a two-handed main weapon"));
+		}
+	}
+
+	// -- 2. One inventory instance per entry (reuse before granting; never one instance in two slots) ---------------
+	TArray<UBH_WeaponItem*> Claimed;
+	Claimed.Init(nullptr, Entries.Num());
+	TSet<const UBH_WeaponItem*> Taken;
+
+	auto FindUnclaimed = [&](const UClass* ItemClass, bool bWantActive) -> UBH_WeaponItem*
+	{
+		for (UNarrativeItem* Item : Inventory->GetItems())
+		{
+			UBH_WeaponItem* Weapon = Cast<UBH_WeaponItem>(Item);
+			if (Weapon && Weapon->GetClass() == ItemClass && Weapon->bActive == bWantActive && !Taken.Contains(Weapon))
+			{
+				return Weapon;
+			}
+		}
+		return nullptr;
+	};
+
+	// Pass A: an item already sitting in the entry's own slot stays put (no churn, no replication hop).
+	for (int32 i = 0; i < Entries.Num(); ++i)
+	{
+		if (!Entries[i].bEquip)
+		{
+			continue;
+		}
+		UBH_WeaponItem* Occupant = GetItemInSlot(Entries[i].Slot);
+		if (Occupant && Occupant->GetClass() == Classes[i] && !Taken.Contains(Occupant))
+		{
+			Claimed[i] = Occupant;
+			Taken.Add(Occupant);
+		}
+	}
+	// Pass B: spare (unequipped) items first, then ones equipped elsewhere, then grant.
+	for (int32 i = 0; i < Entries.Num(); ++i)
+	{
+		if (Claimed[i])
+		{
+			continue;
+		}
+		UBH_WeaponItem* Weapon = FindUnclaimed(Classes[i], false);
+		if (!Weapon)
+		{
+			Weapon = FindUnclaimed(Classes[i], true);
+		}
+		if (!Weapon)
+		{
+			const FItemAddResult Result = Inventory->TryAddItemFromClass(Classes[i], 1, /*bCheckAutoUse*/ false);
+			Weapon = Result.Stacks.Num() > 0 ? Cast<UBH_WeaponItem>(Result.Stacks[0]) : nullptr;
+			if (!Weapon)
+			{
+				return Fail(FString::Printf(TEXT("Could not grant %s (%s)"), *Classes[i]->GetName(), *Result.ErrorText.ToString()));
+			}
+			UE_LOG(LogBHLoadout, Log, TEXT("Preset: granted %s"), *Weapon->GetFriendlyName());
+		}
+		Claimed[i] = Weapon;
+		Taken.Add(Weapon);
+	}
+
+	TArray<TPair<TWeakObjectPtr<UBH_WeaponItem>, EBH_EquipSlot>> Plan;
+	for (int32 i = 0; i < Entries.Num(); ++i)
+	{
+		if (Entries[i].bEquip)
+		{
+			Plan.Emplace(Claimed[i], Entries[i].Slot);
+		}
+	}
+
+	// -- 3a. Unequip every slot whose occupant is not the planned item -----------------------------------------------
+	bool bAnyMoved = false;
+	for (EBH_EquipSlot Slot : { EBH_EquipSlot::Weapon_Main_A, EBH_EquipSlot::Weapon_Off_A, EBH_EquipSlot::Weapon_Main_B, EBH_EquipSlot::Weapon_Off_B })
+	{
+		UBH_WeaponItem* Occupant = GetItemInSlot(Slot);
+		if (!Occupant)
+		{
+			continue;
+		}
+		bool bKeep = false;
+		for (const TPair<TWeakObjectPtr<UBH_WeaponItem>, EBH_EquipSlot>& Step : Plan)
+		{
+			bKeep |= (Step.Key.Get() == Occupant && Step.Value == Slot);
+		}
+		if (bKeep)
+		{
+			continue;
+		}
+		Occupant->SetActive(false);
+		UE_LOG(LogBHLoadout, Log, TEXT("Preset: unequipped %s from %s"), *Occupant->GetFriendlyName(), *SlotName(Slot));
+		// An instance that is also wanted in another slot has to replicate its deactivation before it is re-activated.
+		bAnyMoved |= Claimed.Contains(Occupant);
+	}
+	ForceInventoryNetUpdate();
+
+	// -- 3b / 4. Equip + stance (deferred when an instance is moving between slots) ----------------------------------
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		World->GetTimerManager().ClearTimer(PresetTimer); // a newer preset supersedes a pending one
+	}
+	OutReason = FText::GetEmpty();
+
+	if (bAnyMoved && World)
+	{
+		World->GetTimerManager().SetTimer(PresetTimer, FTimerDelegate::CreateWeakLambda(this, [this, Plan]()
+		{
+			FText Reason;
+			if (!CommitPreset(Plan, Reason))
+			{
+				UE_LOG(LogBHLoadout, Warning, TEXT("Deferred preset commit failed: %s"), *Reason.ToString());
+			}
+		}), 0.25f, false);
+		UE_LOG(LogBHLoadout, Log, TEXT("Preset accepted (%d entries); equip deferred 0.25s for replication"), Entries.Num());
+		return true;
+	}
+
+	if (!CommitPreset(Plan, OutReason))
+	{
+		return Fail(OutReason.ToString());
+	}
+	UE_LOG(LogBHLoadout, Log, TEXT("Preset applied (%d entries)"), Entries.Num());
+	return true;
+}
+
+bool UBH_LoadoutComponent::CommitPreset(const TArray<TPair<TWeakObjectPtr<UBH_WeaponItem>, EBH_EquipSlot>>& Plan, FText& OutReason)
+{
+	bool bAllOk = true;
+
+	// Main slots first so an off-hand item is never validated against a stale two-handed main.
+	for (const bool bOffPass : { false, true })
+	{
+		for (const TPair<TWeakObjectPtr<UBH_WeaponItem>, EBH_EquipSlot>& Step : Plan)
+		{
+			UBH_WeaponItem* Item = Step.Key.Get();
+			if (!Item || UBH_EquipmentLibrary::IsOffHandSlot(Step.Value) != bOffPass)
+			{
+				continue;
+			}
+			FText Reason;
+			if (!EquipWeaponToSlot(Item, Step.Value, Reason))
+			{
+				bAllOk = false;
+				OutReason = Reason;
+			}
+		}
+	}
+
+	EvaluateAvailableStances();
+	RefreshStatMods();
+
+	// Switch to set A's stance (set B's when A is empty) so the swap is visible straight away. The server applies it;
+	// the replicated stance + inventory carry it to clients.
+	FName WantedStance = GetStanceForSet(EBH_LoadoutSet::A);
+	if (WantedStance.IsNone())
+	{
+		WantedStance = GetStanceForSet(EBH_LoadoutSet::B);
+	}
+	if (!WantedStance.IsNone())
+	{
+		if (UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(GetOwner()))
+		{
+			const FGameplayTag StanceTag = BH_Stance::FromLegacyName(WantedStance);
+			if (!StanceTag.IsValid() || !StanceComp->SetStance(StanceTag))
+			{
+				UE_LOG(LogBHLoadout, Warning, TEXT("Preset: stance '%s' could not be applied"), *WantedStance.ToString());
+			}
+		}
+	}
+
+	ForceInventoryNetUpdate();
+	return bAllOk;
 }
 
 // ---------------------------------------------------------------------------

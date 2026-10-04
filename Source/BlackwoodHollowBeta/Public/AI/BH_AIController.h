@@ -70,6 +70,21 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain", meta = (ClampMin = "0"))
 	float MinAttackDistance = 125.f;
 
+	/**
+	 * Margin added to MinAttackDistance to form the lower edge of the "attack band". The approach never stops closer
+	 * than MinAttackDistance + this (clamped to AttackRange), so MoveTo drift cannot land the pawn inside MinAttackDistance
+	 * and trigger a back-off / re-approach stall. Desired stop = Max(AttackRange - AcceptanceSlack, MinAttackDistance + this).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain", meta = (ClampMin = "0"))
+	float MinAttackBandMargin = 25.f;
+
+	/**
+	 * Inside MinAttackDistance: true = ease back before swinging (the original behaviour); false = hold ground, face the
+	 * target and swing if the other attack conditions hold (aggressive / relentless enemies).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain")
+	bool bBackOffWhenTooClose = true;
+
 	/** A swing needs the target within this many degrees of the pawn's forward. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain", meta = (ClampMin = "1", ClampMax = "180"))
 	float AttackFacingAngle = 30.f;
@@ -120,6 +135,22 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain", meta = (ClampMin = "0"))
 	float BackstepMinStamina = 40.f;
+
+	/** Minimum seconds between two backsteps (0 = no throttle). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain", meta = (ClampMin = "0"))
+	float BackstepCooldown = 3.0f;
+
+	/** If true, a combo that ended right after a backstepped combo never backsteps (no back-to-back backsteps). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain")
+	bool bNoConsecutiveBacksteps = true;
+
+	/** Recovery after a swing that failed to start (stamina / blocked by a state tag). No backstep is rolled. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain", meta = (ClampMin = "0"))
+	float FailedAttackRetryDelay = 0.25f;
+
+	/** 0 = off. While recovering, if the target is farther than AttackRange + this, recovery ends early and the brain re-approaches (pressure). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain", meta = (ClampMin = "0"))
+	float RecoverChaseDistance = 0.f;
 
 	/** Chance to try a parry when the target starts attacking within AttackRange + DefendRangeExtra. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Brain", meta = (ClampMin = "0", ClampMax = "1"))
@@ -175,6 +206,10 @@ public:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "BH|Brain|Stats")
 	int32 StatBacksteps = 0;
 
+	/** Swing starts rejected by HandleMeleeAttackInput (stamina / state-tag blocked). */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "BH|Brain|Stats")
+	int32 StatFailedAttackStarts = 0;
+
 protected:
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void OnUnPossess() override;
@@ -193,7 +228,8 @@ private:
 	void TickDefend(float DeltaSeconds);
 
 	void BeginAttack();
-	void BeginRecover();
+	/** OverrideRecoverTime < 0 = roll RecoverTimeMin..Max. bAllowBackstep = false skips the backstep roll (failed swing starts). */
+	void BeginRecover(bool bAllowBackstep = true, float OverrideRecoverTime = -1.f);
 	void BeginDefend(bool bParry);
 	void EndDefend();
 	void FaceTarget(float DeltaSeconds, float MinAngle);
@@ -226,6 +262,8 @@ private:
 
 	// Recover
 	float RecoverTimeLeft = 0.f;
+	float LastBackstepTime = -100000.f;
+	bool bLastComboBackstepped = false;
 
 	// Defend
 	bool bDefendIsParry = false;
