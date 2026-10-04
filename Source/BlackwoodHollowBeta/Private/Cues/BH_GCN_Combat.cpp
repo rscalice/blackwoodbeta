@@ -2,6 +2,7 @@
 
 #include "Cues/BH_GCN_Combat.h"
 #include "Cues/BH_CueUtils.h"
+#include "UI/BH_OverheadVitalsComponent.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -99,6 +100,9 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 		Tier = EBH_ImpactTier::Heavy;
 	}
 	UBH_CombatFeelLibrary::PlayImpactFeel(Attacker ? Attacker : Victim, Tier, Attacker, Victim, ImpactLocation, /*bEscalateForVictim*/ !bBlocked, false, /*bBlocked*/ bBlocked);
+
+	// Overhead enemy bar: a hit (blocked or not) by the LOCAL player shows the victim's bar for a few seconds (cosmetic, per machine).
+	UBH_OverheadVitalsComponent::NotifyHitByLocalPlayer(Attacker, Victim);
 
 	if (Victim && !bBlocked)
 	{
