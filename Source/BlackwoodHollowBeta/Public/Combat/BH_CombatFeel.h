@@ -18,6 +18,18 @@
 // It never touches actor or global time dilation, so movement, physics and server timers keep running.
 // Overlap safe (BH_CueUtils::ApplyHitStop): the original rate is saved once, the freeze lasts until the LATEST end time.
 //
+// DIRECTIONAL SHAKE: on top of the tier shake, a hit the LOCAL player takes or deals also starts a direction-biased shake
+// (UBH_CombatFeelLibrary::PlayDirectionalBiasShake): the side of the camera the hit comes from picks HitFromLeft / HitFromRight
+// (head kicks away: yaw + roll sign), a frontal hit picks HitFromFront (pitch kick). Scale = tier shake scale x DirectionalShakeScale.
+//
+// PARRY PUNCH (local parrier only, UBH_CombatFeelLibrary::PlayParryPunch): a strong short shake + an FOV punch (the FOV narrows by
+// ParryFOVKickDegrees and eases back over 0.25 s) + controller rumble.
+//
+// RUMBLE (local player only, no assets: APlayerController::PlayDynamicForceFeedback; bEnableRumble switches it off, specs below):
+//   hit dealt Light / Medium / Heavy (by tier; a blocked hit is Light), parry success, damage taken, posture break caused or suffered.
+//
+// Debug: CVar bh.CombatFeel.Debug 1 logs every rumble / parry punch / directional shake at Log level (LogBHFeel). Default 0.
+//
 // TIERED PUSHBACK (server, gameplay): UBH_CombatFeelLibrary::ApplyHitPushback, called from UAH_GA_MeleeAttack_Base::OnHitDealt
 // after damage. Additive constant-force root motion on the victim's CharacterMovement, horizontal only, distance / duration
 // per tier x stance multiplier (x BlockedPushbackFactor when blocked). Remote client victims get an identical source applied
@@ -36,6 +48,7 @@ class USoundBase;
 class USoundAttenuation;
 class UMaterialInterface;
 class UBH_VoiceSetDataAsset;
+class APlayerController;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogBHFeel, Log, All);
 
@@ -46,6 +59,25 @@ enum class EBH_ImpactTier : uint8
 	Medium,
 	Heavy,
 	Massive
+};
+
+/** One controller rumble: Large = the two low-frequency motors, Small = the two high-frequency motors (0..1), for Duration seconds. */
+USTRUCT(BlueprintType)
+struct BLACKWOODHOLLOWBETA_API FBH_RumbleSpec
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rumble", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float Large = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rumble", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float Small = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rumble", meta = (ClampMin = "0.0"))
+	float Duration = 0.f;
+
+	FBH_RumbleSpec() = default;
+	FBH_RumbleSpec(float InLarge, float InSmall, float InDuration) : Large(InLarge), Small(InSmall), Duration(InDuration) {}
 };
 
 UENUM(BlueprintType)
@@ -216,6 +248,53 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Tiers")
 	float FinisherPostureMultiplier = 1.5f;
 
+	// -- Directional shake / parry punch ------------------------------------------------------
+
+	/** Scale of the direction-biased shake relative to the tier shake (0 = off). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Directional", meta = (ClampMin = "0.0"))
+	float DirectionalShakeScale = 0.6f;
+
+	/** |lateral| (0..1, the hit's component along the camera's right axis) below which the hit counts as frontal. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Directional", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DirectionalFrontalThreshold = 0.35f;
+
+	/** Parry: the strong short shake for the local parrier. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Parry")
+	TSubclassOf<UCameraShakeBase> ParryPunchShake;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Parry", meta = (ClampMin = "0.0"))
+	float ParryPunchShakeScale = 2.f;
+
+	/** Parry: shake that carries the FOV punch (started with Scale = ParryFOVKickDegrees; its amplitude is -1 degree). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Parry")
+	TSubclassOf<UCameraShakeBase> ParryFOVShake;
+
+	/** Parry: how many degrees the FOV narrows (eases back over 0.25 s). 0 = no FOV punch. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Parry", meta = (ClampMin = "0.0"))
+	float ParryFOVKickDegrees = 6.f;
+
+	// -- Controller rumble (local player only) ---------------------------------------------------
+
+	/** Master switch for controller rumble. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Rumble")
+	bool bEnableRumble = true;
+
+	/** Hit dealt by the local player, indexed by EBH_ImpactTier (Light, Medium, Heavy; a blocked hit is Light). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Rumble")
+	TArray<FBH_RumbleSpec> HitDealtRumbleByTier;
+
+	/** Parry success (sharp and strong). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Rumble")
+	FBH_RumbleSpec ParryRumble;
+
+	/** The local player took a hit (stronger and longer than a dealt hit). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Rumble")
+	FBH_RumbleSpec DamageTakenRumble;
+
+	/** The local player broke someone's posture, or had theirs broken (heavy). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Rumble")
+	FBH_RumbleSpec PostureBreakRumble;
+
 	// -- Voice ----------------------------------------------------------------
 
 	/** Voice set for player-controlled pawns (enemies use UBH_CombatIdentityComponent::VoiceSet). */
@@ -298,6 +377,21 @@ public:
 	 * normalised; Id makes the InstanceName so a server source and its client twin match each other. Returns false if invalid.
 	 */
 	static bool ApplyPushbackSource(class ACharacter* Character, const FVector& Direction, float Distance, float Duration, uint16 Id);
+
+	/**
+	 * Starts the direction-biased shake on PC's camera: FromDirection is the world direction TOWARD the hit's source as the camera
+	 * sees it (zero = nothing). The camera's right axis picks HitFromLeft / HitFromRight, a mostly frontal hit picks HitFromFront.
+	 * @return the started shake (nullptr if none).
+	 */
+	static UCameraShakeBase* PlayDirectionalBiasShake(APlayerController* PC, const FVector& FromDirection, float Scale);
+
+	/** Plays Spec on PC's controller (local controllers only; honours UBH_CombatFeelSettings::bEnableRumble). */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel")
+	static void PlayRumble(APlayerController* PC, const FBH_RumbleSpec& Spec);
+
+	/** Parry success for the local parrier PC: strong short shake, FOV punch and the parry rumble. */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel")
+	static void PlayParryPunch(APlayerController* PC);
 
 	/** The voice set for Actor (identity component's VoiceSet, or the player's default). May be null. */
 	static const UBH_VoiceSetDataAsset* ResolveVoiceSet(const AActor* Actor);

@@ -26,6 +26,7 @@
 
 class UAbilitySystemComponent;
 class APlayerController;
+class UBH_BossHealthBarWidget;
 
 UCLASS(Abstract, Blueprintable)
 class BLACKWOODHOLLOWBETA_API UBH_HUDWidget : public UUserWidget
@@ -77,6 +78,24 @@ public:
 
 	/** Pushes a lock-on target change into this widget. */
 	void NotifyLockedTargetChanged(AActor* Target);
+
+	// -- Boss bar settings (read by UBH_HUDSubsystem from the MAIN HUD widget; set them on WBP_HUD_Main's class defaults) ----------
+
+	/** Boss health bar widget (WBP_BossHealthBar). Empty = no boss bar. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Boss")
+	TSubclassOf<UBH_BossHealthBarWidget> BossBarClass;
+
+	/** Distance in pixels from the bottom edge of the screen to the bottom of the boss bar (clears the vitals cluster). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Boss", meta = (ClampMin = "0.0"))
+	float BossBarBottomOffset = 150.f;
+
+	/** Seconds the bar stays after the boss dies or drops aggro on the local pawn. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Boss", meta = (ClampMin = "0.0"))
+	float BossBarHideDelay = 1.5f;
+
+	/** Seconds between fallback boss scans (the primary trigger is the aggro-changed event). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Boss", meta = (ClampMin = "0.1"))
+	float BossScanInterval = 0.5f;
 
 protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;

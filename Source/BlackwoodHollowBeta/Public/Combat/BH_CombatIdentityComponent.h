@@ -26,9 +26,13 @@ class UBH_WeaponLoadoutDataAsset;
 class UMaterialInterface;
 class UBH_VoiceSetDataAsset;
 class UAbilitySystemComponent;
+class UBH_CombatIdentityComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnIdentityDeath, AActor*, Killer);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnIdentityReset);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnAggroTargetChanged, AActor*, NewAggroTarget);
+/** Native, static twin of FBH_OnAggroTargetChanged: fires for ANY identity component on this machine (the HUD listens once instead of per boss). */
+DECLARE_MULTICAST_DELEGATE_TwoParams(FBH_OnAnyAggroTargetChanged, UBH_CombatIdentityComponent* /*Source*/, AActor* /*NewAggroTarget*/);
 
 UCLASS(ClassGroup = (BlackwoodHollow), meta = (BlueprintSpawnableComponent))
 class BLACKWOODHOLLOWBETA_API UBH_CombatIdentityComponent : public UActorComponent
@@ -162,11 +166,49 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BH|Death")
 	void SetResetOnDeath(bool bInResetOnDeath) { bResetOnDeath = bInResetOnDeath; }
 
+	// -- Boss (BH|Boss) -----------------------------------------------------------------
+	// A boss gets the big bottom-centre health bar (UBH_BossHealthBarWidget, driven by UBH_HUDSubsystem) on the machine of every
+	// player it is currently fighting, and no small overhead bar. AggroTarget is who the owner's AI is fighting: the server's
+	// ABH_AIController::SetTarget sets it, it replicates, and OnAggroTargetChanged fires on every machine (server on set, clients in the OnRep).
+
+	/** Marks the owner as a boss: boss health bar on the local HUD while it is aggroed on the local pawn, no overhead bar. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Boss")
+	bool bIsBoss = false;
+
+	/** Name shown on the boss health bar (falls back to DisplayName when empty). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Boss", meta = (EditCondition = "bIsBoss"))
+	FText BossDisplayName;
+
+	/** Who the owner's AI is currently fighting (null = nobody). Replicated; set only through SetAggroTarget on the server. */
+	UPROPERTY(ReplicatedUsing = OnRep_AggroTarget, VisibleInstanceOnly, BlueprintReadOnly, Category = "BH|Boss")
+	TObjectPtr<AActor> AggroTarget;
+
+	/** Server only: records the AI's current target (nullptr to clear) and notifies listeners. No-op when unchanged. */
+	UFUNCTION(BlueprintCallable, Category = "BH|Boss")
+	void SetAggroTarget(AActor* NewTarget);
+
+	UFUNCTION(BlueprintPure, Category = "BH|Boss")
+	AActor* GetAggroTarget() const { return AggroTarget; }
+
+	/** The name for the boss bar: BossDisplayName, else DisplayName. */
+	UFUNCTION(BlueprintPure, Category = "BH|Boss")
+	FText GetBossBarName() const { return BossDisplayName.IsEmpty() ? DisplayName : BossDisplayName; }
+
+	/** Fires on every machine when AggroTarget changes (server: in SetAggroTarget; clients: when the replicated value arrives). */
+	UPROPERTY(BlueprintAssignable, Category = "BH|Boss")
+	FBH_OnAggroTargetChanged OnAggroTargetChanged;
+
+	/** Same event for every identity component (native only); remove your handle when you are done. */
+	static FBH_OnAnyAggroTargetChanged& OnAnyAggroTargetChanged();
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+	UFUNCTION()
+	void OnRep_AggroTarget();
+
 	void ApplyCosmetics();
 	void ApplyCollision();
 	void ApplyLateSetup();

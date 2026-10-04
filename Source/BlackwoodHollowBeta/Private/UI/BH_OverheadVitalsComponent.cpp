@@ -3,6 +3,7 @@
 #include "UI/BH_OverheadVitalsComponent.h"
 #include "UI/BH_OverheadVitalsWidget.h"
 #include "Combat/BH_LockOnComponent.h"
+#include "Combat/BH_CombatIdentityComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -54,6 +55,17 @@ void UBH_OverheadVitalsComponent::BeginPlay()
 	{
 		SetComponentTickEnabled(false);
 		return;
+	}
+
+	// Bosses get the big bottom-centre boss bar instead (UBH_BossHealthBarWidget): never show the small overhead one.
+	if (const UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(GetOwner()))
+	{
+		if (Identity->bIsBoss)
+		{
+			SetVisibility(false);
+			SetComponentTickEnabled(false);
+			return;
+		}
 	}
 
 	// Position: HeightAboveCapsuleTop above the top of the owner's capsule (relative to the root it hangs from).

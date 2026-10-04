@@ -31,6 +31,12 @@ static TAutoConsoleVariable<float> CVarBHShakeScale(
 	TEXT("Global multiplier for combat camera shakes (0 = off). Accessibility toggle hook."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarBHCombatFeelDebug(
+	TEXT("bh.CombatFeel.Debug"),
+	0,
+	TEXT("1 = log every controller rumble, parry punch (FOV kick) and directional shake at Log level (LogBHFeel). For testing."),
+	ECVF_Default);
+
 namespace
 {
 	const TCHAR* TierName(EBH_ImpactTier Tier)
@@ -111,6 +117,20 @@ UBH_CombatFeelSettings::UBH_CombatFeelSettings()
 	PushbackStanceMultipliers.Add(TAG_Stance_Weapon_Greatsword, 1.4f);
 	PushbackStanceMultipliers.Add(TAG_Stance_Weapon_DualSword, 0.8f);
 	PushbackStanceMultipliers.Add(TAG_Stance_Weapon_SwordShield, 1.f);
+
+	// Directional shake, parry punch and rumble (new properties: an already-saved DA_CombatFeel picks these defaults up).
+	ParryPunchShake = UBH_CameraShake_ParryPunch::StaticClass();
+	ParryFOVShake = UBH_CameraShake_ParryFOV::StaticClass();
+	// Large = low-frequency motors, Small = high-frequency ones, Duration in seconds.
+	HitDealtRumbleByTier = {
+		FBH_RumbleSpec(0.00f, 0.25f, 0.06f), // Light
+		FBH_RumbleSpec(0.25f, 0.35f, 0.09f), // Medium
+		FBH_RumbleSpec(0.55f, 0.50f, 0.14f), // Heavy
+		FBH_RumbleSpec(0.90f, 0.80f, 0.20f), // Massive (not used for dealt hits; posture breaks use PostureBreakRumble)
+	};
+	ParryRumble = FBH_RumbleSpec(0.70f, 1.00f, 0.12f);
+	DamageTakenRumble = FBH_RumbleSpec(0.60f, 0.50f, 0.28f);
+	PostureBreakRumble = FBH_RumbleSpec(1.00f, 0.90f, 0.45f);
 
 	Tiers[0].ShakeClass = UBH_CameraShake_Light::StaticClass();
 	Tiers[0].HitStopDuration = 0.03f;
@@ -281,9 +301,142 @@ void UBH_CombatFeelLibrary::PlayImpactFeel(const UObject* WorldContext, EBH_Impa
 		}
 	}
 
+	// Only when the local player is in the exchange (not a spectator): a direction-biased shake on top of the tier shake, and rumble.
+	if (PC && bLocalInvolved && !bInstigatorOnlyShake)
+	{
+		const bool bLocalIsVictim = Victim && Victim != Instigator && PC->GetPawn() == Victim;
+		FVector HitDirection = FVector::ZeroVector; // direction the hit travels (attacker -> victim)
+		if (Instigator && Victim)
+		{
+			HitDirection = Victim->GetActorLocation() - Instigator->GetActorLocation();
+		}
+		else if (Instigator || Victim)
+		{
+			HitDirection = Location - (Instigator ? Instigator : Victim)->GetActorLocation();
+		}
+		if (Tier != EBH_ImpactTier::Massive && Settings->DirectionalShakeScale > 0.f)
+		{
+			// A taken hit comes FROM behind its travel direction; a dealt hit is in front of the camera along it.
+			PlayDirectionalBiasShake(PC, bLocalIsVictim ? -HitDirection : HitDirection, Scale * Settings->DirectionalShakeScale);
+		}
+
+		if (Tier == EBH_ImpactTier::Massive)
+		{
+			PlayRumble(PC, Settings->PostureBreakRumble); // posture broken: caused or suffered
+		}
+		else if (bBlocked)
+		{
+			if (Settings->HitDealtRumbleByTier.IsValidIndex(0))
+			{
+				PlayRumble(PC, Settings->HitDealtRumbleByTier[0]);
+			}
+		}
+		else if (bLocalIsVictim)
+		{
+			PlayRumble(PC, Settings->DamageTakenRumble);
+		}
+		else
+		{
+			const int32 TierIndex = FMath::Min(static_cast<int32>(Tier), 2); // Light..Heavy
+			if (Settings->HitDealtRumbleByTier.IsValidIndex(TierIndex))
+			{
+				PlayRumble(PC, Settings->HitDealtRumbleByTier[TierIndex]);
+			}
+		}
+	}
+
 	UE_LOG(LogBHFeel, Verbose, TEXT("PlayImpactFeel: tier=%s shakeTier=%s instigator=%s victim=%s freeze=%.2f blocked=%d skipFreeze=%d flash=%.0f localInvolved=%d shake=%s scale=%.2f"),
 		TierName(Tier), TierName(ShakeTier), *GetNameSafe(Instigator), *GetNameSafe(Victim), Settings->GetFreezeDuration(Tier), bBlocked ? 1 : 0, bSkipFreeze ? 1 : 0, TierData.FlashIntensity,
 		bLocalInvolved ? 1 : 0, Shake ? *Shake->GetClass()->GetName() : TEXT("none"), Scale);
+}
+
+// ----------------------------------------------------------------------------
+// Directional shake / parry punch / rumble
+// ----------------------------------------------------------------------------
+
+UCameraShakeBase* UBH_CombatFeelLibrary::PlayDirectionalBiasShake(APlayerController* PC, const FVector& FromDirection, float Scale)
+{
+	if (!PC || !PC->IsLocalController() || !PC->PlayerCameraManager || Scale <= 0.f || FromDirection.SizeSquared2D() <= KINDA_SMALL_NUMBER)
+	{
+		return nullptr;
+	}
+	const UBH_CombatFeelSettings* Settings = UBH_CombatFeelSettings::Get();
+
+	// Which side of the camera is the hit coming from? (camera right axis . direction to the source, flattened)
+	const FRotator CameraYaw(0.f, PC->PlayerCameraManager->GetCameraRotation().Yaw, 0.f);
+	const FVector CameraRight = FRotationMatrix(CameraYaw).GetUnitAxis(EAxis::Y);
+	const float Lateral = static_cast<float>(FVector::DotProduct(CameraRight, FromDirection.GetSafeNormal2D()));
+
+	TSubclassOf<UCameraShakeBase> ShakeClass = UBH_CameraShake_HitFromFront::StaticClass();
+	const TCHAR* SideName = TEXT("front");
+	if (Lateral > Settings->DirectionalFrontalThreshold)
+	{
+		ShakeClass = UBH_CameraShake_HitFromRight::StaticClass();
+		SideName = TEXT("right");
+	}
+	else if (Lateral < -Settings->DirectionalFrontalThreshold)
+	{
+		ShakeClass = UBH_CameraShake_HitFromLeft::StaticClass();
+		SideName = TEXT("left");
+	}
+
+	UCameraShakeBase* Shake = PC->PlayerCameraManager->StartCameraShake(ShakeClass, Scale, ECameraShakePlaySpace::CameraLocal);
+	if (CVarBHCombatFeelDebug.GetValueOnGameThread() != 0)
+	{
+		UE_LOG(LogBHFeel, Log, TEXT("DirectionalShake: side=%s lateral=%.2f scale=%.2f class=%s"), SideName, Lateral, Scale, *ShakeClass->GetName());
+	}
+	return Shake;
+}
+
+void UBH_CombatFeelLibrary::PlayRumble(APlayerController* PC, const FBH_RumbleSpec& Spec)
+{
+	const UBH_CombatFeelSettings* Settings = UBH_CombatFeelSettings::Get();
+	if (!PC || !PC->IsLocalController() || !Settings->bEnableRumble || Spec.Duration <= 0.f || (Spec.Large <= 0.f && Spec.Small <= 0.f))
+	{
+		return;
+	}
+	// Two dynamic actions: the low-frequency motors (left + right large) and the high-frequency ones (left + right small).
+	if (Spec.Large > 0.f)
+	{
+		PC->PlayDynamicForceFeedback(Spec.Large, Spec.Duration, true, false, true, false);
+	}
+	if (Spec.Small > 0.f)
+	{
+		PC->PlayDynamicForceFeedback(Spec.Small, Spec.Duration, false, true, false, true);
+	}
+	if (CVarBHCombatFeelDebug.GetValueOnGameThread() != 0)
+	{
+		UE_LOG(LogBHFeel, Log, TEXT("Rumble: pc=%s large=%.2f small=%.2f duration=%.2f"), *GetNameSafe(PC), Spec.Large, Spec.Small, Spec.Duration);
+	}
+}
+
+void UBH_CombatFeelLibrary::PlayParryPunch(APlayerController* PC)
+{
+	if (!PC || !PC->IsLocalController() || !PC->PlayerCameraManager)
+	{
+		return;
+	}
+	const UBH_CombatFeelSettings* Settings = UBH_CombatFeelSettings::Get();
+	const float Master = Settings->ShakeScaleMultiplier * CVarBHShakeScale.GetValueOnGameThread(); // accessibility: 0 turns the whole punch off
+
+	if (Master > 0.f)
+	{
+		if (Settings->ParryPunchShake && Settings->ParryPunchShakeScale > 0.f)
+		{
+			PC->PlayerCameraManager->StartCameraShake(Settings->ParryPunchShake, Settings->ParryPunchShakeScale * Master, ECameraShakePlaySpace::CameraLocal);
+		}
+		if (Settings->ParryFOVShake && Settings->ParryFOVKickDegrees > 0.f)
+		{
+			// The shake's amplitude is -1 degree of FOV, so its scale is the kick in degrees.
+			PC->PlayerCameraManager->StartCameraShake(Settings->ParryFOVShake, Settings->ParryFOVKickDegrees * Master, ECameraShakePlaySpace::CameraLocal);
+		}
+	}
+	PlayRumble(PC, Settings->ParryRumble);
+	if (CVarBHCombatFeelDebug.GetValueOnGameThread() != 0)
+	{
+		UE_LOG(LogBHFeel, Log, TEXT("ParryPunch: pc=%s shake=%s x%.2f fovKick=%.1f deg master=%.2f"), *GetNameSafe(PC),
+			*GetNameSafe(Settings->ParryPunchShake), Settings->ParryPunchShakeScale, Settings->ParryFOVKickDegrees, Master);
+	}
 }
 
 // ----------------------------------------------------------------------------

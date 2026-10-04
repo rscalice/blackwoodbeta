@@ -282,6 +282,12 @@ void ABH_AIController::SetTarget(AActor* NewTarget)
 	Target = NewTarget;
 	AggressionTimeLeft = AggressionDelay;
 
+	// Tell clients who we are fighting (replicated on the identity component): the boss health bar shows on the targeted player's HUD.
+	if (UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(GetPawn()))
+	{
+		Identity->SetAggroTarget(NewTarget);
+	}
+
 	if (NewTarget)
 	{
 		if (UAbilitySystemComponent* NewASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(NewTarget))

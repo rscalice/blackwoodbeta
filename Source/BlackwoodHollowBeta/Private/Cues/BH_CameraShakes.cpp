@@ -84,6 +84,45 @@ UBH_CameraShake_Heavy::UBH_CameraShake_Heavy(const FObjectInitializer& ObjectIni
 	SetRootShakePattern(Pattern);
 }
 
+UBH_CameraShake_HitFromLeft::UBH_CameraShake_HitFromLeft(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	UWaveOscillatorCameraShakePattern* Pattern = CreateDefaultSubobject<UWaveOscillatorCameraShakePattern>(TEXT("RootShakePattern"));
+	// Negative amplitudes start the wave in the other direction: Left = positive yaw / roll (head kicks right), Right = negative.
+	BH_CameraShakes_Private::Configure(Pattern, /*Duration*/ 0.2f, /*In*/ 0.01f, /*Out*/ 0.14f,
+		/*Pitch*/ 0.8f, /*Yaw*/ 1.6f, /*Roll*/ 2.0f, /*Hz*/ 24.f);
+	SetRootShakePattern(Pattern);
+}
+
+UBH_CameraShake_HitFromRight::UBH_CameraShake_HitFromRight(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	UWaveOscillatorCameraShakePattern* Pattern = CreateDefaultSubobject<UWaveOscillatorCameraShakePattern>(TEXT("RootShakePattern"));
+	BH_CameraShakes_Private::Configure(Pattern, /*Duration*/ 0.2f, /*In*/ 0.01f, /*Out*/ 0.14f,
+		/*Pitch*/ 0.8f, /*Yaw*/ -1.6f, /*Roll*/ -2.0f, /*Hz*/ 24.f);
+	SetRootShakePattern(Pattern);
+}
+
+UBH_CameraShake_HitFromFront::UBH_CameraShake_HitFromFront(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	UWaveOscillatorCameraShakePattern* Pattern = CreateDefaultSubobject<UWaveOscillatorCameraShakePattern>(TEXT("RootShakePattern"));
+	BH_CameraShakes_Private::Configure(Pattern, /*Duration*/ 0.2f, /*In*/ 0.01f, /*Out*/ 0.14f,
+		/*Pitch*/ 2.2f, /*Yaw*/ 0.25f, /*Roll*/ 0.25f, /*Hz*/ 24.f);
+	SetRootShakePattern(Pattern);
+}
+
+UBH_CameraShake_ParryFOV::UBH_CameraShake_ParryFOV(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	UWaveOscillatorCameraShakePattern* Pattern = CreateDefaultSubobject<UWaveOscillatorCameraShakePattern>(TEXT("RootShakePattern"));
+	// Configure scales the FOV wave to Frequency * 0.6: 3.333 Hz -> 2 Hz FOV, so 0.25 s is exactly one half sine (down, then back up to 0).
+	// No blend in / out: the half sine already starts and ends at zero.
+	BH_CameraShakes_Private::Configure(Pattern, /*Duration*/ 0.25f, /*In*/ 0.f, /*Out*/ 0.f,
+		/*Pitch*/ 0.f, /*Yaw*/ 0.f, /*Roll*/ 0.f, /*Hz*/ 3.3333333f, /*FOV*/ -1.f);
+	SetRootShakePattern(Pattern);
+}
+
 UBH_CameraShake_Massive::UBH_CameraShake_Massive(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {

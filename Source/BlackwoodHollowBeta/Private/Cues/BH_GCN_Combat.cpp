@@ -12,6 +12,7 @@
 #include "Sound/SoundAttenuation.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/PlayerController.h"
 
 namespace
 {
@@ -57,6 +58,7 @@ namespace
 UBH_GCN_CombatHit::UBH_GCN_CombatHit()
 {
 	GameplayCueTag = TAG_GameplayCue_Combat_Hit;
+	TierFXScales = { 0.85f, 1.f, 1.3f, 1.5f }; // Light, Medium, Heavy, Massive
 }
 
 bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGameplayCueParameters& Parameters) const
@@ -112,6 +114,10 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 	UE_LOG(LogBHCue, Verbose, TEXT("BH_GCN_CombatHit(%s): %s FX at %s"), *GetNameSafe(this), bBlocked ? TEXT("blocked") : TEXT("flesh"), *ImpactLocation.ToCompactString());
 	// VFX every hit; the impact sound is rate-limited per victim (multi-hit spins would otherwise stack ~1.3 s clips).
 	FBH_CueFX FX = bBlocked ? BlockedFX : FleshFX;
+	if (TierFXScales.IsValidIndex(static_cast<int32>(Tier)))
+	{
+		FX.Scale *= TierFXScales[static_cast<int32>(Tier)]; // bigger blood / sparks for bigger hits
+	}
 	const AActor* SoundKey = Victim ? Victim : Attacker;
 	if (!ConsumeHitSoundSlot(SoundKey, SoundKey ? SoundKey->GetWorld() : nullptr, MinSoundInterval))
 	{
@@ -160,6 +166,12 @@ bool UBH_GCN_ParrySuccess::OnExecute_Implementation(AActor* MyTarget, const FGam
 	UBH_CombatFeelLibrary::PlayImpactFeel(Parrier ? Parrier : Attacker, EBH_ImpactTier::Heavy, Parrier, Attacker, Midpoint, false, /*bInstigatorOnlyShake*/ true, false, /*bSkipFreeze*/ true);
 	UBH_CombatFeelLibrary::ApplyTierFreeze(Attacker, UBH_CombatFeelSettings::Get()->ParryFreezeTier, 1.f, false);
 
+	// Camera punch for the local parrier: strong short shake + FOV kick + rumble (no-op for everyone else).
+	if (APlayerController* LocalPC = BH_CueUtils::FindLocalControllerInvolving(Parrier, nullptr))
+	{
+		UBH_CombatFeelLibrary::PlayParryPunch(LocalPC);
+	}
+
 	BH_CueUtils::PlayCueFX(Parrier ? Parrier : Attacker, ParryFX, Midpoint, Normal.IsNearlyZero() ? FRotator::ZeroRotator : Normal.Rotation(), Attenuation);
 	return true;
 }
@@ -193,5 +205,6 @@ bool UBH_GCN_PostureBroken::OnExecute_Implementation(AActor* MyTarget, const FGa
 
 	BH_CueUtils::PlayCueFX(MyTarget, PrimaryFX, SpawnLocation, FRotator::ZeroRotator, Attenuation);
 	BH_CueUtils::PlayCueFX(MyTarget, SecondaryFX, SpawnLocation, FRotator::ZeroRotator, Attenuation);
+	BH_CueUtils::PlayRandomSound(MyTarget, ShatterSounds, SpawnLocation, ShatterVolumeRange, ShatterPitchRange, Attenuation); // empty = silent
 	return true;
 }

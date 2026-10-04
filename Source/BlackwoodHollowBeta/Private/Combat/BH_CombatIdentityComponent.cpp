@@ -31,6 +31,32 @@ void UBH_CombatIdentityComponent::GetLifetimeReplicatedProps(TArray<FLifetimePro
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UBH_CombatIdentityComponent, DisplayName);
 	DOREPLIFETIME(UBH_CombatIdentityComponent, CombatTeam);
+	DOREPLIFETIME(UBH_CombatIdentityComponent, AggroTarget);
+}
+
+FBH_OnAnyAggroTargetChanged& UBH_CombatIdentityComponent::OnAnyAggroTargetChanged()
+{
+	static FBH_OnAnyAggroTargetChanged Delegate;
+	return Delegate;
+}
+
+void UBH_CombatIdentityComponent::SetAggroTarget(AActor* NewTarget)
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority() || AggroTarget == NewTarget)
+	{
+		return;
+	}
+	AggroTarget = NewTarget;
+	// The server (and a listen-server host) never gets the OnRep: notify here. Clients notify from OnRep_AggroTarget.
+	OnAggroTargetChanged.Broadcast(AggroTarget);
+	OnAnyAggroTargetChanged().Broadcast(this, AggroTarget);
+}
+
+void UBH_CombatIdentityComponent::OnRep_AggroTarget()
+{
+	OnAggroTargetChanged.Broadcast(AggroTarget);
+	OnAnyAggroTargetChanged().Broadcast(this, AggroTarget);
 }
 
 UBH_CombatIdentityComponent* UBH_CombatIdentityComponent::Find(const AActor* Actor)
