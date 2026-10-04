@@ -202,7 +202,7 @@ void UBH_StanceComponent::EquipWeaponsFor(FGameplayTag New)
 		return;
 	}
 	TArray<UMeshComponent*> Attached;
-	UBH_CombatFunctionLibrary::EquipWeaponsForOverlayPose(Character, WeaponLoadouts, BH_Stance::ToLegacyName(New).ToString(), Attached);
+	UBH_CombatFunctionLibrary::EquipWeaponsForStance(Character, WeaponLoadouts, New, Attached);
 	// The meshes were just respawned in the hand: put them where the drawn state says (no transition montage).
 	ApplyWeaponAttachment(bWeaponDrawn);
 }

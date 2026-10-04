@@ -98,8 +98,8 @@ namespace BH_CombatFunctionLibrary_Private
 	static TAutoConsoleVariable<int32> CVarGripUseLeftHandIK(TEXT("bh.GripIK.UseLeftHandIK"), 0, TEXT("1 = the ABP left-hand Two Bone IK is driven by GetSecondaryGripIKTarget (legacy); 0 = alpha forced to 0 (the grip frame moves the weapon to the hands instead)."));
 
 	// Component tags used to find/clean up the weapon meshes this library spawns.
-	// (Plain functions returning FName rather than file-scope statics, to stay
-	// safe under Live Coding patches -- see the note in ApplyOverlayPoseByDisplayName.)
+	// (Plain functions returning FName rather than file-scope or function-local statics, to stay
+	// safe under Live Coding patches: a hot-reloaded static can be left default-constructed.)
 	static FName WeaponComponentTag() { return FName(TEXT("BH.Weapon")); }
 	static FName WeaponSlotTag(EBH_WeaponSlot Slot)
 	{
@@ -122,44 +122,6 @@ namespace BH_CombatFunctionLibrary_Private
 		// implement IAbilitySystemInterface (e.g. a Blueprint-only character
 		// that just has the component added without wiring the interface).
 		return OwningActor->FindComponentByClass<UAbilitySystemComponent>();
-	}
-
-	// GASP's OverlayPose enum lives in plugin content as a UserDefinedEnum,
-	// so it's loaded by soft path rather than referenced via a native UENUM.
-	// (Plain local, not "static const" -- Live Coding hot-reload can leave
-	// function-local statics uninitialized.)
-	static UEnum* LoadOverlayPoseEnum()
-	{
-		const FSoftObjectPath OverlayPoseEnumPath(TEXT("/GASPALS/OverlaySystem/Blueprints/Enum_OverlayPose.Enum_OverlayPose"));
-		return Cast<UEnum>(OverlayPoseEnumPath.TryLoad());
-	}
-
-	/** Reads GASP's replicated "OverlayPose" byte/enum property. Returns false if absent. */
-	static bool ReadOverlayPoseValue(const AActor* TargetCharacter, int64& OutValue)
-	{
-		if (!TargetCharacter)
-		{
-			return false;
-		}
-
-		const FProperty* OverlayPoseProperty = TargetCharacter->GetClass()->FindPropertyByName(FName(TEXT("OverlayPose")));
-		if (!OverlayPoseProperty)
-		{
-			return false;
-		}
-
-		const void* ValuePtr = OverlayPoseProperty->ContainerPtrToValuePtr<void>(TargetCharacter);
-		if (const FByteProperty* ByteProperty = CastField<FByteProperty>(OverlayPoseProperty))
-		{
-			OutValue = ByteProperty->GetPropertyValue(ValuePtr);
-			return true;
-		}
-		if (const FEnumProperty* EnumProperty = CastField<FEnumProperty>(OverlayPoseProperty))
-		{
-			OutValue = EnumProperty->GetUnderlyingProperty()->GetSignedIntPropertyValue(ValuePtr);
-			return true;
-		}
-		return false;
 	}
 }
 
@@ -672,10 +634,12 @@ bool UBH_CombatFunctionLibrary::AreCombatAllies(const AActor* A, const AActor* B
 // GASP OverlayPose bridge
 // ============================================================================
 
+// DEPRECATED shim. Every live character owns a UBH_StanceComponent, so the legacy name is simply mapped to its tag
+// (no warning on that path: CombatIdentity / the watcher still route through here). The old body wrote the
+// replicated "OverlayPose" byte on CBP_SandboxCharacter and called UpdateOverlayPose via reflection; that was removed
+// with the GASPALS plugin dependency, so a character without a stance component can no longer be driven from here.
 bool UBH_CombatFunctionLibrary::ApplyOverlayPoseByDisplayName(AActor* TargetCharacter, const FString& OverlayPoseDisplayName)
 {
-	using namespace BH_CombatFunctionLibrary_Private;
-
 	if (!TargetCharacter)
 	{
 		return false;
@@ -685,107 +649,9 @@ bool UBH_CombatFunctionLibrary::ApplyOverlayPoseByDisplayName(AActor* TargetChar
 		return TargetCharacter->HasAuthority() && Stance->SetStance(BH_Stance::FromLegacyName(FName(*OverlayPoseDisplayName)));
 	}
 
-	UEnum* OverlayPoseEnum = LoadOverlayPoseEnum();
-	if (!OverlayPoseEnum)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyOverlayPoseByDisplayName: could not load Enum_OverlayPose from GASPALS content."));
-		return false;
-	}
-
-	int32 FoundIndex = INDEX_NONE;
-	const int32 NumEntries = OverlayPoseEnum->NumEnums();
-	for (int32 Index = 0; Index < NumEntries; ++Index)
-	{
-		if (OverlayPoseEnum->GetDisplayNameTextByIndex(Index).ToString().Equals(OverlayPoseDisplayName, ESearchCase::IgnoreCase))
-		{
-			FoundIndex = Index;
-			break;
-		}
-	}
-
-	if (FoundIndex == INDEX_NONE)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyOverlayPoseByDisplayName: no Enum_OverlayPose entry named '%s' (add it in-editor first)."), *OverlayPoseDisplayName);
-		return false;
-	}
-
-	const int64 EnumValue = OverlayPoseEnum->GetValueByIndex(FoundIndex);
-	const uint8 ByteValue = static_cast<uint8>(EnumValue);
-
-	// GASP stores the active pose in a plain replicated byte property named
-	// "OverlayPose" (ReplicatedUsing=OnRep_OverlayPose) on CBP_SandboxCharacter,
-	// and applies it via "UpdateOverlayPose" (evaluates CHT_OverlayPoses and
-	// attaches the resulting held-item overlay + prop mesh). OnRep_OverlayPose
-	// itself does nothing but call UpdateOverlayPose(), so on this instance we
-	// set the property directly (an authoritative/local instance never gets a
-	// local OnRep call) and then call UpdateOverlayPose() ourselves to apply
-	// it immediately. Remote clients still pick up the change normally via the
-	// engine's own OnRep dispatch when the replicated property arrives.
-	// NOTE: deliberately not "static const FName" here -- a function-local
-	// static in a Live Coding hot-reloaded function can end up left as a
-	// default-constructed (NAME_None) value instead of re-running its
-	// initializer on some patch iterations. Plain locals sidestep that.
-	const FName OverlayPosePropertyName(TEXT("OverlayPose"));
-	FProperty* OverlayPoseProperty = TargetCharacter->GetClass()->FindPropertyByName(OverlayPosePropertyName);
-	if (!OverlayPoseProperty)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyOverlayPoseByDisplayName: '%s' has no '%s' property -- is it a GASP SandboxCharacter?"),
-			*TargetCharacter->GetName(), *OverlayPosePropertyName.ToString());
-		return false;
-	}
-
-	void* OverlayPoseValuePtr = OverlayPoseProperty->ContainerPtrToValuePtr<void>(TargetCharacter);
-
-	// A Blueprint byte variable backed by a UserDefinedEnum can compile down
-	// to either a plain FByteProperty or (as of UE5.8) an FEnumProperty
-	// wrapping an underlying numeric property -- handle both rather than
-	// assuming one, since guessing wrong here fails completely silently
-	// (SetPropertyValue_InContainer on the wrong FProperty subtype either
-	// no-ops or writes past the actual storage).
-	if (FByteProperty* ByteProperty = CastField<FByteProperty>(OverlayPoseProperty))
-	{
-		ByteProperty->SetPropertyValue(OverlayPoseValuePtr, ByteValue);
-	}
-	else if (FEnumProperty* EnumProperty = CastField<FEnumProperty>(OverlayPoseProperty))
-	{
-		EnumProperty->GetUnderlyingProperty()->SetIntPropertyValue(OverlayPoseValuePtr, static_cast<uint64>(ByteValue));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyOverlayPoseByDisplayName: '%s's '%s' property is a '%s', not a byte or enum property -- can't set it."),
-			*TargetCharacter->GetName(), *OverlayPosePropertyName.ToString(), *OverlayPoseProperty->GetClass()->GetName());
-		return false;
-	}
-
-	const FName UpdateOverlayPoseFunctionName(TEXT("UpdateOverlayPose"));
-	UFunction* UpdateOverlayPoseFunction = TargetCharacter->FindFunction(UpdateOverlayPoseFunctionName);
-	if (!UpdateOverlayPoseFunction)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyOverlayPoseByDisplayName: '%s' has no '%s' function -- is it a GASP SandboxCharacter?"),
-			*TargetCharacter->GetName(), *UpdateOverlayPoseFunctionName.ToString());
-		return false;
-	}
-	TargetCharacter->ProcessEvent(UpdateOverlayPoseFunction, nullptr);
-
-	// GASP also replicates an "OverlayBase" and links its anim layer from UpdateOverlayBase (OnRep_OverlayBase / the owner). A remote proxy whose
-	// replicated base equals the class default never gets that OnRep, so its overlay-base layer stays unlinked (the arms then pose differently from
-	// the owner: hands 10-20 cm farther apart in montages). Run it on every machine; it is idempotent.
-	if (UFunction* UpdateOverlayBaseFunction = TargetCharacter->FindFunction(FName(TEXT("UpdateOverlayBase"))))
-	{
-		TargetCharacter->ProcessEvent(UpdateOverlayBaseFunction, nullptr);
-	}
-
-	// Tell any HUD bound to this character (K2_OnStanceUpdated). Remote clients that only
-	// receive the pose by replication are covered by the HUD's own OverlayPose poll.
-	UBH_HUDWidget::BroadcastStanceChanged(TargetCharacter, OverlayPoseEnum->GetDisplayNameTextByIndex(FoundIndex).ToString());
-
-	// Re-attach the weapons for the new pose right away on this machine (other machines follow via the watcher's poll).
-	if (UBH_StanceWatcherComponent* Watcher = UBH_StanceWatcherComponent::FindStanceWatcher(TargetCharacter))
-	{
-		Watcher->SyncWeapons();
-	}
-
-	return true;
+	UE_LOG(LogTemp, Warning, TEXT("ApplyOverlayPoseByDisplayName is deprecated and does nothing: '%s' has no UBH_StanceComponent (requested '%s'). Use the stance component's SetStance / RequestStance."),
+		*TargetCharacter->GetName(), *OverlayPoseDisplayName);
+	return false;
 }
 
 int32 UBH_CombatFunctionLibrary::GetNextStanceIndex(const AActor* TargetCharacter, const TArray<FString>& StanceCycle)
@@ -830,23 +696,9 @@ FString UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(const AActor
 	{
 		return Stance->GetCurrentStanceLegacyName().ToString();
 	}
-
-	using namespace BH_CombatFunctionLibrary_Private;
-
-	int64 Value = 0;
-	if (!ReadOverlayPoseValue(TargetCharacter, Value))
-	{
-		return FString();
-	}
-
-	const UEnum* OverlayPoseEnum = LoadOverlayPoseEnum();
-	if (!OverlayPoseEnum)
-	{
-		return FString();
-	}
-
-	const int32 Index = OverlayPoseEnum->GetIndexByValue(Value);
-	return Index != INDEX_NONE ? OverlayPoseEnum->GetDisplayNameTextByIndex(Index).ToString() : FString();
+	// No stance component: the GASP "OverlayPose" fallback read was removed with the GASPALS dependency. Empty = unknown
+	// (not warned: the HUD and watcher poll this several times a second).
+	return FString();
 }
 
 // ============================================================================
@@ -1281,9 +1133,27 @@ void UBH_CombatFunctionLibrary::UnequipWeaponMeshes(ACharacter* Character)
 	}
 }
 
-bool UBH_CombatFunctionLibrary::EquipWeaponsForOverlayPose(ACharacter* Character, const UBH_WeaponLoadoutDataAsset* Loadouts,
-	const FString& OverlayPoseDisplayName, TArray<UMeshComponent*>& OutAttachedComponents)
+namespace BH_CombatFunctionLibrary_Private
 {
+	/** Spawns and attaches the main/off-hand meshes of one loadout entry. Shared by every equip entry point. */
+	static void AttachLoadoutMeshes(ACharacter* Character, const FBH_OverlayWeaponLoadout& Loadout, TArray<UMeshComponent*>& OutAttachedComponents)
+	{
+		if (UMeshComponent* MainHand = UBH_CombatFunctionLibrary::AttachWeaponMesh(Character, EBH_WeaponSlot::MainHand, Loadout.MainHand))
+		{
+			OutAttachedComponents.Add(MainHand);
+		}
+		if (UMeshComponent* OffHand = UBH_CombatFunctionLibrary::AttachWeaponMesh(Character, EBH_WeaponSlot::OffHand, Loadout.OffHand))
+		{
+			OutAttachedComponents.Add(OffHand);
+		}
+	}
+}
+
+bool UBH_CombatFunctionLibrary::EquipWeaponsForStance(ACharacter* Character, const UBH_WeaponLoadoutDataAsset* Loadouts,
+	FGameplayTag Stance, TArray<UMeshComponent*>& OutAttachedComponents)
+{
+	using namespace BH_CombatFunctionLibrary_Private;
+
 	OutAttachedComponents.Reset();
 
 	if (!Character)
@@ -1295,26 +1165,29 @@ bool UBH_CombatFunctionLibrary::EquipWeaponsForOverlayPose(ACharacter* Character
 
 	if (!Loadouts)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("EquipWeaponsForOverlayPose: no loadout data asset passed for '%s'."), *Character->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("EquipWeaponsForStance: no loadout data asset passed for '%s'."), *Character->GetName());
 		return false;
 	}
 
-	FBH_OverlayWeaponLoadout Loadout;
-	if (!Loadouts->FindLoadout(FName(*OverlayPoseDisplayName), Loadout))
+	const FBH_OverlayWeaponLoadout* Loadout = Loadouts->LoadoutsByStance.Find(Stance);
+	if (!Loadout)
 	{
-		// Not an error: e.g. "Default" overlay = empty hands.
+		// Not an error: Unarmed (and any stance without an entry) means empty hands.
 		return false;
 	}
 
-	if (UMeshComponent* MainHand = AttachWeaponMesh(Character, EBH_WeaponSlot::MainHand, Loadout.MainHand))
-	{
-		OutAttachedComponents.Add(MainHand);
-	}
-	if (UMeshComponent* OffHand = AttachWeaponMesh(Character, EBH_WeaponSlot::OffHand, Loadout.OffHand))
-	{
-		OutAttachedComponents.Add(OffHand);
-	}
+	AttachLoadoutMeshes(Character, *Loadout, OutAttachedComponents);
 	return true;
+}
+
+// DEPRECATED shim: legacy Blueprints (CBP_BlackwoodHollow) still call this by Enum_OverlayPose display name. It maps the
+// name onto the stance tag and forwards, so nothing here touches GASPALS content.
+bool UBH_CombatFunctionLibrary::EquipWeaponsForOverlayPose(ACharacter* Character, const UBH_WeaponLoadoutDataAsset* Loadouts,
+	const FString& OverlayPoseDisplayName, TArray<UMeshComponent*>& OutAttachedComponents)
+{
+	UE_LOG(LogTemp, Warning, TEXT("EquipWeaponsForOverlayPose is deprecated (pose '%s' on '%s'); forwarding to EquipWeaponsForStance."),
+		*OverlayPoseDisplayName, Character ? *Character->GetName() : TEXT("None"));
+	return EquipWeaponsForStance(Character, Loadouts, BH_Stance::FromLegacyName(FName(*OverlayPoseDisplayName)), OutAttachedComponents);
 }
 
 bool UBH_CombatFunctionLibrary::EquipWeaponsForCurrentOverlayPose(ACharacter* Character, const UBH_WeaponLoadoutDataAsset* Loadouts,

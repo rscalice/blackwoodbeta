@@ -38,6 +38,12 @@ UBH_CombatIdentityComponent* UBH_CombatIdentityComponent::Find(const AActor* Act
 	return Actor ? Actor->FindComponentByClass<UBH_CombatIdentityComponent>() : nullptr;
 }
 
+float UBH_CombatIdentityComponent::GetOutgoingCombatMultiplier(const AActor* Actor)
+{
+	const UBH_CombatIdentityComponent* Identity = Find(Actor);
+	return Identity ? Identity->OutgoingCombatMultiplier : 1.f;
+}
+
 UAbilitySystemComponent* UBH_CombatIdentityComponent::ResolveASC() const
 {
 	AActor* Owner = GetOwner();

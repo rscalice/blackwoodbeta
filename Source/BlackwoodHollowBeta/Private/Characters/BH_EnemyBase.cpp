@@ -86,7 +86,7 @@ void ABH_EnemyBase::BeginPlay()
 	if (WeaponLoadouts)
 	{
 		TArray<UMeshComponent*> Attached;
-		UBH_CombatFunctionLibrary::EquipWeaponsForOverlayPose(this, WeaponLoadouts, WeaponLoadoutName, Attached);
+		UBH_CombatFunctionLibrary::EquipWeaponsForStance(this, WeaponLoadouts, BH_Stance::FromLegacyName(FName(*WeaponLoadoutName)), Attached);
 	}
 
 	if (HasAuthority())

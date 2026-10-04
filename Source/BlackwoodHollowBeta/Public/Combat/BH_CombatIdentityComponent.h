@@ -44,6 +44,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Combat")
 	static UBH_CombatIdentityComponent* Find(const AActor* Actor);
 
+	/** The owner's OutgoingCombatMultiplier, or 1 when the actor has no identity component (e.g. the player). */
+	UFUNCTION(BlueprintPure, Category = "BH|Combat")
+	static float GetOutgoingCombatMultiplier(const AActor* Actor);
+
 	/** Name shown on the lock-on target vitals. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "BH|Identity")
 	FText DisplayName;
@@ -115,6 +119,11 @@ public:
 	bool bOverrideAttackSpeed = false;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Stats", meta = (EditCondition = "bOverrideAttackSpeed", ClampMin = "0.5", ClampMax = "2.0"))
 	float AttackSpeed = 1.f;
+
+	/** Scales this pawn's outgoing melee damage and posture damage (1 = unchanged). Lets enemy archetypes
+	 *  share the player's combo abilities without inheriting player-facing damage numbers. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Stats", meta = (ClampMin = "0"))
+	float OutgoingCombatMultiplier = 1.f;
 
 	// -- Collision ----------------------------------------------------------------------
 

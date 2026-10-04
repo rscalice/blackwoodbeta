@@ -5,6 +5,7 @@
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Combat/BH_StanceComponent.h"
+#include "Combat/BH_CombatIdentityComponent.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "AbilitySystemComponent.h"
@@ -427,6 +428,9 @@ float UAH_GA_MeleeAttack_Base::CalculateDamage_Implementation(AActor* Target, in
 
 	Damage *= GetStepDamageMultiplier(ComboStep) * HitboxMultiplier;
 
+	// Per-pawn scale (enemy archetypes sharing player combos); applied before Defense so the target's Defense still subtracts in full.
+	Damage *= UBH_CombatIdentityComponent::GetOutgoingCombatMultiplier(GetAvatarActorFromActorInfo());
+
 	if (bSubtractTargetDefense)
 	{
 		if (const UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Target))
@@ -516,7 +520,8 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 
 	if ((!bBlockedByTarget || bIgnoreBlockForPosture) && PostureDamageEffectClass && BasePostureDamage > 0.f)
 	{
-		const float PostureDamage = BasePostureDamage * GetStepPostureMultiplier(ComboStep) * HitboxMultiplier * (bRiposte ? RiposteDamageMultiplier : 1.f);
+		const float PostureDamage = BasePostureDamage * GetStepPostureMultiplier(ComboStep) * HitboxMultiplier * (bRiposte ? RiposteDamageMultiplier : 1.f)
+			* UBH_CombatIdentityComponent::GetOutgoingCombatMultiplier(GetAvatarActorFromActorInfo());
 
 		FGameplayEffectSpecHandle PostureSpec = MakeOutgoingGameplayEffectSpec(PostureDamageEffectClass, GetAbilityLevel());
 		if (PostureSpec.IsValid())

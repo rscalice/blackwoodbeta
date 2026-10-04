@@ -2,18 +2,10 @@
 // Target: Unreal Engine 5.8 (C++), GAS (GameplayAbilities plugin required)
 //
 // Bridges our GAS combat layer (UAH_AttributeSet, UBPC_HeartFragment) onto
-// the character, which is a Blueprint-only chain rooted in the
-// "GASPALS" plugin (Epic's Game Animation Sample, "GASP", packaged by Polygon
-// Hive). GASP has no C++ base we can reparent onto and no BlueprintCallable
-// API for switching its OverlayPose from outside code, so this library:
-//   1) does the one-time ASC/AttributeSet/ability-grant setup a Blueprint
-//      BeginPlay can call in a single node, and
-//   2) drives GASP's existing OverlayPose replication by writing directly
-//      into its replicated "OverlayPose" byte property and then calling its
-//      "UpdateOverlayPose" function (the same function its own
-//      OnRep_OverlayPose forwards to) via reflection -- looked up by the
-//      *display name* of the target Enum_OverlayPose entry, so it keeps
-//      working if GASP's internal enum ordinals ever change.
+// the character: one-time ASC/AttributeSet/ability-grant setup a Blueprint
+// BeginPlay can call in a single node, weapon mesh equip, and stance helpers.
+// Phase 7: the GASP OverlayPose reflection bridge (and its /GASPALS enum soft path)
+// is gone; the *OverlayPose* functions below are deprecated shims over UBH_StanceComponent.
 
 #pragma once
 
@@ -79,19 +71,11 @@ public:
 	static TSubclassOf<UGameplayAbility> GetMeleeAbilityForPose(const AActor* Character, FName PoseDisplayName);
 
 	/**
-	 * Sets the GASP OverlayPose on TargetCharacter by looking up the entry in
-	 * /GASPALS/OverlaySystem/Blueprints/Enum_OverlayPose.Enum_OverlayPose whose
-	 * *display name* matches OverlayPoseDisplayName (case-insensitive), writes
-	 * that entry's byte value directly into CBP_SandboxCharacter's replicated
-	 * "OverlayPose" property, then calls its "UpdateOverlayPose" function
-	 * (the same function GASP's own OnRep_OverlayPose forwards to) so the
-	 * change is applied immediately on this instance. Remote clients still
-	 * pick up the change normally via the engine's own OnRep dispatch when
-	 * the replicated property arrives over the network.
-	 * @return false if the enum, the matching entry, the property, or the
-	 *         function isn't found.
+	 * DEPRECATED shim kept so legacy Blueprints still compile. Maps the legacy stance display name to its tag and calls
+	 * UBH_StanceComponent::SetStance (authority only). A character without a stance component logs a warning and
+	 * returns false: the GASP OverlayPose property write was removed with the GASPALS plugin dependency.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Overlay")
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Overlay", meta = (DeprecatedFunction, DeprecationMessage = "Use UBH_StanceComponent::SetStance / RequestStance."))
 	static bool ApplyOverlayPoseByDisplayName(AActor* TargetCharacter, const FString& OverlayPoseDisplayName);
 
 	/**
@@ -265,21 +249,25 @@ public:
 	static void GetSecondaryGripIKTarget(ACharacter* Character, USkeletalMeshComponent* AnimMesh, FVector& OutCS_Target, FVector& OutCS_JointTarget, FVector& OutHandR_Offset, float& OutAlpha);
 
 	/**
-	 * Clears current weapon meshes, then attaches the loadout registered in
-	 * Loadouts for OverlayPoseDisplayName (an Enum_OverlayPose display name, e.g.
-	 * "SwordAndShield"). A pose with no entry just leaves the hands empty.
+	 * Clears current weapon meshes, then attaches the loadout registered in Loadouts->LoadoutsByStance for Stance
+	 * (Stance.Weapon.*). A stance with no entry (Unarmed) just leaves the hands empty.
 	 * @return true if a loadout entry was found (even if it had no meshes).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons")
+	static bool EquipWeaponsForStance(ACharacter* Character, const UBH_WeaponLoadoutDataAsset* Loadouts,
+		FGameplayTag Stance, TArray<UMeshComponent*>& OutAttachedComponents);
+
+	/** DEPRECATED shim: maps the legacy display name (e.g. "SwordAndShield") to a stance tag and forwards to EquipWeaponsForStance. Logs a warning. */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons", meta = (DeprecatedFunction, DeprecationMessage = "Use EquipWeaponsForStance."))
 	static bool EquipWeaponsForOverlayPose(ACharacter* Character, const UBH_WeaponLoadoutDataAsset* Loadouts,
 		const FString& OverlayPoseDisplayName, TArray<UMeshComponent*>& OutAttachedComponents);
 
-	/** Same as EquipWeaponsForOverlayPose, reading the character's current GASP OverlayPose. */
-	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons")
+	/** DEPRECATED: same as EquipWeaponsForOverlayPose, using the character's current stance legacy name. */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Weapons", meta = (DeprecatedFunction, DeprecationMessage = "Use EquipWeaponsForStance."))
 	static bool EquipWeaponsForCurrentOverlayPose(ACharacter* Character, const UBH_WeaponLoadoutDataAsset* Loadouts,
 		TArray<UMeshComponent*>& OutAttachedComponents);
 
-	/** Display name of the character's current GASP OverlayPose (empty if it can't be read). */
+	/** Legacy display name of the character's current stance (empty if it has no UBH_StanceComponent). */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Overlay")
 	static FString GetCurrentOverlayPoseDisplayName(const AActor* TargetCharacter);
 
@@ -287,7 +275,7 @@ public:
 	// Two layers, pick the one that matches what's wrong:
 	//  * Socket  (weapon_r_socket / shield_l_socket on SKM_Manny / SKM_UEFN_Mannequin):
 	//    where the HAND holds things. Per character mesh, shared by every weapon.
-	//    NOTE: those meshes live in the GASPALS plugin -- changes apply live but are
+	//    NOTE: those meshes live in plugin/third-party content -- changes apply live but are
 	//    only saved to disk if bMarkAssetDirty is true and you then save the mesh.
 	//  * Grip offset (FBH_WeaponMeshSlot::RelativeTransform in our DA_WeaponLoadouts):
 	//    how one particular WEAPON sits in that hand. Saved in our own content.
