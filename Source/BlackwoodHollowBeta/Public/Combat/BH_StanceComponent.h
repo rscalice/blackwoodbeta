@@ -97,7 +97,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|Stance")
 	static FGameplayTag GetStanceTagOf(const AActor* Actor);
 
-	/** Any machine. Authority sets directly, the owning client asks the server, a simulated proxy returns false. */
+	/**
+	 * Phase 8D: reports that a placeholder stance (OneHandedSword / Bow / Crossbow) was picked. Logs a Warning and shows
+	 * "Stance not yet implemented: <Name>" on screen (local machine, development builds). The current stance is left unchanged.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BH|Stance")
+	static void NotifyStanceNotImplemented(const AActor* Actor, FGameplayTag Stance);
+
+	/** Friendly stance name ("Sword & Shield", "Bow", ...) for messages / UI. Falls back to the last tag segment. */
+	UFUNCTION(BlueprintPure, Category = "BH|Stance")
+	static FText GetStanceDisplayText(FGameplayTag Stance);
+
+	/** Any machine. Authority sets directly, the owning client asks the server, a simulated proxy returns false. Placeholder stances are refused (see NotifyStanceNotImplemented). */
 	UFUNCTION(BlueprintCallable, Category = "BH|Stance")
 	bool RequestStance(FGameplayTag NewStance);
 

@@ -90,6 +90,21 @@ UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_Greatsword, "Stance.Weapon.Grea
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_SwordShield, "Stance.Weapon.SwordShield", "Sword and shield stance (legacy key SwordAndShield).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_DualSword, "Stance.Weapon.DualSword", "Dual sword stance.");
 
+// Phase 8D placeholder stances
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_OneHandedSword, "Stance.Weapon.OneHandedSword", "Placeholder: one-handed sword stance (not implemented yet).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_Bow, "Stance.Weapon.Bow", "Placeholder: bow stance (not implemented yet).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_Crossbow, "Stance.Weapon.Crossbow", "Placeholder: crossbow stance (not implemented yet).");
+
+// Phase 8B: Heart-Fragment slot categories
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Fragment_Category_Vitality, "Fragment.Category.Vitality", "Heart-Fragment category: healing / survivability.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Fragment_Category_Offensive, "Fragment.Category.Offensive", "Heart-Fragment category: damage / burst.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Fragment_Category_BlightResist, "Fragment.Category.BlightResist", "Heart-Fragment category: Blight protection.");
+
+// Phase 8C: Blight DoT
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Status_Blighted, "State.Status.Blighted", "Blight damage-over-time is ticking on this actor (UAH_GE_BlightDoT).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Blight_DPS, "Data.Blight.DPS", "SetByCaller key: Blight damage per second, read by UAH_MMC_BlightDoT.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Damage_Type_Blight, "Damage.Type.Blight", "Damage spec came from Blight DoT: not blockable, no hit reaction / posture / hit-stop.");
+
 // Weapon drawn / sheathed
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Weapon_Drawn, "State.Weapon.Drawn", "Weapon is drawn: combat locomotion / hold pose (UBH_StanceComponent).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Weapon_Sheathed, "State.Weapon.Sheathed", "Weapon is sheathed / relaxed (UBH_StanceComponent).");
@@ -102,6 +117,9 @@ namespace BH_Stance
 		if (Name.Equals(TEXT("Unarmed"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Unarmed; }
 		if (Name.Equals(TEXT("Greatsword"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Greatsword; }
 		if (Name.Equals(TEXT("DualSword"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_DualSword; }
+		if (Name.Equals(TEXT("OneHandedSword"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_OneHandedSword; }
+		if (Name.Equals(TEXT("Bow"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Bow; }
+		if (Name.Equals(TEXT("Crossbow"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Crossbow; }
 		if (Name.Equals(TEXT("SwordAndShield"), ESearchCase::IgnoreCase)
 			|| Name.Equals(TEXT("SwordShield"), ESearchCase::IgnoreCase)
 			|| Name.Equals(TEXT("Sword&Shield"), ESearchCase::IgnoreCase))
@@ -117,7 +135,18 @@ namespace BH_Stance
 		if (StanceTag == TAG_Stance_Weapon_Greatsword.GetTag()) { return FName(TEXT("Greatsword")); }
 		if (StanceTag == TAG_Stance_Weapon_SwordShield.GetTag()) { return FName(TEXT("SwordAndShield")); }
 		if (StanceTag == TAG_Stance_Weapon_DualSword.GetTag()) { return FName(TEXT("DualSword")); }
+		if (StanceTag == TAG_Stance_Weapon_OneHandedSword.GetTag()) { return FName(TEXT("OneHandedSword")); }
+		if (StanceTag == TAG_Stance_Weapon_Bow.GetTag()) { return FName(TEXT("Bow")); }
+		if (StanceTag == TAG_Stance_Weapon_Crossbow.GetTag()) { return FName(TEXT("Crossbow")); }
 		return NAME_None;
+	}
+
+	bool IsPlaceholderStance(FGameplayTag Tag)
+	{
+		return Tag.IsValid()
+			&& (Tag == TAG_Stance_Weapon_OneHandedSword.GetTag()
+				|| Tag == TAG_Stance_Weapon_Bow.GetTag()
+				|| Tag == TAG_Stance_Weapon_Crossbow.GetTag());
 	}
 
 	bool IsWeaponStance(FGameplayTag Tag)

@@ -3,6 +3,7 @@
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
+#include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "Combat/BH_CombatFeel.h"
 #include "GameplayCueManager.h"
 #include "GameplayEffectTypes.h"
@@ -23,6 +24,21 @@ static TAutoConsoleVariable<float> CVarBHStaminaRegenDelay(
 	0.9f,
 	TEXT("Seconds passive stamina regeneration stays paused after any stamina spend (0 = no delay)."),
 	ECVF_Default);
+
+namespace BH_AttributeSetBlightPrivate
+{
+	/** Phase 8C: true for Blight DoT ticks (UAH_GE_BlightDoT or anything tagged Damage.Type.Blight). They bypass block mitigation and the DamageReceived reaction event. */
+	static bool IsBlightSpec(const FGameplayEffectSpec& Spec)
+	{
+		if (Spec.Def && Spec.Def->IsA(UAH_GE_BlightDoT::StaticClass()))
+		{
+			return true;
+		}
+		FGameplayTagContainer SpecAssetTags;
+		Spec.GetAllAssetTags(SpecAssetTags);
+		return SpecAssetTags.HasTag(TAG_Damage_Type_Blight);
+	}
+}
 
 UAH_AttributeSet::UAH_AttributeSet()
 {
@@ -204,7 +220,8 @@ bool UAH_AttributeSet::PreGameplayEffectExecute(FGameplayEffectModCallbackData& 
 	// Posture loss. Tunables live on the active block ability instance.
 	if (Data.EvaluatedData.Attribute == GetIncomingDamageAttribute()
 		&& Data.EvaluatedData.Magnitude > 0.f
-		&& Data.Target.HasMatchingGameplayTag(FBH_GameplayTags::Get().State_Combat_Blocking))
+		&& Data.Target.HasMatchingGameplayTag(FBH_GameplayTags::Get().State_Combat_Blocking)
+		&& !BH_AttributeSetBlightPrivate::IsBlightSpec(Data.EffectSpec))
 	{
 		if (const UAH_GA_Block* Block = UAH_GA_Block::FindActiveBlock(&Data.Target))
 		{
@@ -275,6 +292,16 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 				BlockEvent.EventMagnitude = BlockPostureCost;
 				TargetASC->HandleGameplayEvent(Tags.Event_Combat_BlockImpact, &BlockEvent);
 			}
+		}
+		else if (DamageDone > 0.f && TargetASC && BH_AttributeSetBlightPrivate::IsBlightSpec(Data.EffectSpec))
+		{
+			// Blight DoT tick: Health only. No DamageReceived (that drives UAH_GA_HitReaction / flash), no posture, no cue.
+			FGameplayEventData BlightEvent;
+			BlightEvent.EventTag = Tags.Event_Combat_BlightDamage;
+			BlightEvent.Instigator = Instigator;
+			BlightEvent.Target = TargetActor;
+			BlightEvent.EventMagnitude = DamageDone;
+			TargetASC->HandleGameplayEvent(Tags.Event_Combat_BlightDamage, &BlightEvent);
 		}
 		else if (DamageDone > 0.f && TargetASC)
 		{

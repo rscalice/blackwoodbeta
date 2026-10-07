@@ -14,6 +14,7 @@
 #include "Animation/AnimMontage.h"
 #include "Components/MeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Character.h"
@@ -100,11 +101,46 @@ FGameplayTag UBH_StanceComponent::GetStanceTagOf(const AActor* Actor)
 	return Stance && Stance->CurrentStance.IsValid() ? Stance->CurrentStance : TAG_Stance_Weapon_Unarmed.GetTag();
 }
 
+FText UBH_StanceComponent::GetStanceDisplayText(FGameplayTag Stance)
+{
+	if (Stance == TAG_Stance_Weapon_Unarmed.GetTag()) { return NSLOCTEXT("BHStance", "Name_Unarmed", "Unarmed"); }
+	if (Stance == TAG_Stance_Weapon_Greatsword.GetTag()) { return NSLOCTEXT("BHStance", "Name_GS", "Greatsword"); }
+	if (Stance == TAG_Stance_Weapon_SwordShield.GetTag()) { return NSLOCTEXT("BHStance", "Name_SnS", "Sword & Shield"); }
+	if (Stance == TAG_Stance_Weapon_DualSword.GetTag()) { return NSLOCTEXT("BHStance", "Name_DS", "Dual Swords"); }
+	if (Stance == TAG_Stance_Weapon_OneHandedSword.GetTag()) { return NSLOCTEXT("BHStance", "Name_1H", "One-Handed Sword"); }
+	if (Stance == TAG_Stance_Weapon_Bow.GetTag()) { return NSLOCTEXT("BHStance", "Name_Bow", "Bow"); }
+	if (Stance == TAG_Stance_Weapon_Crossbow.GetTag()) { return NSLOCTEXT("BHStance", "Name_Crossbow", "Crossbow"); }
+
+	const FString Full = Stance.ToString();
+	int32 LastDot = INDEX_NONE;
+	return Full.FindLastChar(TEXT('.'), LastDot) ? FText::FromString(Full.Mid(LastDot + 1)) : FText::FromString(Full);
+}
+
+void UBH_StanceComponent::NotifyStanceNotImplemented(const AActor* Actor, FGameplayTag Stance)
+{
+	const FString StanceName = GetStanceDisplayText(Stance).ToString();
+	UE_LOG(LogBHCombat, Warning, TEXT("%s: Stance not yet implemented: %s"), *GetNameSafe(Actor), *StanceName);
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 4.f, FColor::Yellow, FString::Printf(TEXT("Stance not yet implemented: %s"), *StanceName));
+	}
+}
+
 bool UBH_StanceComponent::RequestStance(FGameplayTag NewStance)
 {
 	const AActor* Owner = GetOwner();
 	if (!Owner)
 	{
+		return false;
+	}
+	if (BH_Stance::IsPlaceholderStance(NewStance))
+	{
+		// Phase 8D: listed in the UI but not playable yet. Keep the current stance, tell the local player.
+		const APawn* OwnerPawn = Cast<APawn>(Owner);
+		if (Owner->HasAuthority() || (OwnerPawn && OwnerPawn->IsLocallyControlled()))
+		{
+			NotifyStanceNotImplemented(Owner, NewStance);
+		}
 		return false;
 	}
 	if (Owner->HasAuthority())
@@ -131,6 +167,11 @@ bool UBH_StanceComponent::SetStance(FGameplayTag NewStance)
 	AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority())
 	{
+		return false;
+	}
+	if (BH_Stance::IsPlaceholderStance(NewStance))
+	{
+		NotifyStanceNotImplemented(Owner, NewStance);
 		return false;
 	}
 	if (NewStance == CurrentStance)

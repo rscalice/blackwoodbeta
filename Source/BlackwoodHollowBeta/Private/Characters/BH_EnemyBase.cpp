@@ -191,6 +191,7 @@ void ABH_EnemyBase::HandleHealthZero(AActor* Killer)
 		AbilitySystemComponent->CancelAllAbilities();
 	}
 
+	OnDeathNative(Killer);
 	K2_OnDeath(Killer);
 }
 

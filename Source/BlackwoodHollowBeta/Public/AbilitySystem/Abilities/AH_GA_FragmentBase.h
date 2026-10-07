@@ -43,6 +43,14 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fragment|UI")
 	TObjectPtr<UTexture2D> FragmentIcon;
 
+	/**
+	 * Phase 8B: category of this fragment (Fragment.Category.Vitality / Offensive / BlightResist). A Heart-Fragment slot
+	 * only accepts fragments whose category matches the slot's restriction (see ABH_PlayerState::CanEquipInSlot).
+	 * An invalid tag means "uncategorised": it fits no restricted slot.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fragment", meta = (Categories = "Fragment.Category"))
+	FGameplayTag FragmentCategory;
+
 	/** Preferred loadout slot (0-based) for the skill bar; informational only. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fragment|UI")
 	int32 SlotIndexHint = 0;

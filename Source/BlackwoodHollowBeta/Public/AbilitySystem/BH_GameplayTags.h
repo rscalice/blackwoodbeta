@@ -111,6 +111,24 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Unarmed
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Greatsword);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_SwordShield);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_DualSword);
+// Phase 8D placeholder stances (selectable in the UI but not implemented yet; see BH_Stance::IsPlaceholderStance)
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_OneHandedSword);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Bow);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Crossbow);
+
+// ---------------------------------------------------------------------------
+// Phase 8B: Heart-Fragment slot categories (a fragment ability carries one; a slot restricts to one)
+// ---------------------------------------------------------------------------
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Fragment_Category_Vitality);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Fragment_Category_Offensive);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Fragment_Category_BlightResist);
+
+// ---------------------------------------------------------------------------
+// Phase 8C: Blight damage-over-time
+// ---------------------------------------------------------------------------
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Status_Blighted);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Blight_DPS);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Damage_Type_Blight);
 
 // Weapon drawn / sheathed (UBH_StanceComponent::bWeaponDrawn, replicated; mirrored as loose tags on every machine, exactly one present)
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Weapon_Drawn);
@@ -127,7 +145,10 @@ namespace BH_Stance
 	/** Tag is a child of Stance.Weapon (the parent itself does not count). */
 	BLACKWOODHOLLOWBETA_API bool IsWeaponStance(FGameplayTag Tag);
 
-	/** Unarmed, Greatsword, SwordShield, DualSword. */
+	/** Phase 8D: OneHandedSword / Bow / Crossbow are listed in the UI but have no abilities or animations yet. */
+	BLACKWOODHOLLOWBETA_API bool IsPlaceholderStance(FGameplayTag Tag);
+
+	/** Unarmed, Greatsword, SwordShield, DualSword (implemented stances only; placeholders are excluded). */
 	BLACKWOODHOLLOWBETA_API const TArray<FGameplayTag>& AllWeaponStances();
 
 	/** Tag-keyed map first, legacy FName-keyed map as the fallback (Phase 6 migration; the legacy maps are removed in Phase 7). */

@@ -12,6 +12,13 @@
 //   * Tab / D-pad Up: a TAP cycles (IA_SwitchStance, Tap trigger); a HOLD (IA_StanceRadial, Hold trigger) opens the
 //     wheel and releasing confirms the hovered segment. The plugin's own open action is not used: its Hold mode
 //     opens on Started (i.e. on press), so we bind HoldOpenAction ourselves and call OpenMenu()/CloseMenu().
+//
+// Phase 8B: optional 8-slot mode (bEightSlotRadial, default OFF so the existing Blueprint wheel is untouched):
+//   slot 0 = weapon loadout set A, slot 1 = set B (UBH_LoadoutComponent::GetStanceForSet), slots 2-7 = consumables
+//   (ConsumableSlots, empty-safe item reference; the item system arrives in Phase 11). The plugin draws the wedges from
+//   MenuData, so no custom radial widget is required; UIs that want more can read GetRadialSlots().
+// Phase 8D: the placeholder stances (OneHandedSword / Bow / Crossbow) can be listed (bIncludePlaceholderStancesInWheel)
+//   but selecting one only logs "Stance not yet implemented" and keeps the current stance.
 
 #pragma once
 
@@ -26,6 +33,76 @@ class UEnhancedInputComponent;
 class URadialSelectorMenuLayout;
 class UGameplayAbility;
 struct FInputActionValue;
+
+class UTexture2D;
+
+/** What a radial slot holds (8-slot mode). */
+UENUM(BlueprintType)
+enum class EBH_RadialSlotKind : uint8
+{
+	WeaponSet,
+	Consumable
+};
+
+/** One consumable slot of the 8-slot radial (radial slots 2-7). Everything is optional: an empty reference is a valid empty slot. */
+USTRUCT(BlueprintType)
+struct BLACKWOODHOLLOWBETA_API FBH_RadialConsumableSlot
+{
+	GENERATED_BODY()
+
+	/** Phase 11 item (Narrative item class / asset). Null = empty slot. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Consumable")
+	TSoftObjectPtr<UObject> ItemReference;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Consumable")
+	FText DisplayName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Consumable")
+	TSoftObjectPtr<UTexture2D> Icon;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Consumable")
+	int32 Quantity = 0;
+
+	bool IsEmpty() const { return ItemReference.IsNull(); }
+};
+
+/** Read-only description of one of the 8 radial slots, for custom UIs. */
+USTRUCT(BlueprintType)
+struct BLACKWOODHOLLOWBETA_API FBH_RadialSlotData
+{
+	GENERATED_BODY()
+
+	/** 0-1 = weapon sets A/B, 2-7 = consumables. */
+	UPROPERTY(BlueprintReadOnly, Category = "Radial")
+	int32 SlotIndex = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Radial")
+	EBH_RadialSlotKind Kind = EBH_RadialSlotKind::WeaponSet;
+
+	/** Segment identifier (Weapon_A, Empty_B, Consumable_1, ...). */
+	UPROPERTY(BlueprintReadOnly, Category = "Radial")
+	FName Identifier;
+
+	/** Weapon slots: the legacy stance name of the set (NAME_None when the set is empty). */
+	UPROPERTY(BlueprintReadOnly, Category = "Radial")
+	FName StanceName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Radial")
+	FText DisplayName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Radial")
+	TSoftObjectPtr<UTexture2D> Icon;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Radial")
+	bool bEmpty = true;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Radial")
+	int32 Quantity = 0;
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnRadialSlotsChanged);
+/** Phase 11 hook: a consumable slot was chosen on the wheel. ConsumableIndex is 0-5 (radial slot - 2). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnConsumableSlotUsed, int32, ConsumableIndex, const FBH_RadialConsumableSlot&, Slot);
 
 UCLASS(Blueprintable, ClassGroup = (BlackwoodHollow), meta = (BlueprintSpawnableComponent))
 class BLACKWOODHOLLOWBETA_API UBH_StanceRadialComponent : public URadialSelectorComponent
@@ -54,6 +131,47 @@ public:
 	/** Seconds between checks for a (new) controlled pawn / loadout component to bind to. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|StanceRadial", meta = (ClampMin = "0.05"))
 	float PawnPollInterval = 0.25f;
+
+	/** Number of consumable slots in 8-slot mode (radial slots 2-7). */
+	static constexpr int32 NumConsumableSlots = 6;
+
+	/** Total radial slots in 8-slot mode: 2 weapon sets + consumables. */
+	static constexpr int32 NumRadialSlots = 2 + NumConsumableSlots;
+
+	/** true = 8-slot wheel (set A, set B, 6 consumables). false (default) = the classic one-segment-per-stance wheel. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|StanceRadial|EightSlot")
+	bool bEightSlotRadial = false;
+
+	/** Consumable slots 2-7 (index 0 = radial slot 2). Kept at NumConsumableSlots entries. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|StanceRadial|EightSlot")
+	TArray<FBH_RadialConsumableSlot> ConsumableSlots;
+
+	/** Classic wheel only: also list OneHandedSword / Bow / Crossbow (selecting them reports "not yet implemented"). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|StanceRadial")
+	bool bIncludePlaceholderStancesInWheel = false;
+
+	/** Fires after the wheel content was rebuilt or a consumable slot changed. */
+	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
+	FBH_OnRadialSlotsChanged OnRadialSlotsChanged;
+
+	/** Fires when a consumable wedge is chosen (Phase 11 consumes this; for now it only logs). */
+	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
+	FBH_OnConsumableSlotUsed OnConsumableSlotUsed;
+
+	/** The 8 slots as data (valid in 8-slot mode; also usable in classic mode, where it still describes sets A/B and the consumables). */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
+	TArray<FBH_RadialSlotData> GetRadialSlots() const;
+
+	/** ConsumableIndex 0-5. Rebuilds the wheel. */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
+	bool SetConsumableSlot(int32 ConsumableIndex, const FBH_RadialConsumableSlot& NewSlot);
+
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
+	bool ClearConsumableSlot(int32 ConsumableIndex);
+
+	/** Radial slot 2-7 chosen on the wheel. Phase 11 stub: logs, broadcasts OnConsumableSlotUsed, returns false (nothing consumed yet). */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
+	bool UseConsumableSlot(int32 RadialSlotIndex);
 
 	/** Builds the wheel from Stances: Identifier = stance name, DisplayName = friendly name, Icon = GetStanceIconForPose. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial")
@@ -111,6 +229,10 @@ private:
 
 	void PollPawn();
 	APawn* GetControlledPawn() const;
+	void RebuildEightSlot();
+
+	/** Stance legacy name per weapon slot (index 0 = set A, 1 = set B) as of the last eight-slot rebuild. */
+	TArray<FName> WeaponSlotStances;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UBH_LoadoutComponent> BoundLoadout;

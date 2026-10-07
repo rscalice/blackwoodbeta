@@ -1547,7 +1547,7 @@ namespace BH_CombatFunctionLibrary_Private
 				{
 					Table = Inner;
 				}
-			}, false);
+			}, EGetObjectsFlags::None);
 			if (!Table)
 			{
 				UE_LOG(LogTemp, Warning, TEXT("[BH Chooser] nested table '%s' not found in %s"), *Args[1], *Root->GetName());
