@@ -25,6 +25,8 @@
 #include "Abilities/GameplayAbility.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/UnrealType.h"
+#include "StructUtils/InstancedStruct.h"
+#include "UObject/UObjectHash.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Combat/BH_TwoHandAimComponent.h"
@@ -1485,6 +1487,155 @@ namespace BH_CombatFunctionLibrary_Private
 		TEXT("BH.Stance.MigrateLegacyMaps"),
 		TEXT("Editor: copies every loaded legacy FName/FString keyed stance map (guard / hit / posture-break / dodge montages, trail tables, loadout DA, vitals icons) into its Stance.Weapon.* tag twin."),
 		FConsoleCommandDelegate::CreateStatic(&MigrateLegacyStanceMaps));
+
+	// ---------------------------------------------------------------------------------------------
+	// BH.Chooser.AddPoseSearchRow <RootChooserPath> <NestedTableName|-> <PoseSearchDatabasePath> [BoolColumnToMatchTrue]
+	//
+	// Appends one result row to a (nested) Chooser table, with every column cell set to "match any"
+	// (bool columns -> MatchAny, float ranges -> no min / no max). The optional 4th arg names a bool
+	// column (by its bound property, e.g. ShouldTurnInPlace) whose new cell is set to MatchTrue.
+	// Pure FProperty reflection: UChooserTable keeps ResultsStructs / ColumnsStructs C++-protected and
+	// the module does not link Chooser, so this is the only scripted way to add a row.
+	// ---------------------------------------------------------------------------------------------
+	static FName ChooserColumnBoundProperty(const FInstancedStruct& Column)
+	{
+		const UScriptStruct* ColumnStruct = Column.GetScriptStruct();
+		const FStructProperty* InputValueProp = ColumnStruct ? CastField<FStructProperty>(ColumnStruct->FindPropertyByName(TEXT("InputValue"))) : nullptr;
+		if (!InputValueProp)
+		{
+			return NAME_None;
+		}
+		const FInstancedStruct* InputValue = InputValueProp->ContainerPtrToValuePtr<FInstancedStruct>(Column.GetMemory());
+		const UScriptStruct* InputStruct = InputValue ? InputValue->GetScriptStruct() : nullptr;
+		const FStructProperty* BindingProp = InputStruct ? CastField<FStructProperty>(InputStruct->FindPropertyByName(TEXT("Binding"))) : nullptr;
+		if (!BindingProp)
+		{
+			return NAME_None;
+		}
+		const void* Binding = BindingProp->ContainerPtrToValuePtr<void>(InputValue->GetMemory());
+		const FArrayProperty* ChainProp = CastField<FArrayProperty>(BindingProp->Struct->FindPropertyByName(TEXT("PropertyBindingChain")));
+		if (!ChainProp)
+		{
+			return NAME_None;
+		}
+		FScriptArrayHelper Chain(ChainProp, ChainProp->ContainerPtrToValuePtr<void>(Binding));
+		return Chain.Num() > 0 ? *reinterpret_cast<const FName*>(Chain.GetRawPtr(Chain.Num() - 1)) : NAME_None;
+	}
+
+	static void AddChooserPoseSearchRow(const TArray<FString>& Args)
+	{
+		if (Args.Num() < 3)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[BH Chooser] usage: BH.Chooser.AddPoseSearchRow <RootChooserPath> <NestedTableName|-> <DatabasePath> [BoolColumnToMatchTrue]"));
+			return;
+		}
+		UObject* Root = StaticLoadObject(UObject::StaticClass(), nullptr, *Args[0]);
+		UObject* Database = StaticLoadObject(UObject::StaticClass(), nullptr, *Args[2]);
+		if (!Root || !Database)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[BH Chooser] could not load chooser '%s' or database '%s'"), *Args[0], *Args[2]);
+			return;
+		}
+		UObject* Table = Root;
+		if (Args[1] != TEXT("-"))
+		{
+			Table = nullptr;
+			const FString Wanted = Args[1].Replace(TEXT(" "), TEXT(""));
+			ForEachObjectWithOuter(Root, [&Table, &Wanted, Root](UObject* Inner)
+			{
+				if (!Table && Inner->GetClass() == Root->GetClass() && Inner->GetName().Replace(TEXT(" "), TEXT("")) == Wanted)
+				{
+					Table = Inner;
+				}
+			}, false);
+			if (!Table)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[BH Chooser] nested table '%s' not found in %s"), *Args[1], *Root->GetName());
+				return;
+			}
+		}
+		const FName TrueColumn = Args.Num() > 3 ? FName(*Args[3]) : NAME_None;
+
+		const FArrayProperty* ResultsProp = CastField<FArrayProperty>(Table->GetClass()->FindPropertyByName(TEXT("ResultsStructs")));
+		const FArrayProperty* DisabledProp = CastField<FArrayProperty>(Table->GetClass()->FindPropertyByName(TEXT("DisabledRows")));
+		const FArrayProperty* ColumnsProp = CastField<FArrayProperty>(Table->GetClass()->FindPropertyByName(TEXT("ColumnsStructs")));
+		UScriptStruct* AssetChooserStruct = FindObject<UScriptStruct>(nullptr, TEXT("/Script/Chooser.AssetChooser"));
+		const UEnum* BoolCellEnum = FindObject<UEnum>(nullptr, TEXT("/Script/Chooser.EBoolColumnCellValue"));
+		if (!ResultsProp || !ColumnsProp || !AssetChooserStruct || !BoolCellEnum)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[BH Chooser] %s is not a ChooserTable this build understands"), *Table->GetName());
+			return;
+		}
+		Table->Modify();
+
+		// Result cell: FAssetChooser { Asset = Database }.
+		FScriptArrayHelper Results(ResultsProp, ResultsProp->ContainerPtrToValuePtr<void>(Table));
+		FInstancedStruct* NewResult = reinterpret_cast<FInstancedStruct*>(Results.GetRawPtr(Results.AddValue()));
+		NewResult->InitializeAs(AssetChooserStruct);
+		if (const FObjectProperty* AssetProp = CastField<FObjectProperty>(AssetChooserStruct->FindPropertyByName(TEXT("Asset"))))
+		{
+			AssetProp->SetObjectPropertyValue_InContainer(NewResult->GetMutableMemory(), Database);
+		}
+		if (DisabledProp)
+		{
+			FScriptArrayHelper Disabled(DisabledProp, DisabledProp->ContainerPtrToValuePtr<void>(Table));
+			Disabled.AddValue();
+		}
+
+		// One new cell per column.
+		FScriptArrayHelper Columns(ColumnsProp, ColumnsProp->ContainerPtrToValuePtr<void>(Table));
+		for (int32 ColumnIndex = 0; ColumnIndex < Columns.Num(); ++ColumnIndex)
+		{
+			FInstancedStruct* Column = reinterpret_cast<FInstancedStruct*>(Columns.GetRawPtr(ColumnIndex));
+			const UScriptStruct* ColumnStruct = Column->GetScriptStruct();
+			const FName Bound = ChooserColumnBoundProperty(*Column);
+			if (const FArrayProperty* RowsProp = CastField<FArrayProperty>(ColumnStruct->FindPropertyByName(TEXT("RowValuesWithAny"))))
+			{
+				// FBoolColumn: enum cells.
+				FScriptArrayHelper Rows(RowsProp, RowsProp->ContainerPtrToValuePtr<void>(Column->GetMutableMemory()));
+				void* Cell = Rows.GetRawPtr(Rows.AddValue());
+				const int64 Value = BoolCellEnum->GetValueByName(Bound == TrueColumn ? FName(TEXT("MatchTrue")) : FName(TEXT("MatchAny")));
+				if (const FEnumProperty* EnumProp = CastField<FEnumProperty>(RowsProp->Inner))
+				{
+					EnumProp->GetUnderlyingProperty()->SetIntPropertyValue(Cell, Value);
+				}
+				else if (const FNumericProperty* NumProp = CastField<FNumericProperty>(RowsProp->Inner))
+				{
+					NumProp->SetIntPropertyValue(Cell, Value);
+				}
+				UE_LOG(LogTemp, Display, TEXT("[BH Chooser]   bool column %s -> %s"), *Bound.ToString(), Bound == TrueColumn ? TEXT("MatchTrue") : TEXT("MatchAny"));
+			}
+			else if (const FArrayProperty* RangeProp = CastField<FArrayProperty>(ColumnStruct->FindPropertyByName(TEXT("RowValues"))))
+			{
+				FScriptArrayHelper Rows(RangeProp, RangeProp->ContainerPtrToValuePtr<void>(Column->GetMutableMemory()));
+				void* Cell = Rows.GetRawPtr(Rows.AddValue());
+				bool bRange = false;
+				if (const FStructProperty* CellStruct = CastField<FStructProperty>(RangeProp->Inner))
+				{
+					for (const TCHAR* Flag : { TEXT("bNoMin"), TEXT("bNoMax") })
+					{
+						if (const FBoolProperty* FlagProp = CastField<FBoolProperty>(CellStruct->Struct->FindPropertyByName(Flag)))
+						{
+							FlagProp->SetPropertyValue_InContainer(Cell, true);
+							bRange = true;
+						}
+					}
+				}
+				UE_LOG(LogTemp, Display, TEXT("[BH Chooser]   column %s (%s) -> %s"), *Bound.ToString(), *ColumnStruct->GetName(), bRange ? TEXT("no min / no max") : TEXT("default cell - CHECK IT IN THE CHOOSER EDITOR"));
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[BH Chooser]   column %s (%s) has no row array this command knows; row counts may now mismatch"), *Bound.ToString(), *ColumnStruct->GetName());
+			}
+		}
+		Table->MarkPackageDirty();
+		UE_LOG(LogTemp, Display, TEXT("[BH Chooser] added row %d -> %s to %s. Save %s."), Results.Num() - 1, *Database->GetName(), *Table->GetName(), *Root->GetName());
+	}
+
+	static FAutoConsoleCommand CmdAddChooserPoseSearchRow(
+		TEXT("BH.Chooser.AddPoseSearchRow"),
+		TEXT("Editor: appends a 'match any' row to a (nested) chooser table pointing at a pose search database. Args: <RootChooserPath> <NestedTableName|-> <DatabasePath> [BoolColumnToMatchTrue]"),
+		FConsoleCommandWithArgsDelegate::CreateStatic(&AddChooserPoseSearchRow));
 #endif
 
 	static FAutoConsoleCommandWithWorld CmdPrintTuning(

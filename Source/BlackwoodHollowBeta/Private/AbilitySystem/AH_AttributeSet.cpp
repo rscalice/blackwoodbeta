@@ -28,8 +28,6 @@ UAH_AttributeSet::UAH_AttributeSet()
 {
 	InitHealth(100.f);
 	InitMaxHealth(100.f);
-	InitMana(50.f);
-	InitMaxMana(50.f);
 	InitPosture(100.f);
 	InitMaxPosture(100.f);
 	InitPostureRegenRate(5.f);
@@ -49,8 +47,6 @@ void UAH_AttributeSet::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Health, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, MaxHealth, COND_None, REPNOTIFY_Always);
-	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Mana, COND_None, REPNOTIFY_Always);
-	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, MaxMana, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Posture, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, MaxPosture, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, PostureRegenRate, COND_None, REPNOTIFY_Always);
@@ -69,10 +65,6 @@ void UAH_AttributeSet::ClampAttribute(const FGameplayAttribute& Attribute, float
 	{
 		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxHealth());
 	}
-	else if (Attribute == GetManaAttribute())
-	{
-		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxMana());
-	}
 	else if (Attribute == GetPostureAttribute())
 	{
 		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxPosture());
@@ -81,7 +73,7 @@ void UAH_AttributeSet::ClampAttribute(const FGameplayAttribute& Attribute, float
 	{
 		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxStamina());
 	}
-	else if (Attribute == GetMaxHealthAttribute() || Attribute == GetMaxManaAttribute() || Attribute == GetMaxPostureAttribute()
+	else if (Attribute == GetMaxHealthAttribute() || Attribute == GetMaxPostureAttribute()
 		|| Attribute == GetMaxStaminaAttribute())
 	{
 		NewValue = FMath::Max(NewValue, 1.f);
@@ -312,7 +304,7 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 			TargetASC->HandleGameplayEvent(Tags.Event_Combat_Death, &DeathEvent);
 		}
 	}
-	// -- Health/Posture/Mana can also be modified directly by effects -----
+	// -- Health/Posture can also be modified directly by effects -----
 	else if (Data.EvaluatedData.Attribute == GetHealthAttribute())
 	{
 		const float NewHealth = FMath::Clamp(GetHealth(), 0.f, GetMaxHealth());
@@ -343,10 +335,6 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 		{
 			HandlePostureDepleted(TargetASC, Instigator, TargetActor);
 		}
-	}
-	else if (Data.EvaluatedData.Attribute == GetManaAttribute())
-	{
-		SetMana(FMath::Clamp(GetMana(), 0.f, GetMaxMana()));
 	}
 	else if (Data.EvaluatedData.Attribute == GetStaminaAttribute())
 	{
@@ -446,16 +434,6 @@ void UAH_AttributeSet::OnRep_Health(const FGameplayAttributeData& OldValue)
 void UAH_AttributeSet::OnRep_MaxHealth(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, MaxHealth, OldValue);
-}
-
-void UAH_AttributeSet::OnRep_Mana(const FGameplayAttributeData& OldValue)
-{
-	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, Mana, OldValue);
-}
-
-void UAH_AttributeSet::OnRep_MaxMana(const FGameplayAttributeData& OldValue)
-{
-	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, MaxMana, OldValue);
 }
 
 void UAH_AttributeSet::OnRep_Posture(const FGameplayAttributeData& OldValue)

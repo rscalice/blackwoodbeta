@@ -2,7 +2,7 @@
 
 #include "Items/BH_WeaponItem.h"
 #include "Combat/BH_LoadoutComponent.h"
-#include "Items/BH_EquipmentStats.h"
+#include "Items/BH_EquipmentTypes.h"
 #include "Net/UnrealNetwork.h"
 #include "Engine/StaticMesh.h"
 
@@ -15,13 +15,13 @@ UBH_WeaponItem::UBH_WeaponItem()
 	UseActionText = NSLOCTEXT("BHWeaponItem", "UseActionText", "Equip");
 
 	// Keep Narrative's default Weight / Quantity rows; append ours.
-	BH_EquipmentStats::AddStatRows(Stats);
+	UBH_EquipmentLibrary::AddStatRows(Stats);
 }
 
 FString UBH_WeaponItem::GetStringVariable_Implementation(const FString& VariableName)
 {
 	FString Value;
-	if (BH_EquipmentStats::GetStatString(VariableName, AttackPowerBonus, DefenseBonus, MaxStaminaBonus, Value))
+	if (UBH_EquipmentLibrary::GetStatString(VariableName, AttackPowerBonus, DefenseBonus, MaxStaminaBonus, Value))
 	{
 		return Value;
 	}

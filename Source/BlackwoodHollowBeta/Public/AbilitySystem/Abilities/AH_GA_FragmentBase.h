@@ -3,7 +3,7 @@
 //
 // Base class for every ability that can sit in a Heart-Fragment loadout slot
 // (UBPC_HeartFragment::EquippedFragments). Standard per-ability GAS cooldown:
-//   * No cost (no mana, no stamina).
+//   * No cost (no stamina).
 //   * Cooldown = UAH_GE_Cooldown_Base applied on commit, duration = CooldownDuration
 //     (SetByCaller Data.Cooldown), granting this ability's CooldownTags dynamically.
 //   * Two fragments sharing a cooldown tag share the cooldown.

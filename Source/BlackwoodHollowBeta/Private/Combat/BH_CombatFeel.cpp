@@ -12,6 +12,9 @@
 #include "Cues/BH_CueUtils.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/PointLightComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Containers/Ticker.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Character.h"
@@ -83,6 +86,128 @@ namespace
 		Holder->SetRootComponent(Light);
 		Light->RegisterComponent();
 		Holder->SetLifeSpan(0.06f);
+	}
+
+	// ---- Victim mesh hit-flash (cosmetic, every machine except dedicated servers) -------------------------------------------
+	// M_BH_HitFlash (additive unlit, fresnel-weighted) goes into the mesh's OVERLAY slot for ~0.1 s and the previous overlay
+	// (Corruption / Echo / none) is put back afterwards. State is per mesh so overlapping flashes extend instead of stacking,
+	// and the "original" overlay is only ever captured once per flash chain.
+	struct FMeshFlash
+	{
+		TWeakObjectPtr<UMaterialInstanceDynamic> MID;
+		TWeakObjectPtr<UMaterialInterface> Original; // overlay before the flash (null = there was none)
+		float Elapsed = 0.f;
+		float Duration = 0.1f;
+		float Peak = 1.f;
+	};
+
+	TMap<TWeakObjectPtr<USkeletalMeshComponent>, FMeshFlash> GMeshFlashes;
+	FTSTicker::FDelegateHandle GMeshFlashTicker;
+	TWeakObjectPtr<UMaterialInterface> GHitFlashBase;
+
+	bool TickMeshFlashes(float DeltaTime)
+	{
+		for (auto It = GMeshFlashes.CreateIterator(); It; ++It)
+		{
+			USkeletalMeshComponent* Mesh = It.Key().Get();
+			FMeshFlash& Flash = It.Value();
+			UMaterialInstanceDynamic* MID = Flash.MID.Get();
+			if (!Mesh || !MID)
+			{
+				It.RemoveCurrent();
+				continue;
+			}
+			Flash.Elapsed += DeltaTime;
+			const float Alpha = Flash.Elapsed / FMath::Max(Flash.Duration, 0.01f);
+			if (Alpha >= 1.f)
+			{
+				if (Mesh->GetOverlayMaterial() == MID) // someone else replaced the overlay meanwhile: leave theirs alone
+				{
+					Mesh->SetOverlayMaterial(Flash.Original.Get());
+				}
+				It.RemoveCurrent();
+				continue;
+			}
+			const float Fade = 1.f - Alpha;
+			MID->SetScalarParameterValue(TEXT("Intensity"), Flash.Peak * Fade * Fade); // fast fade-out
+		}
+		if (GMeshFlashes.Num() == 0)
+		{
+			GMeshFlashTicker.Reset();
+			return false; // unregisters the ticker
+		}
+		return true;
+	}
+
+	void StartMeshFlash(AActor* Victim, EBH_ImpactTier Tier)
+	{
+		if (!Victim)
+		{
+			return;
+		}
+		if (!GHitFlashBase.IsValid())
+		{
+			GHitFlashBase = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/BlackwoodHollow/Characters/Enemies/Materials/M_BH_HitFlash.M_BH_HitFlash"), nullptr, LOAD_NoWarn);
+			if (!GHitFlashBase.IsValid())
+			{
+				return; // asset missing: no mesh flash
+			}
+		}
+
+		// Tier -> peak emissive, duration and tint (white at Light, warmer as the hit gets heavier).
+		float Peak = 0.8f;
+		float Duration = 0.08f;
+		FLinearColor Tint(1.f, 0.95f, 0.85f);
+		if (Tier == EBH_ImpactTier::Medium)
+		{
+			Peak = 1.4f;
+			Duration = 0.10f;
+			Tint = FLinearColor(1.f, 0.85f, 0.6f);
+		}
+		else if (Tier >= EBH_ImpactTier::Heavy)
+		{
+			Peak = 2.4f;
+			Duration = 0.12f;
+			Tint = FLinearColor(1.f, 0.7f, 0.4f);
+		}
+
+		TArray<USkeletalMeshComponent*> Meshes;
+		Victim->GetComponents<USkeletalMeshComponent>(Meshes);
+		int32 Started = 0;
+		for (USkeletalMeshComponent* Mesh : Meshes)
+		{
+			if (!Mesh || !Mesh->GetSkeletalMeshAsset() || !Mesh->IsVisible() || Mesh->ComponentHasTag(FName(TEXT("BH.Weapon"))))
+			{
+				continue;
+			}
+			FMeshFlash& Flash = GMeshFlashes.FindOrAdd(Mesh);
+			UMaterialInterface* Current = Mesh->GetOverlayMaterial();
+			if (!Flash.MID.IsValid() || Current != Flash.MID.Get())
+			{
+				// Fresh flash chain on this mesh: remember whatever overlay is there now and install our MID.
+				Flash.Original = Current;
+				Flash.MID = UMaterialInstanceDynamic::Create(GHitFlashBase.Get(), Mesh);
+				Mesh->SetOverlayMaterial(Flash.MID.Get());
+			}
+			Flash.Elapsed = 0.f;
+			Flash.Duration = Duration;
+			Flash.Peak = Peak; // a new hit restarts the flash at its own tier's strength
+			if (UMaterialInstanceDynamic* MID = Flash.MID.Get())
+			{
+				MID->SetVectorParameterValue(TEXT("FlashColor"), Tint);
+				MID->SetScalarParameterValue(TEXT("Intensity"), Flash.Peak);
+			}
+			++Started;
+		}
+
+		if (Started > 0 && !GMeshFlashTicker.IsValid())
+		{
+			GMeshFlashTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateStatic(&TickMeshFlashes), 0.f);
+		}
+		if (CVarBHCombatFeelDebug.GetValueOnGameThread() != 0)
+		{
+			UE_LOG(LogBHFeel, Log, TEXT("HitFlash: victim=%s tier=%s meshes=%d peak=%.2f duration=%.2f"), *GetNameSafe(Victim), TierName(Tier), Started, Peak, Duration);
+		}
 	}
 
 	TMap<TWeakObjectPtr<const AActor>, double> GLastVoiceTime[3]; // [0] hurt group, [1] death, [2] everything else
@@ -244,6 +369,12 @@ void UBH_CombatFeelLibrary::PlayImpactFeel(const UObject* WorldContext, EBH_Impa
 	if (TierData.FlashIntensity > 0.f)
 	{
 		SpawnFlash(World, Location, TierData);
+	}
+
+	// Victim mesh flash: damaging hits only (not blocked, not the parry clash, not a posture break). Every machine, not dedicated servers.
+	if (Victim && !bBlocked && !bInstigatorOnlyShake && Tier != EBH_ImpactTier::Massive)
+	{
+		StartMeshFlash(Victim, Tier);
 	}
 
 	// Camera shake for the local player.

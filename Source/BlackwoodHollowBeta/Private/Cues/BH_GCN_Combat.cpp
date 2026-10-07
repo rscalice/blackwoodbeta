@@ -82,7 +82,10 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 		ImpactLocation = Anchor->GetActorLocation() + FallbackVictimOffset;
 	}
 	const FVector Normal = FVector(Parameters.Normal);
-	const FRotator ImpactRotation = Normal.IsNearlyZero() ? FRotator::ZeroRotator : Normal.Rotation();
+	// Flesh FX (blood) follows the blow, into the victim. Blocked FX (sparks, local +X = spray axis) bounces back out of the blocker
+	// toward the attacker, so it is oriented along -Normal.
+	const FVector FXDirection = bBlocked ? -Normal : Normal;
+	const FRotator ImpactRotation = FXDirection.IsNearlyZero() ? FRotator::ZeroRotator : FXDirection.Rotation();
 
 	// Tiered feel (hit-stop + shake + flash) and vocals. Tier rules live in BH_CombatFeel.h.
 	bool bBlockerStaminaZero = false;

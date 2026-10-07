@@ -7,7 +7,7 @@
 //   1) it shields its owner against Blight damage (the Blight shield), and
 //   2) it is the Heart-Fragment LOADOUT MANAGER: up to 5 equipped fragment
 //      abilities (UAH_GA_FragmentBase), granted to the owner's ASC and fired by
-//      slot (keys 1-5). Fragments have no mana cost; each owns a GAS cooldown.
+//      slot (keys 1-5). Fragments have no resource cost; each owns a GAS cooldown.
 
 #pragma once
 
@@ -92,17 +92,6 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "HeartFragment|BlightShield")
 	FOnBlightShieldDepleted OnBlightShieldDepleted;
-
-	// -- Mana (read-only; fragments no longer use Mana) --------------------------
-
-	UFUNCTION(BlueprintPure, Category = "HeartFragment|Mana")
-	float GetCurrentMana() const;
-
-	UFUNCTION(BlueprintPure, Category = "HeartFragment|Mana")
-	float GetMaxMana() const;
-
-	UFUNCTION(BlueprintPure, Category = "HeartFragment|Mana")
-	float GetManaPercent() const;
 
 	// -- Fragment loadout --------------------------------------------------------
 

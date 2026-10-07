@@ -217,7 +217,7 @@ private:
 // Widgets
 // ============================================================================
 
-/** Lower-left vitals: health bar, (optional) stamina bar + active stance emblem. No mana (by design). */
+/** Lower-left vitals: health bar, (optional) stamina bar + active stance emblem. */
 UCLASS(Abstract, Blueprintable)
 class BLACKWOODHOLLOWBETA_API UBH_VitalsClusterWidget : public UBH_HUDWidget
 {

@@ -3,7 +3,7 @@
 #include "Combat/BH_LoadoutComponent.h"
 #include "Items/BH_WeaponItem.h"
 #include "Items/BH_ArmorItem.h"
-#include "Items/BH_EquipmentStats.h"
+#include "Items/BH_EquipmentTypes.h"
 #include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
@@ -712,12 +712,12 @@ void UBH_LoadoutComponent::RefreshStatMods()
 
 		if (bShouldApply && !bHasHandle)
 		{
-			Weapon->StatModHandle = BH_EquipmentStats::Apply(ASC, Weapon, Weapon->AttackPowerBonus, Weapon->DefenseBonus, Weapon->MaxStaminaBonus);
+			Weapon->StatModHandle = UBH_EquipmentLibrary::ApplyStatMod(ASC, Weapon, Weapon->AttackPowerBonus, Weapon->DefenseBonus, Weapon->MaxStaminaBonus);
 			UE_LOG(LogBHLoadout, Log, TEXT("Stat mod ON  %s (%s)"), *Weapon->GetFriendlyName(), *Weapon->DescribeBonuses());
 		}
 		else if (!bShouldApply && bHasHandle)
 		{
-			BH_EquipmentStats::Remove(ASC, Weapon->StatModHandle);
+			UBH_EquipmentLibrary::RemoveStatMod(ASC, Weapon->StatModHandle);
 			UE_LOG(LogBHLoadout, Log, TEXT("Stat mod OFF %s"), *Weapon->GetFriendlyName());
 		}
 	}
@@ -752,13 +752,13 @@ void UBH_LoadoutComponent::RefreshArmorStatMods()
 			const bool bHasHandle = Existing && Existing->IsValid();
 			if (Armor->bActive && !bHasHandle)
 			{
-				const FActiveGameplayEffectHandle Handle = BH_EquipmentStats::Apply(ASC, Armor, Armor->AttackPowerBonus, Armor->DefenseBonus, Armor->MaxStaminaBonus);
+				const FActiveGameplayEffectHandle Handle = UBH_EquipmentLibrary::ApplyStatMod(ASC, Armor, Armor->AttackPowerBonus, Armor->DefenseBonus, Armor->MaxStaminaBonus);
 				ArmorStatModHandles.Add(Armor, Handle);
 				UE_LOG(LogBHLoadout, Log, TEXT("Armor stat mod ON  %s (%s)"), *Armor->GetFriendlyName(), *Armor->DescribeBonuses());
 			}
 			else if (!Armor->bActive && Existing)
 			{
-				BH_EquipmentStats::Remove(ASC, *Existing);
+				UBH_EquipmentLibrary::RemoveStatMod(ASC, *Existing);
 				ArmorStatModHandles.Remove(Armor);
 				UE_LOG(LogBHLoadout, Log, TEXT("Armor stat mod OFF %s"), *Armor->GetFriendlyName());
 			}
@@ -770,7 +770,7 @@ void UBH_LoadoutComponent::RefreshArmorStatMods()
 	{
 		if (!Seen.Contains(It.Key()))
 		{
-			BH_EquipmentStats::Remove(ASC, It.Value());
+			UBH_EquipmentLibrary::RemoveStatMod(ASC, It.Value());
 			It.RemoveCurrent();
 		}
 	}

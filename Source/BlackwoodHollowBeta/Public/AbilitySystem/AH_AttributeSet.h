@@ -24,7 +24,7 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FAH_OnAttributeZero, AActor* /*EffectInstiga
  * UAH_AttributeSet
  *
  * Core combat attribute set for Blackwood Hollow characters (player Vanguards
- * and enemies alike). Covers vitality (Health/Mana/Posture), offense/defense
+ * and enemies alike). Covers vitality (Health/Posture), offense/defense
  * (AttackPower/Defense), and the world's signature resistance stat
  * (BlightResistance) used to mitigate Blight fog / Blight Volume damage.
  *
@@ -57,15 +57,6 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Health", ReplicatedUsing = OnRep_MaxHealth)
 	FGameplayAttributeData MaxHealth;
 	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, MaxHealth)
-
-	// -- Mana ------------------------------------------------------------
-	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Mana", ReplicatedUsing = OnRep_Mana)
-	FGameplayAttributeData Mana;
-	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, Mana)
-
-	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Mana", ReplicatedUsing = OnRep_MaxMana)
-	FGameplayAttributeData MaxMana;
-	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, MaxMana)
 
 	// -- Posture (stance-break meter) -------------------------------------
 	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Posture", ReplicatedUsing = OnRep_Posture)
@@ -137,12 +128,6 @@ protected:
 
 	UFUNCTION()
 	virtual void OnRep_MaxHealth(const FGameplayAttributeData& OldValue);
-
-	UFUNCTION()
-	virtual void OnRep_Mana(const FGameplayAttributeData& OldValue);
-
-	UFUNCTION()
-	virtual void OnRep_MaxMana(const FGameplayAttributeData& OldValue);
 
 	UFUNCTION()
 	virtual void OnRep_Posture(const FGameplayAttributeData& OldValue);

@@ -193,22 +193,6 @@ void UBPC_HeartFragment::RechargeBlightShield()
 	}
 }
 
-float UBPC_HeartFragment::GetCurrentMana() const
-{
-	return CachedAttributeSet ? CachedAttributeSet->GetMana() : 0.f;
-}
-
-float UBPC_HeartFragment::GetMaxMana() const
-{
-	return CachedAttributeSet ? CachedAttributeSet->GetMaxMana() : 0.f;
-}
-
-float UBPC_HeartFragment::GetManaPercent() const
-{
-	const float Max = GetMaxMana();
-	return Max > 0.f ? GetCurrentMana() / Max : 0.f;
-}
-
 // ============================================================================
 // Fragment loadout
 // ============================================================================
