@@ -57,7 +57,7 @@ void UBH_OverheadVitalsComponent::BeginPlay()
 		return;
 	}
 
-	// Bosses get the big bottom-centre boss bar instead (UBH_BossHealthBarWidget): never show the small overhead one.
+	// Bosses get the big top-centre boss bar instead (UBH_BossHealthBarWidget): never show the small overhead one.
 	if (const UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(GetOwner()))
 	{
 		if (Identity->bIsBoss)

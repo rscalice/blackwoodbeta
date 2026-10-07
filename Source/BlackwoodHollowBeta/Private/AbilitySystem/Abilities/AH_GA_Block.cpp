@@ -197,7 +197,22 @@ void UAH_GA_Block::OnBlockImpact(FGameplayEventData Payload)
 void UAH_GA_Block::DrainStaminaForBlock(float PostureCost)
 {
 	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
-	const float StaminaDrain = PostureCost * BlockStaminaScale;
+	// Per-stance guard cost (the block BP is shared by every stance): SnS is the cheap shield guard, Dual Sword a poor one.
+	float Scale = BlockStaminaScale;
+	if (const AActor* StanceAvatar = GetAvatarActorFromActorInfo())
+	{
+		if (UBH_StanceComponent::FindStanceComponent(StanceAvatar))
+		{
+			const FGameplayTag StanceTag = UBH_StanceComponent::GetStanceTagOf(StanceAvatar);
+			if (StanceTag.IsValid())
+			{
+				if (StanceTag.MatchesTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Stance.Weapon.SwordShield")), false))) { Scale = 0.6f; }
+				else if (StanceTag.MatchesTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Stance.Weapon.Greatsword")), false))) { Scale = 1.0f; }
+				else if (StanceTag.MatchesTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Stance.Weapon.DualSword")), false))) { Scale = 1.3f; }
+			}
+		}
+	}
+	const float StaminaDrain = PostureCost * Scale;
 	if (!ASC || StaminaDrain <= 0.f)
 	{
 		return;

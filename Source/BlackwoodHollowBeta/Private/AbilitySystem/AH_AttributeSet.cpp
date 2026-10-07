@@ -20,7 +20,7 @@ static TAutoConsoleVariable<float> CVarBHPostureRegenDelay(
 
 static TAutoConsoleVariable<float> CVarBHStaminaRegenDelay(
 	TEXT("bh.Combat.StaminaRegenDelay"),
-	0.5f,
+	0.9f,
 	TEXT("Seconds passive stamina regeneration stays paused after any stamina spend (0 = no delay)."),
 	ECVF_Default);
 
@@ -33,7 +33,7 @@ UAH_AttributeSet::UAH_AttributeSet()
 	InitPostureRegenRate(5.f);
 	InitStamina(100.f);
 	InitMaxStamina(100.f);
-	InitStaminaRegenRate(25.f);
+	InitStaminaRegenRate(22.f);
 	InitAttackPower(10.f);
 	InitDefense(5.f);
 	InitAttackSpeed(1.f);

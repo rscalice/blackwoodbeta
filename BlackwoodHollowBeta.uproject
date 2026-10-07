@@ -134,6 +134,18 @@
 		{
 			"Name": "GameplayTagsToolset",
 			"Enabled": true
+		},
+		{
+			"Name": "AnimationAssistantToolset",
+			"Enabled": true
+		},
+		{
+			"Name": "LiveCodingToolset",
+			"Enabled": true
+		},
+		{
+			"Name": "NiagaraToolsets",
+			"Enabled": true
 		}
 	]
 }

@@ -3,6 +3,7 @@
 #include "UI/BH_HUDSubsystem.h"
 #include "UI/BH_HUDWidget.h"
 #include "UI/BH_BossHealthBarWidget.h"
+#include "AI/BH_AIController.h"
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
@@ -20,6 +21,34 @@
 
 namespace
 {
+	/** A boss the local player is already presented stays shown this far (cm) beyond its aggro radius, so standing on the edge does not flicker the bar. */
+	constexpr double BossBarRangeHysteresis = 100.0;
+
+	/**
+	 * The distance inside which the boss engages: the AggroRange of its own AI brain. The brain only exists on the server, so a
+	 * client reads the same value from the pawn's AIControllerClass defaults (the radius is a class default, never set per instance).
+	 * 0 = no brain found, so the bar never shows for that boss.
+	 */
+	float GetBossAggroRadius(const APawn* Boss)
+	{
+		if (!Boss)
+		{
+			return 0.f;
+		}
+		if (const ABH_AIController* Brain = Cast<ABH_AIController>(Boss->GetController()))
+		{
+			return Brain->AggroRange;
+		}
+		if (Boss->AIControllerClass && Boss->AIControllerClass->IsChildOf(ABH_AIController::StaticClass()))
+		{
+			if (const ABH_AIController* Defaults = Cast<ABH_AIController>(Boss->AIControllerClass->GetDefaultObject()))
+			{
+				return Defaults->AggroRange;
+			}
+		}
+		return 0.f;
+	}
+
 	/** Dead = the loose Dead tag, or Health <= 0 (the tag may not reach clients; Health does). */
 	bool IsBossDead(const AActor* Boss)
 	{
@@ -181,7 +210,9 @@ void UBH_HUDSubsystem::EvaluateBoss()
 	}
 
 	// Nearest living boss that is fighting the local pawn.
+	// Nearest living, engaged boss whose own aggro radius contains the local pawn. Every local player decides from their OWN pawn.
 	const APawn* LocalPawn = GetLocalPawn();
+	const AActor* Presented = PresentedBoss.Get();
 	AActor* Best = nullptr;
 	if (LocalPawn)
 	{
@@ -190,12 +221,14 @@ void UBH_HUDSubsystem::EvaluateBoss()
 		{
 			APawn* Candidate = *It;
 			const UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(Candidate);
-			if (!Identity || !Identity->bIsBoss || Identity->GetAggroTarget() != LocalPawn || IsBossDead(Candidate))
+			// Engaged = the boss AI has a target (AggroTarget is replicated and cleared when the boss loses aggro).
+			if (!Identity || !Identity->bIsBoss || !Identity->GetAggroTarget() || IsBossDead(Candidate))
 			{
 				continue;
 			}
+			const double Radius = static_cast<double>(GetBossAggroRadius(Candidate)) + (Candidate == Presented ? BossBarRangeHysteresis : 0.0);
 			const double DistSq = FVector::DistSquared(Candidate->GetActorLocation(), LocalPawn->GetActorLocation());
-			if (DistSq < BestDistSq)
+			if (DistSq <= Radius * Radius && DistSq < BestDistSq)
 			{
 				BestDistSq = DistSq;
 				Best = Candidate;
@@ -212,10 +245,22 @@ void UBH_HUDSubsystem::EvaluateBoss()
 			ShowBossBar(Best);
 		}
 	}
-	else if (BossBar && BossBar->IsBarShown() && !Timers.IsTimerActive(BossHideTimer))
+	else if (BossBar && BossBar->IsBarShown())
 	{
-		// The boss died, dropped aggro, or is gone: linger, then fade out.
-		Timers.SetTimer(BossHideTimer, this, &UBH_HUDSubsystem::HideBossBar, FMath::Max(MainHUD->BossBarHideDelay, 0.01f), false);
+		if (Presented && IsBossDead(Presented))
+		{
+			// Death: let the bar drain, then fade out (BossBarHideDelay, set to about 1 s on WBP_HUD_Main).
+			if (!Timers.IsTimerActive(BossHideTimer))
+			{
+				Timers.SetTimer(BossHideTimer, this, &UBH_HUDSubsystem::HideBossBar, FMath::Max(MainHUD->BossBarHideDelay, 0.01f), false);
+			}
+		}
+		else
+		{
+			// Lost aggro, or this player left the aggro radius: fade out right away.
+			Timers.ClearTimer(BossHideTimer);
+			HideBossBar();
+		}
 	}
 }
 
@@ -239,10 +284,10 @@ void UBH_HUDSubsystem::ShowBossBar(AActor* Boss)
 		BossBar->AddToViewport(0);
 	}
 
-	// Bottom-centre, lifted clear of the vitals cluster.
-	BossBar->SetAnchorsInViewport(FAnchors(0.5f, 1.f));
-	BossBar->SetAlignmentInViewport(FVector2D(0.5, 1.0));
-	BossBar->SetPositionInViewport(FVector2D(0.0, -MainHUD->BossBarBottomOffset), /*bRemoveDPIScale*/ false);
+	// Top-centre. BossBarBottomOffset (a misnomer kept so no header changes) is now the distance in pixels from the TOP edge of the screen.
+	BossBar->SetAnchorsInViewport(FAnchors(0.5f, 0.f));
+	BossBar->SetAlignmentInViewport(FVector2D(0.5, 0.0));
+	BossBar->SetPositionInViewport(FVector2D(0.0, MainHUD->BossBarBottomOffset), /*bRemoveDPIScale*/ false);
 
 	BossBar->PresentBoss(Boss);
 	PresentedBoss = Boss;

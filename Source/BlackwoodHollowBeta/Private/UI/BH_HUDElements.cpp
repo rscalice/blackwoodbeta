@@ -637,7 +637,9 @@ void UBH_TargetVitalsWidget::HandleLockedTargetChanged(AActor* Target)
 {
 	Presenter.Reset(); // a new lock starts from the idle look; InitializeHUD below pushes the new target's values
 
-	if (!Target)
+	// A boss shows the top boss bar (UBH_BossHealthBarWidget) instead: hard-locking it must not also raise this panel.
+	const UBH_CombatIdentityComponent* LockedIdentity = Target ? UBH_CombatIdentityComponent::Find(Target) : nullptr;
+	if (!Target || (LockedIdentity && LockedIdentity->bIsBoss))
 	{
 		bHasTarget = false;
 		InitializeHUD(nullptr);

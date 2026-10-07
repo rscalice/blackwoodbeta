@@ -48,7 +48,7 @@ UAH_GA_Dodge::UAH_GA_Dodge()
 	BlockAbilitiesWithTag.AddTag(TAG_Ability_Combat_Block);
 	BlockAbilitiesWithTag.AddTag(TAG_Ability_Combat_Parry);
 
-	StaminaCost = 20.f;
+	StaminaCost = 22.f;
 	bAllowStaminaOvercommit = false; // a dodge needs the full cost
 }
 
