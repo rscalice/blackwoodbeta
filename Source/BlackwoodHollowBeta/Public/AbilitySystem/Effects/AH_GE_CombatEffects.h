@@ -13,6 +13,8 @@
 #include "GameplayModMagnitudeCalculation.h"
 #include "AH_GE_CombatEffects.generated.h"
 
+class UAbilitySystemComponent;
+
 /**
  * Instant: IncomingDamage += SetByCaller(Data.Damage).
  * UAH_AttributeSet routes IncomingDamage into Health in PostGameplayEffectExecute.
@@ -176,4 +178,60 @@ class BLACKWOODHOLLOWBETA_API UAH_GE_ShieldBashCooldown : public UGameplayEffect
 
 public:
 	UAH_GE_ShieldBashCooldown();
+};
+
+// ---------------------------------------------------------------------------
+// Phase 8C: Blight damage-over-time
+// ---------------------------------------------------------------------------
+
+/**
+ * Magnitude of one Blight DoT tick: SetByCaller(Data.Blight.DPS) * (1 - clamp(BlightResistance, 0, 0.9)) * Period.
+ * BlightResistance is the TARGET's live attribute (not snapshotted), so resistance gained mid-DoT applies to the next tick.
+ * UAH_AttributeSet stores BlightResistance as a fraction (0..0.9); a value above 1 is read as a percentage (50 -> 0.5).
+ */
+UCLASS()
+class BLACKWOODHOLLOWBETA_API UAH_MMC_BlightDoT : public UGameplayModMagnitudeCalculation
+{
+	GENERATED_BODY()
+
+public:
+	UAH_MMC_BlightDoT();
+	virtual float CalculateBaseMagnitude_Implementation(const FGameplayEffectSpec& Spec) const override;
+
+private:
+	FGameplayEffectAttributeCaptureDefinition BlightResistanceDef;
+};
+
+/**
+ * Blight DoT: HasDuration (default 4 s), periodic every 1 s, each tick routes IncomingDamage (= Health damage) through the
+ * normal damage path, so death / health UI / the Dead tag all work. Because the spec carries Damage.Type.Blight,
+ * UAH_AttributeSet skips block mitigation and the Event.Combat.DamageReceived notification for it (no hit reaction, no flash)
+ * and the effect itself deals no posture damage and plays no hit cue (no hit-stop).
+ * Grants State.Status.Blighted to the target while active.
+ * Stacking: AggregateByTarget, limit 1: re-applying REFRESHES the duration (period timer keeps its phase) and does not stack;
+ * the DPS of the first application stays in force until the effect lapses.
+ * Use ApplyBlightDoT() to apply it (sets DPS and duration).
+ */
+UCLASS()
+class BLACKWOODHOLLOWBETA_API UAH_GE_BlightDoT : public UGameplayEffect
+{
+	GENERATED_BODY()
+
+public:
+	UAH_GE_BlightDoT();
+
+	/** Tick interval in seconds. */
+	static constexpr float TickPeriod = 1.f;
+
+	/**
+	 * Applies the Blight DoT to TargetASC (authority only). SourceASC may be null (environment hazard): the target is then its own source.
+	 * @param DPS                Blight damage per second BEFORE the target's BlightResistance.
+	 * @param Duration           Seconds the DoT lasts (refreshed by a re-application).
+	 * @param bAllowShieldAbsorb When true the target's Heart-Fragment Blight shield (UBPC_HeartFragment) soaks the expected total first
+	 *                           (DPS * (1 - resistance) * Duration) and only the overflow is dealt over time.
+	 * @return handle of the active effect (invalid if nothing was applied, e.g. the shield absorbed everything or the target is dead).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Blight")
+	static FActiveGameplayEffectHandle ApplyBlightDoT(UAbilitySystemComponent* SourceASC, UAbilitySystemComponent* TargetASC,
+		float DPS, float Duration = 4.f, bool bAllowShieldAbsorb = true);
 };

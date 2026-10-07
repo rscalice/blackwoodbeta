@@ -11,6 +11,7 @@
 // Tunables (shake classes, durations, Niagara/sound) live on those Blueprint CDOs.
 //
 // Parameter convention (see UAH_GA_MeleeAttack_Base::OnHitDealt / UAH_GA_Parry / UAH_AttributeSet):
+//   (Pushback is NOT a cue: it is applied on the server in OnHitDealt, see UBH_CombatFeelLibrary::ApplyHitPushback.)
 //   Hit:           MyTarget = attacker, SourceObject = victim, Normal = attacker->victim, RawMagnitude = damage,
 //                  Location = blade impact point (zero if unknown), AggregatedSourceTags has Combat.HitResult.Blocked
 //                  when the victim blocked the hit. Abilities may fire a child tag (GameplayCue.Combat.Hit.ShieldBash)
@@ -28,6 +29,7 @@
 #include "BH_GCN_Combat.generated.h"
 
 class USoundAttenuation;
+class USoundBase;
 
 /**
  * Impact FX for a connecting hit + the tiered "feel" (hit-stop, camera shake, flash) via UBH_CombatFeelLibrary::PlayImpactFeel,
@@ -58,6 +60,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit|FX")
 	FBH_CueFX BlockedFX;
 
+	/** Multiplier on the FX block's Scale per impact tier (Light, Medium, Heavy, Massive): bigger blood / sparks for bigger hits. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit|FX")
+	TArray<float> TierFXScales;
+
 	/** Spatialization for this cue's sounds. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Hit|FX")
 	TObjectPtr<USoundAttenuation> Attenuation;
@@ -74,7 +80,7 @@ public:
 	float MinSoundInterval = 0.1f;
 };
 
-/** Heavy-tier feel (hit-stop on both, camera punch for the local parrier) and the clash FX. */
+/** Heavy-tier feel (animation freeze on the parried attacker only, camera punch for the local parrier) and the clash FX. */
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API UBH_GCN_ParrySuccess : public UGameplayCueNotify_Static
 {
@@ -115,6 +121,16 @@ public:
 	/** Accompanying effect (e.g. crystal shards). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture")
 	FBH_CueFX SecondaryFX;
+
+	/** Shatter sounds (one random pick per break; leave empty until a glass pack is added: nothing plays and nothing is logged). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture")
+	TArray<TObjectPtr<USoundBase>> ShatterSounds;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture")
+	FVector2D ShatterVolumeRange = FVector2D(0.9, 1.0);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture")
+	FVector2D ShatterPitchRange = FVector2D(0.95, 1.05);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Posture")
 	TObjectPtr<USoundAttenuation> Attenuation;

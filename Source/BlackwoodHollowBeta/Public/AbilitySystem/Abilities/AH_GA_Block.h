@@ -22,6 +22,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "AbilitySystem/Abilities/AH_GA_StaminaBase.h"
 #include "AH_GA_Block.generated.h"
 
@@ -50,6 +51,10 @@ public:
 	/** Stance (GASP OverlayPose display name, e.g. "Greatsword") -> guard montage. Falls back to GuardMontage. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block")
 	TMap<FName, TObjectPtr<UAnimMontage>> StanceGuardMontages;
+
+	/** Tag-keyed twin of StanceGuardMontages (Stance.Weapon.*); read first, the legacy map is the fallback. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, TObjectPtr<UAnimMontage>> StanceGuardMontagesByTag;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block", meta = (ClampMin = "0.1"))
 	float MontagePlayRate = 1.f;

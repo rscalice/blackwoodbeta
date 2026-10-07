@@ -24,10 +24,24 @@
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "EquippableItem.h"
+#include "ActiveGameplayEffectHandle.h"
 #include "BH_EquipmentTypes.generated.h"
 
 class APawn;
+class UAbilitySystemComponent;
 class UBH_WeaponItem;
+struct FNarrativeItemStat;
+
+/**
+ * StringVariable keys used by the Narrative item Stats rows (match the UPROPERTY names on weapon and armor items).
+ * Plain constexpr literals: no static-init-order globals.
+ */
+namespace BH_EquipStatKeys
+{
+	inline constexpr const TCHAR* AttackPower = TEXT("AttackPowerBonus");
+	inline constexpr const TCHAR* Defense = TEXT("DefenseBonus");
+	inline constexpr const TCHAR* MaxStamina = TEXT("MaxStaminaBonus");
+}
 
 /** Our logical equipment slots (see the mapping table above). */
 UENUM(BlueprintType)
@@ -103,4 +117,22 @@ public:
 	/** Unequips whatever weapon is in Slot (it stays in the inventory). Server only. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Equipment")
 	static bool UnequipWeaponSlot(APawn* Pawn, EBH_EquipSlot Slot, FText& OutReason);
+
+	// -- Equipment stat bonuses (plain C++, NOT reflected) -----------------------------------------
+	// Weapon and armor items own three float UPROPERTYs (AttackPowerBonus / DefenseBonus / MaxStaminaBonus) and show
+	// them through Narrative's item Stats (UNarrativeItem::Stats + GetStringVariable). ApplyStatMod / RemoveStatMod are
+	// the single place that builds and applies/removes UAH_GE_EquipmentStatMod through its SetByCaller tags
+	// (Data.Equip.AttackPower / Defense / MaxStamina).
+
+	/** Appends the "Attack Power" / "Defense" / "Max Stamina" rows to a Narrative item's Stats array. */
+	static void AddStatRows(TArray<FNarrativeItemStat>& OutStats);
+
+	/** Resolves a StringVariable key to its formatted value. @return false if VariableName is not one of the three keys. */
+	static bool GetStatString(const FString& VariableName, float AttackPower, float Defense, float MaxStamina, FString& OutValue);
+
+	/** Server only: applies UAH_GE_EquipmentStatMod to ASC with the three bonuses (SourceObject = Source). @return the active handle (invalid on failure). */
+	static FActiveGameplayEffectHandle ApplyStatMod(UAbilitySystemComponent* ASC, UObject* Source, float AttackPower, float Defense, float MaxStamina);
+
+	/** Server only: removes the effect behind Handle (if valid) and resets it. */
+	static void RemoveStatMod(UAbilitySystemComponent* ASC, FActiveGameplayEffectHandle& Handle);
 };

@@ -23,10 +23,6 @@
 			"Enabled": true
 		},
 		{
-			"Name": "GASPALS",
-			"Enabled": true
-		},
-		{
 			"Name": "BetaFolderColors",
 			"Enabled": true
 		},
@@ -69,6 +65,86 @@
 		},
 		{
 			"Name": "MetaHumanCharacter",
+			"Enabled": true
+		},
+		{
+			"Name": "PoseSearch",
+			"Enabled": true
+		},
+		{
+			"Name": "Chooser",
+			"Enabled": true
+		},
+		{
+			"Name": "MotionWarping",
+			"Enabled": true
+		},
+		{
+			"Name": "AnimationWarping",
+			"Enabled": true
+		},
+		{
+			"Name": "AnimationLocomotionLibrary",
+			"Enabled": true
+		},
+		{
+			"Name": "MovieSceneAnimMixer",
+			"Enabled": true
+		},
+		{
+			"Name": "CurveExpression",
+			"Enabled": true
+		},
+		{
+			"Name": "DrawDebugLibrary",
+			"Enabled": true
+		},
+		{
+			"Name": "Mover",
+			"Enabled": true
+		},
+		{
+			"Name": "NetworkPrediction",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayCameras",
+			"Enabled": true
+		},
+		{
+			"Name": "GameFeaturesToolset",
+			"Enabled": true
+		},
+		{
+			"Name": "GameFeatures",
+			"Enabled": true
+		},
+		{
+			"Name": "AbilitySystemGameFeatureActions",
+			"Enabled": true
+		},
+		{
+			"Name": "AIModuleToolset",
+			"Enabled": true
+		},
+		{
+			"Name": "GASToolsets",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayTagsToolset",
+			"Enabled": true
+		},
+		{
+			"Name": "AnimationAssistantToolset",
+			"Enabled": true
+		},
+		{
+			"Name": "LiveCodingToolset",
+			"Enabled": true
+		},
+		{
+			"Name": "NiagaraToolsets",
 			"Enabled": true
 		}
 	]

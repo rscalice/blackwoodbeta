@@ -4,6 +4,11 @@
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
+#include "AbilitySystem/Abilities/AH_GA_Dodge.h"
+#include "AbilitySystem/Abilities/AH_GA_HitReaction.h"
+#include "AbilitySystem/Abilities/AH_GA_PostureBreak.h"
+#include "Combat/BH_CombatFeel.h"
+#include "UI/BH_HUDElements.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
 #include "Combat/BH_WeaponBladeData.h"
 #include "Combat/BH_StanceWatcherComponent.h"
@@ -11,6 +16,8 @@
 #include "Components/BPC_HeartFragment.h"
 #include "Combat/BH_LoadoutComponent.h"
 #include "Characters/BH_EnemyBase.h"
+#include "Characters/BH_CharacterBase.h"
+#include "Combat/BH_StanceComponent.h"
 #include "Engine/Texture2D.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemInterface.h"
@@ -18,6 +25,8 @@
 #include "Abilities/GameplayAbility.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/UnrealType.h"
+#include "StructUtils/InstancedStruct.h"
+#include "UObject/UObjectHash.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Combat/BH_TwoHandAimComponent.h"
@@ -91,8 +100,8 @@ namespace BH_CombatFunctionLibrary_Private
 	static TAutoConsoleVariable<int32> CVarGripUseLeftHandIK(TEXT("bh.GripIK.UseLeftHandIK"), 0, TEXT("1 = the ABP left-hand Two Bone IK is driven by GetSecondaryGripIKTarget (legacy); 0 = alpha forced to 0 (the grip frame moves the weapon to the hands instead)."));
 
 	// Component tags used to find/clean up the weapon meshes this library spawns.
-	// (Plain functions returning FName rather than file-scope statics, to stay
-	// safe under Live Coding patches -- see the note in ApplyOverlayPoseByDisplayName.)
+	// (Plain functions returning FName rather than file-scope or function-local statics, to stay
+	// safe under Live Coding patches: a hot-reloaded static can be left default-constructed.)
 	static FName WeaponComponentTag() { return FName(TEXT("BH.Weapon")); }
 	static FName WeaponSlotTag(EBH_WeaponSlot Slot)
 	{
@@ -115,44 +124,6 @@ namespace BH_CombatFunctionLibrary_Private
 		// implement IAbilitySystemInterface (e.g. a Blueprint-only character
 		// that just has the component added without wiring the interface).
 		return OwningActor->FindComponentByClass<UAbilitySystemComponent>();
-	}
-
-	// GASP's OverlayPose enum lives in plugin content as a UserDefinedEnum,
-	// so it's loaded by soft path rather than referenced via a native UENUM.
-	// (Plain local, not "static const" -- Live Coding hot-reload can leave
-	// function-local statics uninitialized.)
-	static UEnum* LoadOverlayPoseEnum()
-	{
-		const FSoftObjectPath OverlayPoseEnumPath(TEXT("/GASPALS/OverlaySystem/Blueprints/Enum_OverlayPose.Enum_OverlayPose"));
-		return Cast<UEnum>(OverlayPoseEnumPath.TryLoad());
-	}
-
-	/** Reads GASP's replicated "OverlayPose" byte/enum property. Returns false if absent. */
-	static bool ReadOverlayPoseValue(const AActor* TargetCharacter, int64& OutValue)
-	{
-		if (!TargetCharacter)
-		{
-			return false;
-		}
-
-		const FProperty* OverlayPoseProperty = TargetCharacter->GetClass()->FindPropertyByName(FName(TEXT("OverlayPose")));
-		if (!OverlayPoseProperty)
-		{
-			return false;
-		}
-
-		const void* ValuePtr = OverlayPoseProperty->ContainerPtrToValuePtr<void>(TargetCharacter);
-		if (const FByteProperty* ByteProperty = CastField<FByteProperty>(OverlayPoseProperty))
-		{
-			OutValue = ByteProperty->GetPropertyValue(ValuePtr);
-			return true;
-		}
-		if (const FEnumProperty* EnumProperty = CastField<FEnumProperty>(OverlayPoseProperty))
-		{
-			OutValue = EnumProperty->GetUnderlyingProperty()->GetSignedIntPropertyValue(ValuePtr);
-			return true;
-		}
-		return false;
 	}
 }
 
@@ -210,7 +181,7 @@ bool UBH_CombatFunctionLibrary::SetupCombatCharacter(AActor* OwningActor, TSubcl
 	// component of the same class on the character wins (no duplicate is added).
 	if (APawn* Pawn = Cast<APawn>(OwningActor))
 	{
-		if (!Cast<ABH_EnemyBase>(Pawn) && !Pawn->FindComponentByClass<UBH_LoadoutComponent>())
+		if (!Cast<ABH_EnemyBase>(Pawn) && !UBH_CombatIdentityComponent::Find(Pawn) && !Pawn->FindComponentByClass<UBH_LoadoutComponent>())
 		{
 			UBH_LoadoutComponent* Loadout = NewObject<UBH_LoadoutComponent>(Pawn, TEXT("Loadout"));
 			Pawn->AddInstanceComponent(Loadout);
@@ -242,7 +213,11 @@ UTexture2D* UBH_CombatFunctionLibrary::GetStanceIconForPose(const AActor* Charac
 	}
 
 	const UBH_WeaponLoadoutDataAsset* Loadouts = nullptr;
-	if (const FObjectProperty* Property = CastField<FObjectProperty>(Character->GetClass()->FindPropertyByName(FName(TEXT("WeaponLoadouts")))))
+	if (const UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(Character))
+	{
+		Loadouts = Stance->WeaponLoadouts;
+	}
+	else if (const FObjectProperty* Property = CastField<FObjectProperty>(Character->GetClass()->FindPropertyByName(FName(TEXT("WeaponLoadouts")))))
 	{
 		Loadouts = Cast<UBH_WeaponLoadoutDataAsset>(Property->GetObjectPropertyValue_InContainer(Character));
 	}
@@ -270,7 +245,11 @@ TSubclassOf<UGameplayAbility> UBH_CombatFunctionLibrary::GetMeleeAbilityForPose(
 	}
 
 	const UBH_WeaponLoadoutDataAsset* Loadouts = nullptr;
-	if (const FObjectProperty* Property = CastField<FObjectProperty>(Character->GetClass()->FindPropertyByName(FName(TEXT("WeaponLoadouts")))))
+	if (const UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(Character))
+	{
+		Loadouts = Stance->WeaponLoadouts;
+	}
+	else if (const FObjectProperty* Property = CastField<FObjectProperty>(Character->GetClass()->FindPropertyByName(FName(TEXT("WeaponLoadouts")))))
 	{
 		Loadouts = Cast<UBH_WeaponLoadoutDataAsset>(Property->GetObjectPropertyValue_InContainer(Character));
 	}
@@ -657,116 +636,24 @@ bool UBH_CombatFunctionLibrary::AreCombatAllies(const AActor* A, const AActor* B
 // GASP OverlayPose bridge
 // ============================================================================
 
+// DEPRECATED shim. Every live character owns a UBH_StanceComponent, so the legacy name is simply mapped to its tag
+// (no warning on that path: CombatIdentity / the watcher still route through here). The old body wrote the
+// replicated "OverlayPose" byte on CBP_SandboxCharacter and called UpdateOverlayPose via reflection; that was removed
+// with the GASPALS plugin dependency, so a character without a stance component can no longer be driven from here.
 bool UBH_CombatFunctionLibrary::ApplyOverlayPoseByDisplayName(AActor* TargetCharacter, const FString& OverlayPoseDisplayName)
 {
-	using namespace BH_CombatFunctionLibrary_Private;
-
 	if (!TargetCharacter)
 	{
 		return false;
 	}
-
-	UEnum* OverlayPoseEnum = LoadOverlayPoseEnum();
-	if (!OverlayPoseEnum)
+	if (UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(TargetCharacter))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyOverlayPoseByDisplayName: could not load Enum_OverlayPose from GASPALS content."));
-		return false;
+		return TargetCharacter->HasAuthority() && Stance->SetStance(BH_Stance::FromLegacyName(FName(*OverlayPoseDisplayName)));
 	}
 
-	int32 FoundIndex = INDEX_NONE;
-	const int32 NumEntries = OverlayPoseEnum->NumEnums();
-	for (int32 Index = 0; Index < NumEntries; ++Index)
-	{
-		if (OverlayPoseEnum->GetDisplayNameTextByIndex(Index).ToString().Equals(OverlayPoseDisplayName, ESearchCase::IgnoreCase))
-		{
-			FoundIndex = Index;
-			break;
-		}
-	}
-
-	if (FoundIndex == INDEX_NONE)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyOverlayPoseByDisplayName: no Enum_OverlayPose entry named '%s' (add it in-editor first)."), *OverlayPoseDisplayName);
-		return false;
-	}
-
-	const int64 EnumValue = OverlayPoseEnum->GetValueByIndex(FoundIndex);
-	const uint8 ByteValue = static_cast<uint8>(EnumValue);
-
-	// GASP stores the active pose in a plain replicated byte property named
-	// "OverlayPose" (ReplicatedUsing=OnRep_OverlayPose) on CBP_SandboxCharacter,
-	// and applies it via "UpdateOverlayPose" (evaluates CHT_OverlayPoses and
-	// attaches the resulting held-item overlay + prop mesh). OnRep_OverlayPose
-	// itself does nothing but call UpdateOverlayPose(), so on this instance we
-	// set the property directly (an authoritative/local instance never gets a
-	// local OnRep call) and then call UpdateOverlayPose() ourselves to apply
-	// it immediately. Remote clients still pick up the change normally via the
-	// engine's own OnRep dispatch when the replicated property arrives.
-	// NOTE: deliberately not "static const FName" here -- a function-local
-	// static in a Live Coding hot-reloaded function can end up left as a
-	// default-constructed (NAME_None) value instead of re-running its
-	// initializer on some patch iterations. Plain locals sidestep that.
-	const FName OverlayPosePropertyName(TEXT("OverlayPose"));
-	FProperty* OverlayPoseProperty = TargetCharacter->GetClass()->FindPropertyByName(OverlayPosePropertyName);
-	if (!OverlayPoseProperty)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyOverlayPoseByDisplayName: '%s' has no '%s' property -- is it a GASP SandboxCharacter?"),
-			*TargetCharacter->GetName(), *OverlayPosePropertyName.ToString());
-		return false;
-	}
-
-	void* OverlayPoseValuePtr = OverlayPoseProperty->ContainerPtrToValuePtr<void>(TargetCharacter);
-
-	// A Blueprint byte variable backed by a UserDefinedEnum can compile down
-	// to either a plain FByteProperty or (as of UE5.8) an FEnumProperty
-	// wrapping an underlying numeric property -- handle both rather than
-	// assuming one, since guessing wrong here fails completely silently
-	// (SetPropertyValue_InContainer on the wrong FProperty subtype either
-	// no-ops or writes past the actual storage).
-	if (FByteProperty* ByteProperty = CastField<FByteProperty>(OverlayPoseProperty))
-	{
-		ByteProperty->SetPropertyValue(OverlayPoseValuePtr, ByteValue);
-	}
-	else if (FEnumProperty* EnumProperty = CastField<FEnumProperty>(OverlayPoseProperty))
-	{
-		EnumProperty->GetUnderlyingProperty()->SetIntPropertyValue(OverlayPoseValuePtr, static_cast<uint64>(ByteValue));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyOverlayPoseByDisplayName: '%s's '%s' property is a '%s', not a byte or enum property -- can't set it."),
-			*TargetCharacter->GetName(), *OverlayPosePropertyName.ToString(), *OverlayPoseProperty->GetClass()->GetName());
-		return false;
-	}
-
-	const FName UpdateOverlayPoseFunctionName(TEXT("UpdateOverlayPose"));
-	UFunction* UpdateOverlayPoseFunction = TargetCharacter->FindFunction(UpdateOverlayPoseFunctionName);
-	if (!UpdateOverlayPoseFunction)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyOverlayPoseByDisplayName: '%s' has no '%s' function -- is it a GASP SandboxCharacter?"),
-			*TargetCharacter->GetName(), *UpdateOverlayPoseFunctionName.ToString());
-		return false;
-	}
-	TargetCharacter->ProcessEvent(UpdateOverlayPoseFunction, nullptr);
-
-	// GASP also replicates an "OverlayBase" and links its anim layer from UpdateOverlayBase (OnRep_OverlayBase / the owner). A remote proxy whose
-	// replicated base equals the class default never gets that OnRep, so its overlay-base layer stays unlinked (the arms then pose differently from
-	// the owner: hands 10-20 cm farther apart in montages). Run it on every machine; it is idempotent.
-	if (UFunction* UpdateOverlayBaseFunction = TargetCharacter->FindFunction(FName(TEXT("UpdateOverlayBase"))))
-	{
-		TargetCharacter->ProcessEvent(UpdateOverlayBaseFunction, nullptr);
-	}
-
-	// Tell any HUD bound to this character (K2_OnStanceUpdated). Remote clients that only
-	// receive the pose by replication are covered by the HUD's own OverlayPose poll.
-	UBH_HUDWidget::BroadcastStanceChanged(TargetCharacter, OverlayPoseEnum->GetDisplayNameTextByIndex(FoundIndex).ToString());
-
-	// Re-attach the weapons for the new pose right away on this machine (other machines follow via the watcher's poll).
-	if (UBH_StanceWatcherComponent* Watcher = UBH_StanceWatcherComponent::FindStanceWatcher(TargetCharacter))
-	{
-		Watcher->SyncWeapons();
-	}
-
-	return true;
+	UE_LOG(LogTemp, Warning, TEXT("ApplyOverlayPoseByDisplayName is deprecated and does nothing: '%s' has no UBH_StanceComponent (requested '%s'). Use the stance component's SetStance / RequestStance."),
+		*TargetCharacter->GetName(), *OverlayPoseDisplayName);
+	return false;
 }
 
 int32 UBH_CombatFunctionLibrary::GetNextStanceIndex(const AActor* TargetCharacter, const TArray<FString>& StanceCycle)
@@ -792,6 +679,10 @@ bool UBH_CombatFunctionLibrary::RequestStanceByName(AActor* TargetCharacter, con
 	{
 		return false;
 	}
+	if (UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(TargetCharacter))
+	{
+		return Stance->RequestStanceByLegacyName(FName(*OverlayPoseDisplayName));
+	}
 	if (UBH_StanceWatcherComponent* Watcher = UBH_StanceWatcherComponent::FindStanceWatcher(TargetCharacter))
 	{
 		Watcher->RequestStance(OverlayPoseDisplayName);
@@ -803,22 +694,13 @@ bool UBH_CombatFunctionLibrary::RequestStanceByName(AActor* TargetCharacter, con
 
 FString UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(const AActor* TargetCharacter)
 {
-	using namespace BH_CombatFunctionLibrary_Private;
-
-	int64 Value = 0;
-	if (!ReadOverlayPoseValue(TargetCharacter, Value))
+	if (const UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(TargetCharacter))
 	{
-		return FString();
+		return Stance->GetCurrentStanceLegacyName().ToString();
 	}
-
-	const UEnum* OverlayPoseEnum = LoadOverlayPoseEnum();
-	if (!OverlayPoseEnum)
-	{
-		return FString();
-	}
-
-	const int32 Index = OverlayPoseEnum->GetIndexByValue(Value);
-	return Index != INDEX_NONE ? OverlayPoseEnum->GetDisplayNameTextByIndex(Index).ToString() : FString();
+	// No stance component: the GASP "OverlayPose" fallback read was removed with the GASPALS dependency. Empty = unknown
+	// (not warned: the HUD and watcher poll this several times a second).
+	return FString();
 }
 
 // ============================================================================
@@ -995,7 +877,7 @@ void UBH_CombatFunctionLibrary::ApplyTwoHandAim(ACharacter* Character, float Del
 	const UBH_WeaponBladeData* Data = Weapon ? Weapon->GetAssetUserData<UBH_WeaponBladeData>() : nullptr;
 	USkeletalMeshComponent* AnimMesh = Character->GetMesh();
 	USkeletalMeshComponent* Parent = Weapon ? Cast<USkeletalMeshComponent>(Weapon->GetAttachParent()) : nullptr;
-	if (!Data || !Data->bTwoHandedGrip || !Parent)
+	if (!Data || !Data->bTwoHandedGrip || !Parent || Data->bSheathedOnBack)
 	{
 		InOutWeight = 0.f;
 		bInOutHasPrevRotation = false;
@@ -1145,7 +1027,6 @@ UMeshComponent* UBH_CombatFunctionLibrary::AttachWeaponMesh(ACharacter* Characte
 
 	// Blade line for meshes without weapon_root / weapon_tip sockets (read by UANS_MeleeHitbox).
 	// Also carries the two-handed grip point (read by GetSecondaryGripIKTarget).
-	if (MeshSlot.bUseBladeOverride || MeshSlot.bTwoHandedGrip)
 	{
 		UBH_WeaponBladeData* BladeData = NewObject<UBH_WeaponBladeData>(NewComponent);
 		BladeData->bHasBladeLine = MeshSlot.bUseBladeOverride;
@@ -1156,6 +1037,10 @@ UMeshComponent* UBH_CombatFunctionLibrary::AttachWeaponMesh(ACharacter* Characte
 		BladeData->AuthoredRelative = MeshSlot.RelativeTransform;
 		BladeData->SecondaryGripLocal = MeshSlot.SecondaryGripLocal;
 		BladeData->SecondaryGripRotLocal = MeshSlot.SecondaryGripRotLocal;
+		BladeData->HandSocket = SocketName;
+		BladeData->HandRelative = MeshSlot.RelativeTransform;
+		BladeData->SheathedSocket = MeshSlot.SheathedSocket;
+		BladeData->SheathedRelative = MeshSlot.SheathedRelativeTransform;
 		NewComponent->AddAssetUserData(BladeData);
 	}
 
@@ -1188,6 +1073,47 @@ UMeshComponent* UBH_CombatFunctionLibrary::AttachWeaponMesh(ACharacter* Characte
 	return NewComponent;
 }
 
+bool UBH_CombatFunctionLibrary::SetWeaponMeshSheathed(ACharacter* Character, EBH_WeaponSlot Slot, bool bSheathed)
+{
+	UMeshComponent* Weapon = GetEquippedWeaponComponent(Character, Slot);
+	UBH_WeaponBladeData* Data = Weapon ? Weapon->GetAssetUserData<UBH_WeaponBladeData>() : nullptr;
+	if (!Weapon || !Data)
+	{
+		return false;
+	}
+
+	FName Socket = Data->HandSocket;
+	FTransform Relative = Data->HandRelative;
+	bool bOnBack = false;
+	if (bSheathed && !Data->SheathedSocket.IsNone())
+	{
+		USkeletalMeshComponent* BackParent = FindWeaponAttachMesh(Character, Data->SheathedSocket);
+		if (BackParent && BackParent->DoesSocketExist(Data->SheathedSocket))
+		{
+			Socket = Data->SheathedSocket;
+			Relative = Data->SheathedRelative;
+			bOnBack = true;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SetWeaponMeshSheathed: '%s' has no socket '%s' -- the weapon stays in the hand."), *GetNameSafe(Character), *Data->SheathedSocket.ToString());
+		}
+	}
+
+	if (USkeletalMeshComponent* Parent = FindWeaponAttachMesh(Character, Socket))
+	{
+		if (Weapon->GetAttachParent() != Parent || Weapon->GetAttachSocketName() != Socket)
+		{
+			Weapon->AttachToComponent(Parent, FAttachmentTransformRules::SnapToTargetNotIncludingScale, Socket);
+		}
+		Weapon->SetRelativeTransform(Relative);
+		Data->AuthoredRelative = Relative;
+		Data->bSheathedOnBack = bOnBack;
+		return true;
+	}
+	return false;
+}
+
 void UBH_CombatFunctionLibrary::UnequipWeaponMeshes(ACharacter* Character)
 {
 	using namespace BH_CombatFunctionLibrary_Private;
@@ -1209,9 +1135,27 @@ void UBH_CombatFunctionLibrary::UnequipWeaponMeshes(ACharacter* Character)
 	}
 }
 
-bool UBH_CombatFunctionLibrary::EquipWeaponsForOverlayPose(ACharacter* Character, const UBH_WeaponLoadoutDataAsset* Loadouts,
-	const FString& OverlayPoseDisplayName, TArray<UMeshComponent*>& OutAttachedComponents)
+namespace BH_CombatFunctionLibrary_Private
 {
+	/** Spawns and attaches the main/off-hand meshes of one loadout entry. Shared by every equip entry point. */
+	static void AttachLoadoutMeshes(ACharacter* Character, const FBH_OverlayWeaponLoadout& Loadout, TArray<UMeshComponent*>& OutAttachedComponents)
+	{
+		if (UMeshComponent* MainHand = UBH_CombatFunctionLibrary::AttachWeaponMesh(Character, EBH_WeaponSlot::MainHand, Loadout.MainHand))
+		{
+			OutAttachedComponents.Add(MainHand);
+		}
+		if (UMeshComponent* OffHand = UBH_CombatFunctionLibrary::AttachWeaponMesh(Character, EBH_WeaponSlot::OffHand, Loadout.OffHand))
+		{
+			OutAttachedComponents.Add(OffHand);
+		}
+	}
+}
+
+bool UBH_CombatFunctionLibrary::EquipWeaponsForStance(ACharacter* Character, const UBH_WeaponLoadoutDataAsset* Loadouts,
+	FGameplayTag Stance, TArray<UMeshComponent*>& OutAttachedComponents)
+{
+	using namespace BH_CombatFunctionLibrary_Private;
+
 	OutAttachedComponents.Reset();
 
 	if (!Character)
@@ -1223,26 +1167,29 @@ bool UBH_CombatFunctionLibrary::EquipWeaponsForOverlayPose(ACharacter* Character
 
 	if (!Loadouts)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("EquipWeaponsForOverlayPose: no loadout data asset passed for '%s'."), *Character->GetName());
+		UE_LOG(LogTemp, Warning, TEXT("EquipWeaponsForStance: no loadout data asset passed for '%s'."), *Character->GetName());
 		return false;
 	}
 
-	FBH_OverlayWeaponLoadout Loadout;
-	if (!Loadouts->FindLoadout(FName(*OverlayPoseDisplayName), Loadout))
+	const FBH_OverlayWeaponLoadout* Loadout = Loadouts->LoadoutsByStance.Find(Stance);
+	if (!Loadout)
 	{
-		// Not an error: e.g. "Default" overlay = empty hands.
+		// Not an error: Unarmed (and any stance without an entry) means empty hands.
 		return false;
 	}
 
-	if (UMeshComponent* MainHand = AttachWeaponMesh(Character, EBH_WeaponSlot::MainHand, Loadout.MainHand))
-	{
-		OutAttachedComponents.Add(MainHand);
-	}
-	if (UMeshComponent* OffHand = AttachWeaponMesh(Character, EBH_WeaponSlot::OffHand, Loadout.OffHand))
-	{
-		OutAttachedComponents.Add(OffHand);
-	}
+	AttachLoadoutMeshes(Character, *Loadout, OutAttachedComponents);
 	return true;
+}
+
+// DEPRECATED shim: legacy Blueprints (CBP_BlackwoodHollow) still call this by Enum_OverlayPose display name. It maps the
+// name onto the stance tag and forwards, so nothing here touches GASPALS content.
+bool UBH_CombatFunctionLibrary::EquipWeaponsForOverlayPose(ACharacter* Character, const UBH_WeaponLoadoutDataAsset* Loadouts,
+	const FString& OverlayPoseDisplayName, TArray<UMeshComponent*>& OutAttachedComponents)
+{
+	UE_LOG(LogTemp, Warning, TEXT("EquipWeaponsForOverlayPose is deprecated (pose '%s' on '%s'); forwarding to EquipWeaponsForStance."),
+		*OverlayPoseDisplayName, Character ? *Character->GetName() : TEXT("None"));
+	return EquipWeaponsForStance(Character, Loadouts, BH_Stance::FromLegacyName(FName(*OverlayPoseDisplayName)), OutAttachedComponents);
 }
 
 bool UBH_CombatFunctionLibrary::EquipWeaponsForCurrentOverlayPose(ACharacter* Character, const UBH_WeaponLoadoutDataAsset* Loadouts,
@@ -1404,6 +1351,293 @@ namespace BH_CombatFunctionLibrary_Private
 			PrintTuning(Character);
 		}));
 
+	static FAutoConsoleCommandWithWorldAndArgs CmdStanceSet(
+		TEXT("BH.Stance.Set"),
+		TEXT("BH.Stance.Set <LegacyName> -- request a weapon stance for player 0 (Unarmed, Greatsword, SwordAndShield, DualSword)."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			ACharacter* Character = GetTuningCharacter(World);
+			UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(Character);
+			if (!StanceComp || Args.Num() < 1 || !StanceComp->RequestStanceByLegacyName(FName(*Args[0])))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Usage: BH.Stance.Set <LegacyName> (needs a pawn with a stance component, valid and allowed name)"));
+			}
+		}));
+
+	static FAutoConsoleCommandWithWorldAndArgs CmdWeaponDraw(
+		TEXT("BH.Weapon.Draw"),
+		TEXT("BH.Weapon.Draw [0|1] -- draw (1) or sheath (0) player 0's weapon; no argument toggles."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(GetTuningCharacter(World));
+			if (!StanceComp)
+			{
+				return;
+			}
+			if (Args.Num() < 1)
+			{
+				StanceComp->ToggleWeaponDrawn();
+			}
+			else
+			{
+				StanceComp->RequestWeaponDrawn(FCString::Atoi(*Args[0]) != 0);
+			}
+		}));
+
+#if WITH_EDITOR
+	static FString StanceKeyToString(const FName& Key) { return Key.ToString(); }
+	static FString StanceKeyToString(const FString& Key) { return Key; }
+
+	/** Copies the legacy FName / FString keyed stance maps into their Stance.Weapon.* tag twins (never overwrites a tag entry). */
+	template <typename TObj, typename TKey, typename TValue>
+	static int32 MigrateStanceMap(TObj* Object, const TMap<TKey, TValue>& Legacy, TMap<FGameplayTag, TValue>& ByTag)
+	{
+		int32 Added = 0;
+		for (const TPair<TKey, TValue>& Pair : Legacy)
+		{
+			const FGameplayTag Tag = BH_Stance::FromLegacyName(FName(*StanceKeyToString(Pair.Key)));
+			if (Tag.IsValid() && !ByTag.Contains(Tag))
+			{
+				if (Added == 0)
+				{
+					Object->Modify();
+				}
+				ByTag.Add(Tag, Pair.Value);
+				++Added;
+			}
+		}
+		if (Added > 0)
+		{
+			Object->MarkPackageDirty();
+		}
+		return Added;
+	}
+
+	template <typename TObj>
+	static bool IsMigratable(const TObj* Object)
+	{
+		const FString ClassName = Object->GetClass()->GetName();
+		return !Object->HasAnyFlags(RF_Transient) && !ClassName.StartsWith(TEXT("SKEL_")) && !ClassName.StartsWith(TEXT("REINST_"))
+			&& !Object->GetPackage()->HasAnyPackageFlags(PKG_PlayInEditor);
+	}
+
+	static void MigrateLegacyStanceMaps()
+	{
+		int32 Total = 0;
+		const auto Report = [&Total](const UObject* Object, const TCHAR* Map, int32 Added)
+		{
+			Total += Added;
+			UE_LOG(LogTemp, Display, TEXT("[BH Migrate] %s . %s : %d entries copied"), *GetNameSafe(Object), Map, Added);
+		};
+		for (TObjectIterator<UAH_GA_Block> It(RF_NoFlags); It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("StanceGuardMontages"), MigrateStanceMap(*It, It->StanceGuardMontages, It->StanceGuardMontagesByTag));
+			}
+		}
+		for (TObjectIterator<UAH_GA_Dodge> It(RF_NoFlags); It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("DirectionalMontages"), MigrateStanceMap(*It, It->DirectionalMontages, It->DirectionalMontagesByTag));
+				Report(*It, TEXT("StanceRootMotionScale"), MigrateStanceMap(*It, It->StanceRootMotionScale, It->StanceRootMotionScaleByTag));
+			}
+		}
+		for (TObjectIterator<UAH_GA_HitReaction> It(RF_NoFlags); It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("StanceHitMontages"), MigrateStanceMap(*It, It->StanceHitMontages, It->StanceHitMontagesByTag));
+			}
+		}
+		for (TObjectIterator<UAH_GA_PostureBreak> It(RF_NoFlags); It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("StancePostureBreakMontages"), MigrateStanceMap(*It, It->StancePostureBreakMontages, It->StancePostureBreakMontagesByTag));
+			}
+		}
+		for (TObjectIterator<UBH_VitalsClusterWidget> It(RF_NoFlags); It; ++It)
+		{
+			if (It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("StanceIcons"), MigrateStanceMap(*It, It->StanceIcons, It->StanceIconsByTag));
+			}
+		}
+		for (TObjectIterator<UBH_CombatFeelSettings> It; It; ++It)
+		{
+			if (!It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("TrailMaterials"), MigrateStanceMap(*It, It->TrailMaterials, It->TrailMaterialsByTag));
+				Report(*It, TEXT("TrailLifetimes"), MigrateStanceMap(*It, It->TrailLifetimes, It->TrailLifetimesByTag));
+			}
+		}
+		for (TObjectIterator<UBH_WeaponLoadoutDataAsset> It; It; ++It)
+		{
+			if (!It->HasAnyFlags(RF_ClassDefaultObject) && IsMigratable(*It))
+			{
+				Report(*It, TEXT("LoadoutsByOverlayPose"), MigrateStanceMap(*It, It->LoadoutsByOverlayPose, It->LoadoutsByStance));
+			}
+		}
+		UE_LOG(LogTemp, Display, TEXT("[BH Migrate] done: %d entries copied. Compile and save the touched assets."), Total);
+	}
+
+	static FAutoConsoleCommand CmdMigrateStanceMaps(
+		TEXT("BH.Stance.MigrateLegacyMaps"),
+		TEXT("Editor: copies every loaded legacy FName/FString keyed stance map (guard / hit / posture-break / dodge montages, trail tables, loadout DA, vitals icons) into its Stance.Weapon.* tag twin."),
+		FConsoleCommandDelegate::CreateStatic(&MigrateLegacyStanceMaps));
+
+	// ---------------------------------------------------------------------------------------------
+	// BH.Chooser.AddPoseSearchRow <RootChooserPath> <NestedTableName|-> <PoseSearchDatabasePath> [BoolColumnToMatchTrue]
+	//
+	// Appends one result row to a (nested) Chooser table, with every column cell set to "match any"
+	// (bool columns -> MatchAny, float ranges -> no min / no max). The optional 4th arg names a bool
+	// column (by its bound property, e.g. ShouldTurnInPlace) whose new cell is set to MatchTrue.
+	// Pure FProperty reflection: UChooserTable keeps ResultsStructs / ColumnsStructs C++-protected and
+	// the module does not link Chooser, so this is the only scripted way to add a row.
+	// ---------------------------------------------------------------------------------------------
+	static FName ChooserColumnBoundProperty(const FInstancedStruct& Column)
+	{
+		const UScriptStruct* ColumnStruct = Column.GetScriptStruct();
+		const FStructProperty* InputValueProp = ColumnStruct ? CastField<FStructProperty>(ColumnStruct->FindPropertyByName(TEXT("InputValue"))) : nullptr;
+		if (!InputValueProp)
+		{
+			return NAME_None;
+		}
+		const FInstancedStruct* InputValue = InputValueProp->ContainerPtrToValuePtr<FInstancedStruct>(Column.GetMemory());
+		const UScriptStruct* InputStruct = InputValue ? InputValue->GetScriptStruct() : nullptr;
+		const FStructProperty* BindingProp = InputStruct ? CastField<FStructProperty>(InputStruct->FindPropertyByName(TEXT("Binding"))) : nullptr;
+		if (!BindingProp)
+		{
+			return NAME_None;
+		}
+		const void* Binding = BindingProp->ContainerPtrToValuePtr<void>(InputValue->GetMemory());
+		const FArrayProperty* ChainProp = CastField<FArrayProperty>(BindingProp->Struct->FindPropertyByName(TEXT("PropertyBindingChain")));
+		if (!ChainProp)
+		{
+			return NAME_None;
+		}
+		FScriptArrayHelper Chain(ChainProp, ChainProp->ContainerPtrToValuePtr<void>(Binding));
+		return Chain.Num() > 0 ? *reinterpret_cast<const FName*>(Chain.GetRawPtr(Chain.Num() - 1)) : NAME_None;
+	}
+
+	static void AddChooserPoseSearchRow(const TArray<FString>& Args)
+	{
+		if (Args.Num() < 3)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[BH Chooser] usage: BH.Chooser.AddPoseSearchRow <RootChooserPath> <NestedTableName|-> <DatabasePath> [BoolColumnToMatchTrue]"));
+			return;
+		}
+		UObject* Root = StaticLoadObject(UObject::StaticClass(), nullptr, *Args[0]);
+		UObject* Database = StaticLoadObject(UObject::StaticClass(), nullptr, *Args[2]);
+		if (!Root || !Database)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[BH Chooser] could not load chooser '%s' or database '%s'"), *Args[0], *Args[2]);
+			return;
+		}
+		UObject* Table = Root;
+		if (Args[1] != TEXT("-"))
+		{
+			Table = nullptr;
+			const FString Wanted = Args[1].Replace(TEXT(" "), TEXT(""));
+			ForEachObjectWithOuter(Root, [&Table, &Wanted, Root](UObject* Inner)
+			{
+				if (!Table && Inner->GetClass() == Root->GetClass() && Inner->GetName().Replace(TEXT(" "), TEXT("")) == Wanted)
+				{
+					Table = Inner;
+				}
+			}, EGetObjectsFlags::None);
+			if (!Table)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[BH Chooser] nested table '%s' not found in %s"), *Args[1], *Root->GetName());
+				return;
+			}
+		}
+		const FName TrueColumn = Args.Num() > 3 ? FName(*Args[3]) : NAME_None;
+
+		const FArrayProperty* ResultsProp = CastField<FArrayProperty>(Table->GetClass()->FindPropertyByName(TEXT("ResultsStructs")));
+		const FArrayProperty* DisabledProp = CastField<FArrayProperty>(Table->GetClass()->FindPropertyByName(TEXT("DisabledRows")));
+		const FArrayProperty* ColumnsProp = CastField<FArrayProperty>(Table->GetClass()->FindPropertyByName(TEXT("ColumnsStructs")));
+		UScriptStruct* AssetChooserStruct = FindObject<UScriptStruct>(nullptr, TEXT("/Script/Chooser.AssetChooser"));
+		const UEnum* BoolCellEnum = FindObject<UEnum>(nullptr, TEXT("/Script/Chooser.EBoolColumnCellValue"));
+		if (!ResultsProp || !ColumnsProp || !AssetChooserStruct || !BoolCellEnum)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[BH Chooser] %s is not a ChooserTable this build understands"), *Table->GetName());
+			return;
+		}
+		Table->Modify();
+
+		// Result cell: FAssetChooser { Asset = Database }.
+		FScriptArrayHelper Results(ResultsProp, ResultsProp->ContainerPtrToValuePtr<void>(Table));
+		FInstancedStruct* NewResult = reinterpret_cast<FInstancedStruct*>(Results.GetRawPtr(Results.AddValue()));
+		NewResult->InitializeAs(AssetChooserStruct);
+		if (const FObjectProperty* AssetProp = CastField<FObjectProperty>(AssetChooserStruct->FindPropertyByName(TEXT("Asset"))))
+		{
+			AssetProp->SetObjectPropertyValue_InContainer(NewResult->GetMutableMemory(), Database);
+		}
+		if (DisabledProp)
+		{
+			FScriptArrayHelper Disabled(DisabledProp, DisabledProp->ContainerPtrToValuePtr<void>(Table));
+			Disabled.AddValue();
+		}
+
+		// One new cell per column.
+		FScriptArrayHelper Columns(ColumnsProp, ColumnsProp->ContainerPtrToValuePtr<void>(Table));
+		for (int32 ColumnIndex = 0; ColumnIndex < Columns.Num(); ++ColumnIndex)
+		{
+			FInstancedStruct* Column = reinterpret_cast<FInstancedStruct*>(Columns.GetRawPtr(ColumnIndex));
+			const UScriptStruct* ColumnStruct = Column->GetScriptStruct();
+			const FName Bound = ChooserColumnBoundProperty(*Column);
+			if (const FArrayProperty* RowsProp = CastField<FArrayProperty>(ColumnStruct->FindPropertyByName(TEXT("RowValuesWithAny"))))
+			{
+				// FBoolColumn: enum cells.
+				FScriptArrayHelper Rows(RowsProp, RowsProp->ContainerPtrToValuePtr<void>(Column->GetMutableMemory()));
+				void* Cell = Rows.GetRawPtr(Rows.AddValue());
+				const int64 Value = BoolCellEnum->GetValueByName(Bound == TrueColumn ? FName(TEXT("MatchTrue")) : FName(TEXT("MatchAny")));
+				if (const FEnumProperty* EnumProp = CastField<FEnumProperty>(RowsProp->Inner))
+				{
+					EnumProp->GetUnderlyingProperty()->SetIntPropertyValue(Cell, Value);
+				}
+				else if (const FNumericProperty* NumProp = CastField<FNumericProperty>(RowsProp->Inner))
+				{
+					NumProp->SetIntPropertyValue(Cell, Value);
+				}
+				UE_LOG(LogTemp, Display, TEXT("[BH Chooser]   bool column %s -> %s"), *Bound.ToString(), Bound == TrueColumn ? TEXT("MatchTrue") : TEXT("MatchAny"));
+			}
+			else if (const FArrayProperty* RangeProp = CastField<FArrayProperty>(ColumnStruct->FindPropertyByName(TEXT("RowValues"))))
+			{
+				FScriptArrayHelper Rows(RangeProp, RangeProp->ContainerPtrToValuePtr<void>(Column->GetMutableMemory()));
+				void* Cell = Rows.GetRawPtr(Rows.AddValue());
+				bool bRange = false;
+				if (const FStructProperty* CellStruct = CastField<FStructProperty>(RangeProp->Inner))
+				{
+					for (const TCHAR* Flag : { TEXT("bNoMin"), TEXT("bNoMax") })
+					{
+						if (const FBoolProperty* FlagProp = CastField<FBoolProperty>(CellStruct->Struct->FindPropertyByName(Flag)))
+						{
+							FlagProp->SetPropertyValue_InContainer(Cell, true);
+							bRange = true;
+						}
+					}
+				}
+				UE_LOG(LogTemp, Display, TEXT("[BH Chooser]   column %s (%s) -> %s"), *Bound.ToString(), *ColumnStruct->GetName(), bRange ? TEXT("no min / no max") : TEXT("default cell - CHECK IT IN THE CHOOSER EDITOR"));
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[BH Chooser]   column %s (%s) has no row array this command knows; row counts may now mismatch"), *Bound.ToString(), *ColumnStruct->GetName());
+			}
+		}
+		Table->MarkPackageDirty();
+		UE_LOG(LogTemp, Display, TEXT("[BH Chooser] added row %d -> %s to %s. Save %s."), Results.Num() - 1, *Database->GetName(), *Table->GetName(), *Root->GetName());
+	}
+
+	static FAutoConsoleCommand CmdAddChooserPoseSearchRow(
+		TEXT("BH.Chooser.AddPoseSearchRow"),
+		TEXT("Editor: appends a 'match any' row to a (nested) chooser table pointing at a pose search database. Args: <RootChooserPath> <NestedTableName|-> <DatabasePath> [BoolColumnToMatchTrue]"),
+		FConsoleCommandWithArgsDelegate::CreateStatic(&AddChooserPoseSearchRow));
+#endif
+
 	static FAutoConsoleCommandWithWorld CmdPrintTuning(
 		TEXT("BH.Weapon.PrintTuning"),
 		TEXT("Logs player 0's weapon socket transforms and grip offsets."),
@@ -1411,6 +1645,34 @@ namespace BH_CombatFunctionLibrary_Private
 		{
 			PrintTuning(GetTuningCharacter(World));
 		}));
+}
+
+void UBH_CombatFunctionLibrary::EditorSetMontageLayout(UAnimMontage* Montage, const TArray<FName>& SectionNames, const TArray<float>& SectionTimes, const TArray<FName>& NextSections)
+{
+#if WITH_EDITOR
+	if (!Montage || SectionNames.Num() != SectionTimes.Num() || SectionNames.Num() != NextSections.Num())
+	{
+		return;
+	}
+	Montage->Modify();
+	Montage->CompositeSections.Reset();
+	for (int32 Index = 0; Index < SectionNames.Num(); ++Index)
+	{
+		Montage->AddAnimCompositeSection(SectionNames[Index], SectionTimes[Index]);
+	}
+	for (FCompositeSection& Section : Montage->CompositeSections)
+	{
+		const int32 Found = SectionNames.IndexOfByKey(Section.SectionName);
+		Section.NextSectionName = Found != INDEX_NONE ? NextSections[Found] : NAME_None;
+	}
+	float Longest = 0.f;
+	for (const FSlotAnimationTrack& Slot : Montage->SlotAnimTracks)
+	{
+		Longest = FMath::Max(Longest, Slot.AnimTrack.GetLength());
+	}
+	Montage->SetCompositeLength(Longest);
+	Montage->MarkPackageDirty();
+#endif
 }
 
 bool UBH_CombatFunctionLibrary::GetMeshSocketTransform(const USkeletalMesh* Mesh, FName SocketName, FTransform& OutRelativeTransform, FName& OutBoneName)
@@ -1425,6 +1687,32 @@ bool UBH_CombatFunctionLibrary::GetMeshSocketTransform(const USkeletalMesh* Mesh
 	OutRelativeTransform = FTransform(Socket->RelativeRotation, Socket->RelativeLocation, Socket->RelativeScale);
 	OutBoneName = Socket->BoneName;
 	return true;
+}
+
+bool UBH_CombatFunctionLibrary::EditorAddMeshSocket(USkeletalMesh* Mesh, FName SocketName, FName BoneName, const FTransform& RelativeTransform)
+{
+#if WITH_EDITOR
+	if (!Mesh || SocketName.IsNone() || Mesh->GetRefSkeleton().FindBoneIndex(BoneName) == INDEX_NONE)
+	{
+		return false;
+	}
+	Mesh->Modify();
+	USkeletalMeshSocket* Socket = Mesh->FindSocket(SocketName);
+	if (!Socket)
+	{
+		Socket = NewObject<USkeletalMeshSocket>(Mesh, NAME_None, RF_Transactional);
+		Socket->SocketName = SocketName;
+		Mesh->AddSocket(Socket);
+	}
+	Socket->BoneName = BoneName;
+	Socket->RelativeLocation = RelativeTransform.GetLocation();
+	Socket->RelativeRotation = RelativeTransform.Rotator();
+	Socket->RelativeScale = RelativeTransform.GetScale3D();
+	Mesh->MarkPackageDirty();
+	return true;
+#else
+	return false;
+#endif
 }
 
 bool UBH_CombatFunctionLibrary::SetMeshSocketTransform(USkeletalMesh* Mesh, FName SocketName, const FTransform& RelativeTransform, bool bMarkAssetDirty)
@@ -1495,6 +1783,12 @@ bool UBH_CombatFunctionLibrary::SetEquippedWeaponOffset(ACharacter* Character, E
 		return false;
 	}
 	Weapon->SetRelativeTransform(RelativeTransform);
+	if (UBH_WeaponBladeData* Data = Weapon->GetAssetUserData<UBH_WeaponBladeData>())
+	{
+		// Keep the sheathed / hand offsets in step so a draw / sheath toggle does not revert a live nudge.
+		(Data->bSheathedOnBack ? Data->SheathedRelative : Data->HandRelative) = RelativeTransform;
+		Data->AuthoredRelative = RelativeTransform;
+	}
 	return true;
 }
 
@@ -1507,7 +1801,7 @@ bool UBH_CombatFunctionLibrary::StoreEquippedWeaponOffsetInLoadout(ACharacter* C
 		return false;
 	}
 
-	FBH_OverlayWeaponLoadout* Entry = Loadouts->LoadoutsByOverlayPose.Find(FName(*PoseName));
+	FBH_OverlayWeaponLoadout* Entry = Loadouts->FindLoadoutEntry(FName(*PoseName));
 	if (!Entry)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("StoreEquippedWeaponOffsetInLoadout: %s has no entry for overlay pose '%s'."), *Loadouts->GetName(), *PoseName);
@@ -1518,7 +1812,16 @@ bool UBH_CombatFunctionLibrary::StoreEquippedWeaponOffsetInLoadout(ACharacter* C
 	Loadouts->Modify();
 #endif
 	FBH_WeaponMeshSlot& MeshSlot = Slot == EBH_WeaponSlot::OffHand ? Entry->OffHand : Entry->MainHand;
-	MeshSlot.RelativeTransform = Weapon->GetRelativeTransform();
+	// While the weapon rides on its sheathed socket the nudged offset is the sheathed one.
+	const UBH_WeaponBladeData* BladeData = const_cast<UMeshComponent*>(Weapon)->GetAssetUserData<UBH_WeaponBladeData>();
+	if (BladeData && BladeData->bSheathedOnBack)
+	{
+		MeshSlot.SheathedRelativeTransform = Weapon->GetRelativeTransform();
+	}
+	else
+	{
+		MeshSlot.RelativeTransform = Weapon->GetRelativeTransform();
+	}
 	Loadouts->MarkPackageDirty();
 	return true;
 }
@@ -1532,6 +1835,17 @@ bool UBH_CombatFunctionLibrary::SetCharacterWantsToStrafe(APawn* Pawn, bool bVal
 	if (!Pawn)
 	{
 		return false;
+	}
+
+	if (ABH_CharacterBase* BHCharacter = Cast<ABH_CharacterBase>(Pawn))
+	{
+		UE_LOG(LogBHCombat, Verbose, TEXT("SetCharacterWantsToStrafe: ABH_CharacterBase fast path (bLockOnStrafe=%d)"), bValue ? 1 : 0);
+		if (OutPrevious)
+		{
+			*OutPrevious = BHCharacter->IsLockOnStrafeActive();
+		}
+		BHCharacter->SetLockOnStrafe(bValue);
+		return true;
 	}
 
 	// CBP_SandboxCharacter: replicated struct "CharacterInputState" (UserDefinedStruct, members carry mangled names).

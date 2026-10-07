@@ -18,6 +18,7 @@
 
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
+#include "GameplayTagContainer.h"
 #include "AH_GA_Parry.generated.h"
 
 class UAnimMontage;
@@ -41,9 +42,20 @@ public:
 
 	// -- Timing ------------------------------------------------------------------
 
-	/** Optional deflect animation. If set, the ability ends when it finishes. */
+	/**
+	 * Fallback deflect animation (the Sword & Shield parry on GA_SnS_Parry). Used when the current
+	 * stance has no entry in StanceParryMontagesByTag. If neither resolves, the ability runs on
+	 * RecoveryDuration instead. If a montage resolves, the ability ends when it finishes.
+	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Parry|Timing")
 	TObjectPtr<UAnimMontage> ParryMontage;
+
+	/**
+	 * Per-stance deflect animation, keyed by Stance.Weapon.* tag (e.g. Stance.Weapon.Greatsword).
+	 * Stance is replicated, so a LocalPredicted client and the server resolve the same montage.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Parry|Timing", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, TObjectPtr<UAnimMontage>> StanceParryMontagesByTag;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Parry|Timing", meta = (ClampMin = "0.1"))
 	float MontagePlayRate = 1.f;
@@ -123,6 +135,9 @@ private:
 	void FinishParry();
 
 	void ApplyPostureDelta(UAbilitySystemComponent* TargetASC, float PostureDamage) const;
+
+	/** Montage for the avatar's current stance (StanceParryMontagesByTag), falling back to ParryMontage. May be null. */
+	UAnimMontage* ResolveParryMontage() const;
 
 	UPROPERTY()
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;

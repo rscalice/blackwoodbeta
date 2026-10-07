@@ -5,6 +5,7 @@
 #include "Animation/ANS_MeleeHitbox.h"
 #include "Combat/BH_CombatFeel.h"
 #include "Combat/BH_CombatIdentityComponent.h"
+#include "Combat/BH_StanceComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -51,6 +52,7 @@ void UBH_WeaponTrailComponent::ResolveTrailStyle(AActor* Owner, FChannel& Channe
 	}
 
 	FName Key = NAME_None;
+	FGameplayTag StanceTag;
 	if (Identity && Identity->OverlayMaterial && Identity->OverlayMaterial->GetName().Contains(TEXT("Echo")))
 	{
 		Key = TEXT("Echo");
@@ -59,17 +61,31 @@ void UBH_WeaponTrailComponent::ResolveTrailStyle(AActor* Owner, FChannel& Channe
 	{
 		const FString Pose = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(Owner);
 		Key = Pose.IsEmpty() ? FName(TEXT("SwordAndShield")) : FName(*Pose);
+		if (UBH_StanceComponent::FindStanceComponent(Owner))
+		{
+			StanceTag = UBH_StanceComponent::GetStanceTagOf(Owner);
+		}
 	}
 
-	const TObjectPtr<UMaterialInterface>* Found = Settings->TrailMaterials.Find(Key);
+	// Tag-keyed tables first (Stance.Weapon.*), the legacy FName tables are the fallback.
+	const TObjectPtr<UMaterialInterface>* Found = StanceTag.IsValid() ? Settings->TrailMaterialsByTag.Find(StanceTag) : nullptr;
+	const float* Life = StanceTag.IsValid() ? Settings->TrailLifetimesByTag.Find(StanceTag) : nullptr;
 	if (!Found || !*Found)
 	{
-		Key = TEXT("SwordAndShield");
 		Found = Settings->TrailMaterials.Find(Key);
+		if (!Found || !*Found)
+		{
+			Key = TEXT("SwordAndShield");
+			Found = Settings->TrailMaterials.Find(Key);
+		}
 	}
 	Channel.StyleKey = Key;
 	Channel.Material = Found ? Found->Get() : nullptr;
-	if (const float* Life = Settings->TrailLifetimes.Find(Key))
+	if (!Life)
+	{
+		Life = Settings->TrailLifetimes.Find(Key);
+	}
+	if (Life)
 	{
 		Channel.Lifetime = *Life;
 	}

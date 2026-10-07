@@ -15,7 +15,7 @@ UAH_GA_ShieldBash::UAH_GA_ShieldBash()
 	BaseDamage = 2.f;
 	bAddAttackPower = false;
 	BasePostureDamage = 35.f;
-	StaminaCost = 15.f;
+	StaminaCost = 18.f;
 	bIgnoreBlockForPosture = true;
 	HitCueTag = TAG_GameplayCue_Combat_Hit_ShieldBash; // heavier, metallic impact (GC_Combat_ShieldBashHit)
 

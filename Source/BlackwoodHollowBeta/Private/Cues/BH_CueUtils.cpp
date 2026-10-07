@@ -23,11 +23,10 @@ namespace BH_CueUtils
 		struct FHitStopEntry
 		{
 			float SavedScale = 1.f;
-			uint32 Token = 0;
+			double EndTime = 0.0; // world time at which the LATEST freeze on this mesh ends
 		};
 
 		TMap<TWeakObjectPtr<USkeletalMeshComponent>, FHitStopEntry> GHitStops;
-		uint32 GHitStopToken = 0;
 
 		/** Last index picked per sound array (keyed on the array's storage), for the no-immediate-repeat rule. */
 		TMap<const void*, int32> GLastSoundPick;
@@ -51,7 +50,7 @@ namespace BH_CueUtils
 		}
 	}
 
-	void ApplyHitStop(AActor* Actor, float Duration)
+	void ApplyHitStop(AActor* Actor, float Duration, float FreezeScale)
 	{
 		UWorld* World = Actor ? Actor->GetWorld() : nullptr;
 		if (!World || Duration <= 0.f || World->GetNetMode() == NM_DedicatedServer)
@@ -74,7 +73,9 @@ namespace BH_CueUtils
 			return;
 		}
 
-		const uint32 Token = ++GHitStopToken;
+		const double Now = World->GetTimeSeconds();
+		const double EndTime = Now + Duration;
+		FreezeScale = FMath::Clamp(FreezeScale, 0.f, 1.f);
 		TArray<TWeakObjectPtr<USkeletalMeshComponent>> Frozen;
 		for (USkeletalMeshComponent* Mesh : Meshes)
 		{
@@ -88,19 +89,27 @@ namespace BH_CueUtils
 			{
 				Entry = &GHitStops.Add(Key);
 				Entry->SavedScale = Mesh->GlobalAnimRateScale; // stored once per overlapping freeze
-				Mesh->GlobalAnimRateScale = 0.f;
+				Entry->EndTime = EndTime;
 			}
-			Entry->Token = Token; // latest freeze owns the restore
+			else if (EndTime > Entry->EndTime || Now > Entry->EndTime)
+			{
+				Entry->EndTime = EndTime; // a later freeze extends, a shorter overlapping one never shortens
+			}
+			Mesh->GlobalAnimRateScale = FMath::Min(Mesh->GlobalAnimRateScale, FreezeScale);
 			Frozen.Add(Key);
 		}
 
 		FTimerHandle Handle;
-		World->GetTimerManager().SetTimer(Handle, FTimerDelegate::CreateLambda([Frozen, Token]()
+		const TWeakObjectPtr<UWorld> WeakWorld(World);
+		World->GetTimerManager().SetTimer(Handle, FTimerDelegate::CreateLambda([Frozen, WeakWorld]()
 		{
+			const UWorld* LiveWorld = WeakWorld.Get();
+			const double Time = LiveWorld ? LiveWorld->GetTimeSeconds() : TNumericLimits<double>::Max();
 			for (const TWeakObjectPtr<USkeletalMeshComponent>& Key : Frozen)
 			{
 				FHitStopEntry* Entry = GHitStops.Find(Key);
-				if (Entry && Entry->Token == Token)
+				// Restore only when this timer is the one that reaches the latest end time (a later overlapping freeze keeps it frozen).
+				if (Entry && Time + 1.0e-4 >= Entry->EndTime)
 				{
 					if (USkeletalMeshComponent* Mesh = Key.Get())
 					{

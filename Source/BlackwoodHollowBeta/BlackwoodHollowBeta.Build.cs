@@ -18,6 +18,7 @@ public class BlackwoodHollowBeta : ModuleRules
 			"GameplayAbilities",
 			"GameplayTags",
 			"GameplayTasks",
+			"AssetRegistry",     // editor-only profile asset creation (UBH_StanceMovementProfile::CreateProfileAsset)
 			"UMG",               // HUD widgets (UBH_HUDWidget)
 			"AIModule",          // IGenericTeamAgentInterface / FGenericTeamId (combat team filtering)
 			"LevelSequence",

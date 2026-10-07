@@ -4,6 +4,8 @@
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Combat/BH_StanceComponent.h"
+#include "Combat/BH_CombatIdentityComponent.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "AbilitySystemComponent.h"
@@ -14,6 +16,7 @@
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimMontage.h"
 #include "Combat/BH_LockOnComponent.h"
+#include "Combat/BH_CombatFeel.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/Controller.h"
 
@@ -27,6 +30,7 @@ UAH_GA_MeleeAttack_Base::UAH_GA_MeleeAttack_Base()
 	SetAssetTags(DefaultAssetTags);
 
 	ActivationOwnedTags.AddTag(TAG_State_Combat_Attacking);
+	ActivationOwnedTags.AddTag(TAG_State_Combat_MovementLocked);
 
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Staggered);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_PostureBroken);
@@ -62,6 +66,15 @@ void UAH_GA_MeleeAttack_Base::ActivateAbility(const FGameplayAbilitySpecHandle H
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
+	}
+
+	// A combat ability draws the weapon (authority only; replicates through the stance component).
+	if (HasAuthority(&ActivationInfo))
+	{
+		if (UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(GetAvatarActorFromActorInfo()))
+		{
+			StanceComp->NotifyCombatActivity();
+		}
 	}
 
 	// The server computes its own target here (activation reaches it with the same movement state); no RPC needed.
@@ -416,6 +429,9 @@ float UAH_GA_MeleeAttack_Base::CalculateDamage_Implementation(AActor* Target, in
 
 	Damage *= GetStepDamageMultiplier(ComboStep) * HitboxMultiplier;
 
+	// Per-pawn scale (enemy archetypes sharing player combos); applied before Defense so the target's Defense still subtracts in full.
+	Damage *= UBH_CombatIdentityComponent::GetOutgoingCombatMultiplier(GetAvatarActorFromActorInfo());
+
 	if (bSubtractTargetDefense)
 	{
 		if (const UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Target))
@@ -505,7 +521,8 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 
 	if ((!bBlockedByTarget || bIgnoreBlockForPosture) && PostureDamageEffectClass && BasePostureDamage > 0.f)
 	{
-		const float PostureDamage = BasePostureDamage * GetStepPostureMultiplier(ComboStep) * HitboxMultiplier * (bRiposte ? RiposteDamageMultiplier : 1.f);
+		const float PostureDamage = BasePostureDamage * GetStepPostureMultiplier(ComboStep) * HitboxMultiplier * (bRiposte ? RiposteDamageMultiplier : 1.f)
+			* UBH_CombatIdentityComponent::GetOutgoingCombatMultiplier(GetAvatarActorFromActorInfo());
 
 		FGameplayEffectSpecHandle PostureSpec = MakeOutgoingGameplayEffectSpec(PostureDamageEffectClass, GetAbilityLevel());
 		if (PostureSpec.IsValid())
@@ -529,6 +546,17 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 		if (SelfSpec.IsValid())
 		{
 			SourceASC->ApplyGameplayEffectSpecToSelf(*SelfSpec.Data.Get());
+		}
+	}
+
+	// Tiered pushback (server only; see BH_CombatFeel.h). Not parried (returned above). The tier is the damage tier as if unblocked;
+	// ApplyHitPushback halves the distance for a blocked hit and skips dead / posture-broken victims.
+	if (DamageApplied > 0.f)
+	{
+		if (AActor* PushAttacker = GetAvatarActorFromActorInfo())
+		{
+			const EBH_ImpactTier PushTier = UBH_CombatFeelLibrary::TierForHit(DamageApplied, GetStepPostureMultiplier(ComboStep) * HitboxMultiplier, false, false);
+			UBH_CombatFeelLibrary::ApplyHitPushback(PushAttacker, Target, PushTier, bBlockedByTarget);
 		}
 	}
 

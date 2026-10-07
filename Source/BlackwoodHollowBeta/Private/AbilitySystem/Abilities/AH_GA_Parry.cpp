@@ -3,6 +3,7 @@
 #include "AbilitySystem/Abilities/AH_GA_Parry.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -44,6 +45,15 @@ void UAH_GA_Parry::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 		return;
 	}
 
+	// A combat ability draws the weapon (authority only; replicates through the stance component).
+	if (HasAuthority(&ActivationInfo))
+	{
+		if (UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(GetAvatarActorFromActorInfo()))
+		{
+			StanceComp->NotifyCombatActivity();
+		}
+	}
+
 	bParryWindowActive = false;
 
 	// Listen for incoming melee hits for the whole ability; OnIncomingHit only
@@ -52,9 +62,10 @@ void UAH_GA_Parry::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 	HitTask->EventReceived.AddDynamic(this, &UAH_GA_Parry::OnIncomingHit);
 	HitTask->ReadyForActivation();
 
-	if (ParryMontage)
+	UAnimMontage* ResolvedMontage = ResolveParryMontage();
+	if (ResolvedMontage)
 	{
-		MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ParryMontage, MontagePlayRate);
+		MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, ResolvedMontage, MontagePlayRate);
 		MontageTask->OnCompleted.AddDynamic(this, &UAH_GA_Parry::OnMontageFinished);
 		MontageTask->OnBlendOut.AddDynamic(this, &UAH_GA_Parry::OnMontageFinished);
 		MontageTask->OnInterrupted.AddDynamic(this, &UAH_GA_Parry::OnMontageInterrupted);
@@ -78,11 +89,32 @@ void UAH_GA_Parry::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 		OpenParryWindow();
 	}
 
-	if (!ParryMontage)
+	if (!ResolvedMontage)
 	{
 		const float TotalDuration = FMath::Max(ParryWindowStartDelay + ParryWindowDuration, RecoveryDuration);
 		World->GetTimerManager().SetTimer(RecoveryTimerHandle, this, &UAH_GA_Parry::FinishParry, TotalDuration, false);
 	}
+}
+
+UAnimMontage* UAH_GA_Parry::ResolveParryMontage() const
+{
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	const FGameplayTag StanceTag = UBH_StanceComponent::FindStanceComponent(Avatar) ? UBH_StanceComponent::GetStanceTagOf(Avatar) : FGameplayTag();
+
+	UAnimMontage* Resolved = ParryMontage;
+	if (StanceTag.IsValid())
+	{
+		if (const TObjectPtr<UAnimMontage>* Found = StanceParryMontagesByTag.Find(StanceTag))
+		{
+			if (*Found)
+			{
+				Resolved = *Found;
+			}
+		}
+	}
+
+	UE_LOG(LogBHCombat, Verbose, TEXT("Parry: %s stance=%s montage=%s"), *GetNameSafe(Avatar), *StanceTag.ToString(), *GetNameSafe(Resolved));
+	return Resolved;
 }
 
 void UAH_GA_Parry::EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,

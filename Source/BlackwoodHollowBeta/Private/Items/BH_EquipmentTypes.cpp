@@ -4,6 +4,10 @@
 #include "Items/BH_WeaponItem.h"
 #include "Combat/BH_LoadoutComponent.h"
 #include "GameFramework/Pawn.h"
+#include "AbilitySystem/BH_GameplayTags.h"
+#include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
+#include "AbilitySystemComponent.h"
+#include "NarrativeItem.h"
 
 EEquippableSlot UBH_EquipmentLibrary::ToEquippableSlot(EBH_EquipSlot Slot)
 {
@@ -83,4 +87,63 @@ bool UBH_EquipmentLibrary::UnequipWeaponSlot(APawn* Pawn, EBH_EquipSlot Slot, FT
 	}
 	OutReason = FText::FromString(TEXT("Pawn has no loadout component"));
 	return false;
+}
+
+// ============================================================================
+// Equipment stat bonuses
+// ============================================================================
+
+void UBH_EquipmentLibrary::AddStatRows(TArray<FNarrativeItemStat>& OutStats)
+{
+	OutStats.Add(FNarrativeItemStat(NSLOCTEXT("BHEquipmentStats", "AttackPowerStat", "Attack Power"), FString(BH_EquipStatKeys::AttackPower)));
+	OutStats.Add(FNarrativeItemStat(NSLOCTEXT("BHEquipmentStats", "DefenseStat", "Defense"), FString(BH_EquipStatKeys::Defense)));
+	OutStats.Add(FNarrativeItemStat(NSLOCTEXT("BHEquipmentStats", "MaxStaminaStat", "Max Stamina"), FString(BH_EquipStatKeys::MaxStamina)));
+}
+
+bool UBH_EquipmentLibrary::GetStatString(const FString& VariableName, float AttackPower, float Defense, float MaxStamina, FString& OutValue)
+{
+	if (VariableName == BH_EquipStatKeys::AttackPower)
+	{
+		OutValue = FString::SanitizeFloat(AttackPower);
+		return true;
+	}
+	if (VariableName == BH_EquipStatKeys::Defense)
+	{
+		OutValue = FString::SanitizeFloat(Defense);
+		return true;
+	}
+	if (VariableName == BH_EquipStatKeys::MaxStamina)
+	{
+		OutValue = FString::SanitizeFloat(MaxStamina);
+		return true;
+	}
+	return false;
+}
+
+FActiveGameplayEffectHandle UBH_EquipmentLibrary::ApplyStatMod(UAbilitySystemComponent* ASC, UObject* Source, float AttackPower, float Defense, float MaxStamina)
+{
+	if (!ASC)
+	{
+		return FActiveGameplayEffectHandle();
+	}
+	FGameplayEffectContextHandle Context = ASC->MakeEffectContext();
+	Context.AddSourceObject(Source);
+	FGameplayEffectSpecHandle Spec = ASC->MakeOutgoingSpec(UAH_GE_EquipmentStatMod::StaticClass(), 1.f, Context);
+	if (!Spec.IsValid())
+	{
+		return FActiveGameplayEffectHandle();
+	}
+	Spec.Data->SetSetByCallerMagnitude(TAG_Data_Equip_AttackPower, AttackPower);
+	Spec.Data->SetSetByCallerMagnitude(TAG_Data_Equip_Defense, Defense);
+	Spec.Data->SetSetByCallerMagnitude(TAG_Data_Equip_MaxStamina, MaxStamina);
+	return ASC->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+}
+
+void UBH_EquipmentLibrary::RemoveStatMod(UAbilitySystemComponent* ASC, FActiveGameplayEffectHandle& Handle)
+{
+	if (ASC && Handle.IsValid())
+	{
+		ASC->RemoveActiveGameplayEffect(Handle);
+	}
+	Handle = FActiveGameplayEffectHandle();
 }

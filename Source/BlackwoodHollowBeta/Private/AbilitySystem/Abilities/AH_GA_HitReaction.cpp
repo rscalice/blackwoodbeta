@@ -2,6 +2,7 @@
 
 #include "AbilitySystem/Abilities/AH_GA_HitReaction.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
@@ -23,6 +24,7 @@ UAH_GA_HitReaction::UAH_GA_HitReaction()
 	SetAssetTags(DefaultAssetTags);
 
 	ActivationOwnedTags.AddTag(TAG_State_Combat_Staggered);
+	ActivationOwnedTags.AddTag(TAG_State_Combat_MovementLocked);
 
 	// Posture break / death own the character's animation; blocked hits use Event.Combat.BlockImpact instead.
 	ActivationBlockedTags.AddTag(TAG_State_Combat_PostureBroken);
@@ -74,8 +76,14 @@ bool UAH_GA_HitReaction::ShouldAbilityRespondToEvent(const FGameplayAbilityActor
 
 UAnimMontage* UAH_GA_HitReaction::GetStanceMontage(EBH_HitDirection Direction) const
 {
-	const FString Stance = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(GetAvatarActorFromActorInfo());
-	const FBH_HitMontageSet* Set = Stance.IsEmpty() ? nullptr : StanceHitMontages.Find(FName(*Stance));
+	const AActor* StanceAvatar = GetAvatarActorFromActorInfo();
+	const FGameplayTag StanceTag = UBH_StanceComponent::FindStanceComponent(StanceAvatar) ? UBH_StanceComponent::GetStanceTagOf(StanceAvatar) : FGameplayTag();
+	const FBH_HitMontageSet* Set = StanceTag.IsValid() ? StanceHitMontagesByTag.Find(StanceTag) : nullptr;
+	if (!Set)
+	{
+		const FString Stance = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(StanceAvatar);
+		Set = Stance.IsEmpty() ? nullptr : StanceHitMontages.Find(FName(*Stance));
+	}
 	if (!Set)
 	{
 		return nullptr;
@@ -115,6 +123,15 @@ void UAH_GA_HitReaction::ActivateAbility(const FGameplayAbilitySpecHandle Handle
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
+	}
+
+	// A combat ability draws the weapon (authority only; replicates through the stance component).
+	if (HasAuthority(&ActivationInfo))
+	{
+		if (UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(GetAvatarActorFromActorInfo()))
+		{
+			StanceComp->NotifyCombatActivity();
+		}
 	}
 
 	AActor* Avatar = GetAvatarActorFromActorInfo();

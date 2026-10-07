@@ -18,15 +18,21 @@
 //   Main OneHanded alone (no/other off)  -> "SwordAndShield" (fallback)
 //   no Main                              -> no stance
 // The list is de-duplicated, set A first, then B.
+//
+// Presets (loadout pads): ApplyLoadoutPreset swaps the whole kit in one server call -- it re-uses inventory weapons of
+// the requested classes (granting only what is missing, so repeated use never piles up items), re-slots them and
+// switches the stance to set A's stance. See the function comment for the replication-safe two-phase flow.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Items/BH_EquipmentTypes.h"
+#include "ActiveGameplayEffectHandle.h"
 #include "BH_LoadoutComponent.generated.h"
 
 class UBH_WeaponItem;
+class UBH_ArmorItem;
 class UEquippableItem;
 class UEquipmentComponent;
 class UNarrativeInventoryComponent;
@@ -116,6 +122,28 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Loadout")
 	bool UnequipWeaponSlot(EBH_EquipSlot Slot, FText& OutReason);
 
+	/**
+	 * Server only. Replaces the equipped weapons with Entries (same struct as StarterLoadout):
+	 *   1. validates every entry up front (class loads, grip type fits the slot, no slot used twice, no off hand under a
+	 *      two-handed main) so a bad preset changes nothing;
+	 *   2. picks one inventory instance per entry -- an item already in the right slot, else any unequipped item of the
+	 *      class, else one equipped elsewhere, else a NEW item is granted. One instance is never used for two slots, so a
+	 *      DualSword preset with two swords of the same class grants/keeps two instances;
+	 *   3. unequips every weapon slot whose occupant is not part of the preset, then equips each entry through
+	 *      EquipWeaponToSlot (the validated path);
+	 *   4. re-evaluates stances/stat mods and switches the stance to set A's stance (set B's if A is empty).
+	 * Inventory items are never removed: repeated use re-uses the same instances. A weapon that has to MOVE between slots
+	 * is deactivated first and equipped ~0.25 s later (the same replication rule EquipWeaponToSlot follows), so in that
+	 * case steps 3b/4 run on a timer; the function still returns true once the preset is accepted.
+	 * @return false (with OutReason) when not authoritative, the PlayerState inventory is not ready yet, or validation fails.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Loadout")
+	bool ApplyLoadoutPreset(const TArray<FBH_StarterLoadoutEntry>& Entries, FText& OutReason);
+
+	/** Stance a preset yields for Set (Greatsword / DualSword / SwordAndShield), read from the item classes' default grip types. NAME_None if the set has no main weapon. Works on any machine. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Loadout")
+	static FName GetStanceNameForPreset(const TArray<FBH_StarterLoadoutEntry>& Entries, EBH_LoadoutSet Set);
+
 	/** Recomputes AvailableStances from the equipped items; broadcasts OnAvailableStancesChanged if it changed. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Loadout")
 	void EvaluateAvailableStances();
@@ -123,6 +151,13 @@ public:
 	/** Server only: applies/removes the per-item stat-mod effects so only the active set's weapons contribute. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Loadout")
 	void RefreshStatMods();
+
+	/**
+	 * Server only: applies/removes the stat-mod effect of every UBH_ArmorItem so exactly the equipped (active) pieces contribute,
+	 * independent of the weapon stance. Called from RefreshStatMods; also drops effects of pieces that left the inventory.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Loadout")
+	void RefreshArmorStatMods();
 
 	/** Multi-line dump of slots, stances, active set and the three stats (for console/verification). */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Loadout")
@@ -141,6 +176,7 @@ private:
 
 	void Reconcile();
 	void TryGrantStarterLoadout();
+	bool CommitPreset(const TArray<TPair<TWeakObjectPtr<UBH_WeaponItem>, EBH_EquipSlot>>& Plan, FText& OutReason);
 	void ActivateDeferred(TWeakObjectPtr<UBH_WeaponItem> Item);
 	UAbilitySystemComponent* GetOwnerASC() const;
 	void ForceInventoryNetUpdate() const;
@@ -148,6 +184,10 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UEquipmentComponent> Equipment;
 
+	/** Server-only: armor stat-mod handles, one per equipped piece (weapons keep theirs on the item). */
+	TMap<TWeakObjectPtr<UBH_ArmorItem>, FActiveGameplayEffectHandle> ArmorStatModHandles;
+
 	FTimerHandle ReconcileTimer;
+	FTimerHandle PresetTimer;
 	bool bStarterGranted = false;
 };

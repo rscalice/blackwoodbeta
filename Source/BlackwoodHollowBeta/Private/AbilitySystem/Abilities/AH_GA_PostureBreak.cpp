@@ -3,6 +3,7 @@
 #include "AbilitySystem/Abilities/AH_GA_PostureBreak.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "AbilitySystemComponent.h"
@@ -30,6 +31,8 @@ UAH_GA_PostureBreak::UAH_GA_PostureBreak()
 	CancelAbilitiesWithTag.AddTag(TAG_Ability_Combat_Parry);
 	CancelAbilitiesWithTag.AddTag(TAG_Ability_Combat_Block);
 	CancelAbilitiesWithTag.AddTag(TAG_Ability_Combat_HitReaction);
+
+	ActivationOwnedTags.AddTag(TAG_State_Combat_MovementLocked);
 
 	PostureEffectClass = UAH_GE_PostureDamage::StaticClass();
 
@@ -70,6 +73,15 @@ void UAH_GA_PostureBreak::ActivateAbility(const FGameplayAbilitySpecHandle Handl
 		return;
 	}
 
+	// A combat ability draws the weapon (authority only; replicates through the stance component).
+	if (HasAuthority(&ActivationInfo))
+	{
+		if (UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(GetAvatarActorFromActorInfo()))
+		{
+			StanceComp->NotifyCombatActivity();
+		}
+	}
+
 	// The attribute set only tags the server; make sure the owning client has it too.
 	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
 	{
@@ -85,8 +97,15 @@ void UAH_GA_PostureBreak::ActivateAbility(const FGameplayAbilitySpecHandle Handl
 
 	UAnimMontage* BreakMontage = PostureBreakMontage;
 	{
-		const FString Stance = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(GetAvatarActorFromActorInfo());
-		if (!Stance.IsEmpty())
+		const AActor* StanceAvatar = GetAvatarActorFromActorInfo();
+		const FGameplayTag StanceTag = UBH_StanceComponent::FindStanceComponent(StanceAvatar) ? UBH_StanceComponent::GetStanceTagOf(StanceAvatar) : FGameplayTag();
+		const TObjectPtr<UAnimMontage>* TagFound = StanceTag.IsValid() ? StancePostureBreakMontagesByTag.Find(StanceTag) : nullptr;
+		const FString Stance = (TagFound && *TagFound) ? FString() : UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(StanceAvatar);
+		if (TagFound && *TagFound)
+		{
+			BreakMontage = *TagFound;
+		}
+		else if (!Stance.IsEmpty())
 		{
 			if (const TObjectPtr<UAnimMontage>* Found = StancePostureBreakMontages.Find(FName(*Stance)))
 			{

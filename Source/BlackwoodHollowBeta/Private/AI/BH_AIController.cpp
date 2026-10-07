@@ -1,12 +1,17 @@
 // Blackwood Hollow - melee AI brain (implementation)
 
 #include "AI/BH_AIController.h"
+#include "AI/BH_AttackTokenSubsystem.h"
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "Combat/BH_CombatTeam.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/Abilities/AH_GA_MeleeAttack_Base.h"
+#include "Characters/BH_CharacterBase.h"
+#include "Characters/BH_CharacterTypes.h"
+#include "Combat/BH_StanceComponent.h"
+#include "GenericTeamAgentInterface.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Abilities/GameplayAbility.h"
@@ -34,6 +39,10 @@ void ABH_AIController::OnPossess(APawn* InPawn)
 	{
 		SetGenericTeamId(BH_CombatTeam::ToGenericTeamId(Identity->CombatTeam));
 	}
+	else if (const IGenericTeamAgentInterface* PawnAgent = Cast<IGenericTeamAgentInterface>(InPawn))
+	{
+		SetGenericTeamId(PawnAgent->GetGenericTeamId());
+	}
 
 	// GASP only turns a character toward the controller's rotation while WantsToStrafe is set (default true).
 	UBH_CombatFunctionLibrary::SetCharacterWantsToStrafe(InPawn, true);
@@ -49,6 +58,7 @@ void ABH_AIController::OnUnPossess()
 		UBH_CombatFunctionLibrary::HandleBlockInput(GetPawn(), FindGrantedAbilityClass(TAG_Ability_Combat_Block), false);
 		bBlocking = false;
 	}
+	ReleaseAttackToken();
 	SetTarget(nullptr);
 	Super::OnUnPossess();
 }
@@ -166,6 +176,13 @@ void ABH_AIController::SetState(EBH_AIState NewState)
 	UE_LOG(LogBHCombat, Verbose, TEXT("%s brain: %d -> %d"), *GetNameSafe(GetPawn()), static_cast<int32>(State), static_cast<int32>(NewState));
 	State = NewState;
 	StateTime = 0.f;
+	if (NewState != EBH_AIState::Approach)
+	{
+		if (ABH_CharacterBase* BHPawn = Cast<ABH_CharacterBase>(GetPawn()))
+		{
+			BHPawn->SetAIDesiredGait(EBH_Gait::Run); // movement is stopped / locked outside Approach
+		}
+	}
 }
 
 // ============================================================================
@@ -251,6 +268,9 @@ void ABH_AIController::SetTarget(AActor* NewTarget)
 		return;
 	}
 
+	// A token is per target: give the old target's back before switching (or losing) it.
+	ReleaseAttackToken();
+
 	// Stop listening to the previous target's attack state.
 	if (UAbilitySystemComponent* OldASC = WatchedTargetASC.Get())
 	{
@@ -262,6 +282,12 @@ void ABH_AIController::SetTarget(AActor* NewTarget)
 	Target = NewTarget;
 	AggressionTimeLeft = AggressionDelay;
 
+	// Tell clients who we are fighting (replicated on the identity component): the boss health bar shows on the targeted player's HUD.
+	if (UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(GetPawn()))
+	{
+		Identity->SetAggroTarget(NewTarget);
+	}
+
 	if (NewTarget)
 	{
 		if (UAbilitySystemComponent* NewASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(NewTarget))
@@ -271,6 +297,11 @@ void ABH_AIController::SetTarget(AActor* NewTarget)
 			WatchedTargetASC = NewASC;
 		}
 		SetFocus(NewTarget);
+		// Acquiring a target draws the weapon (authority; replicates through the stance component).
+		if (const UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(GetPawn()))
+		{
+			const_cast<UBH_StanceComponent*>(Stance)->NotifyCombatActivity();
+		}
 		if (State == EBH_AIState::Idle)
 		{
 			SetState(EBH_AIState::Approach);
@@ -379,6 +410,7 @@ void ABH_AIController::TickDefend(float DeltaSeconds)
 
 void ABH_AIController::EnterPaused()
 {
+	ReleaseAttackToken();
 	StopMovement();
 	ClearFocus(EAIFocusPriority::Gameplay);
 	if (bBlocking)
@@ -409,6 +441,12 @@ void ABH_AIController::TickApproach(float DeltaSeconds)
 	SetFocus(T);
 	const float Dist = GetDistanceToTarget();
 
+	// GASP derives the gait from IA_Move (zero for AI): hand it the desired gait through the replicated base property.
+	if (ABH_CharacterBase* BHPawn = Cast<ABH_CharacterBase>(Me))
+	{
+		BHPawn->SetAIDesiredGait(Dist >= SprintDistance ? EBH_Gait::Sprint : (Dist <= AttackRange + WalkInDistance ? EBH_Gait::Walk : EBH_Gait::Run));
+	}
+
 	if (Dist <= AttackRange)
 	{
 		if (GetPathFollowingComponent() && GetPathFollowingComponent()->GetStatus() != EPathFollowingStatus::Idle)
@@ -417,7 +455,7 @@ void ABH_AIController::TickApproach(float DeltaSeconds)
 		}
 		FaceTarget(DeltaSeconds, 5.f);
 		AggressionTimeLeft -= DeltaSeconds;
-		if (Dist < MinAttackDistance)
+		if (Dist < MinAttackDistance && bBackOffWhenTooClose)
 		{
 			// Too close for the blade arc to connect: ease back (still facing the target via focus) before swinging.
 			FVector Away = (Me->GetActorLocation() - T->GetActorLocation()).GetSafeNormal2D();
@@ -430,6 +468,12 @@ void ABH_AIController::TickApproach(float DeltaSeconds)
 		}
 		if (AggressionTimeLeft <= 0.f && GetAngleToTarget() <= AttackFacingAngle && GetStamina() >= MinStaminaToSwing && !IsAbilityActive(FindGrantedAbilityClass(TAG_Ability_Combat_Dodge)))
 		{
+			// Swarm mutex: only the token holder swings; everyone else menaces from a distance.
+			if (!AcquireAttackToken())
+			{
+				EnterCircle();
+				return;
+			}
 			BeginAttack();
 		}
 		return;
@@ -444,7 +488,10 @@ void ABH_AIController::TickApproach(float DeltaSeconds)
 		MoveReissueTimer = 0.6f; // re-target periodically so a moving goal is tracked
 		// The path-following reach test adds the agent's radius to the acceptance radius: take it out again so the
 		// move ends inside AttackRange (centre to centre).
-		const float AcceptRadius = FMath::Max(0.f, AttackRange - AcceptanceSlack - Me->GetSimpleCollisionRadius());
+		// Never stop inside the attack band's lower edge (MinAttackDistance + margin), otherwise drift pushes us under
+		// MinAttackDistance and the back-off / re-approach loop stalls. Clamped so it can't exceed AttackRange.
+		const float DesiredStop = FMath::Min(FMath::Max(AttackRange - AcceptanceSlack, MinAttackDistance + MinAttackBandMargin), AttackRange);
+		const float AcceptRadius = FMath::Max(0.f, DesiredStop - Me->GetSimpleCollisionRadius());
 		MoveToActor(T, AcceptRadius, /*bStopOnOverlap*/ false, /*bUsePathfinding*/ true, /*bCanStrafe*/ true);
 	}
 	if (bDirectMoveFallback && GetMoveStatus() != EPathFollowingStatus::Moving)
@@ -460,6 +507,7 @@ void ABH_AIController::BeginAttack()
 	UClass* MeleeClass = FindGrantedAbilityClass(TAG_Ability_Combat_MeleeAttack);
 	if (!Me || !MeleeClass)
 	{
+		ReleaseAttackToken(); // nothing to swing with: do not sit on the target's token
 		return;
 	}
 
@@ -476,7 +524,7 @@ void ABH_AIController::BeginAttack()
 		}
 	}
 
-	ComboLength = RollComboLength();
+	ComboLength = RollComboLength(); // planned swing count; reset below if the press is rejected
 	if (UBH_CombatFunctionLibrary::HandleMeleeAttackInput(Me, MeleeClass))
 	{
 		++StatCombosStarted;
@@ -489,9 +537,14 @@ void ABH_AIController::BeginAttack()
 	}
 	else
 	{
-		// Could not start (stamina / blocked by a state tag): back off briefly instead of retrying every tick.
+		// Could not start (stamina / blocked by a state tag): no combo happened, so reset the plan and wait a short
+		// beat instead of retrying every tick. No backstep: nothing was swung.
 		bAttackStarted = false;
-		BeginRecover();
+		ComboLength = 0;
+		++StatFailedAttackStarts;
+		UE_LOG(LogBHCombat, Verbose, TEXT("%s brain: swing start rejected, retry in %.2fs"), *GetNameSafe(Me), FailedAttackRetryDelay);
+		ReleaseAttackToken(); // a failed start never keeps the token (BeginRecover would release it too)
+		BeginRecover(/*bAllowBackstep*/ false, FailedAttackRetryDelay);
 	}
 }
 
@@ -553,22 +606,33 @@ void ABH_AIController::TickAttack(float DeltaSeconds)
 	}
 }
 
-void ABH_AIController::BeginRecover()
+void ABH_AIController::BeginRecover(bool bAllowBackstep, float OverrideRecoverTime)
 {
+	ReleaseAttackToken(); // combo finished (or never started): the next attacker may go after the handoff cooldown
 	StopMovement();
-	RecoverTimeLeft = FMath::FRandRange(RecoverTimeMin, FMath::Max(RecoverTimeMin, RecoverTimeMax));
+	RecoverTimeLeft = OverrideRecoverTime >= 0.f ? OverrideRecoverTime : FMath::FRandRange(RecoverTimeMin, FMath::Max(RecoverTimeMin, RecoverTimeMax));
 	SetState(EBH_AIState::Recover);
 
-	if (bAttackStarted || ComboLength > 0)
+	if (bAllowBackstep && (bAttackStarted || ComboLength > 0))
 	{
-		if (FMath::FRand() < BackstepChance && GetStamina() >= BackstepMinStamina)
+		const UWorld* World = GetWorld();
+		const float Now = World ? World->GetTimeSeconds() : 0.f;
+		const bool bOffCooldown = (Now - LastBackstepTime) >= BackstepCooldown;
+		const bool bAllowedByChain = !(bNoConsecutiveBacksteps && bLastComboBackstepped);
+
+		bool bBackstepped = false;
+		if (bOffCooldown && bAllowedByChain && FMath::FRand() < BackstepChance && GetStamina() >= BackstepMinStamina)
 		{
 			// No movement input at the moment of the press -> the dodge picks the backstep.
 			if (UBH_CombatFunctionLibrary::HandleDodgeInput(GetPawn()))
 			{
 				++StatBacksteps;
+				LastBackstepTime = Now;
+				bBackstepped = true;
 			}
 		}
+		// Only combo-ending recoveries update the chain; failed swing starts (bAllowBackstep == false) leave it alone.
+		bLastComboBackstepped = bBackstepped;
 	}
 	bAttackStarted = false;
 	ComboLength = 0;
@@ -583,11 +647,173 @@ void ABH_AIController::TickRecover(float DeltaSeconds)
 			return; // let a backstep finish before the timer runs
 		}
 	}
+	if (RecoverChaseDistance > 0.f && Target.IsValid() && GetDistanceToTarget() > AttackRange + RecoverChaseDistance)
+	{
+		SetState(EBH_AIState::Approach); // target slipped away: apply pressure instead of idling out the timer
+		return;
+	}
 	FaceTarget(DeltaSeconds, 10.f);
 	RecoverTimeLeft -= DeltaSeconds;
 	if (RecoverTimeLeft <= 0.f)
 	{
 		SetState(Target.IsValid() ? EBH_AIState::Approach : EBH_AIState::Idle);
+	}
+}
+
+// ============================================================================
+// Attack tokens / Circle
+// ============================================================================
+
+bool ABH_AIController::AcquireAttackToken()
+{
+	if (!bUseAttackTokens || !UBH_AttackTokenSubsystem::bEnableAttackTokens)
+	{
+		return true;
+	}
+	AActor* T = Target.Get();
+	UBH_AttackTokenSubsystem* Tokens = UBH_AttackTokenSubsystem::Get(this);
+	if (!T || !Tokens)
+	{
+		return true; // no subsystem (should not happen on the server): never deadlock the AI
+	}
+	return Tokens->RequestToken(T, this);
+}
+
+void ABH_AIController::ReleaseAttackToken()
+{
+	AActor* T = Target.Get();
+	if (UBH_AttackTokenSubsystem* Tokens = T ? UBH_AttackTokenSubsystem::Get(this) : nullptr)
+	{
+		Tokens->ReleaseToken(T, this);
+	}
+}
+
+void ABH_AIController::EnterCircle()
+{
+	StopMovement();
+	++StatTokenWaits;
+	CircleDir = FMath::RandBool() ? 1.f : -1.f;
+	CircleFlipTimeLeft = FMath::FRandRange(CircleFlipTimeMin, FMath::Max(CircleFlipTimeMin, CircleFlipTimeMax));
+	CircleBlockedTimer = 0.f;
+	CircleGraceTimeLeft = 0.5f;
+	FeintTimeLeft = 0.f;
+	SetState(EBH_AIState::Circle);
+}
+
+void ABH_AIController::TickCircle(float DeltaSeconds)
+{
+	APawn* Me = GetPawn();
+	AActor* T = Target.Get();
+	if (!Me || !T)
+	{
+		SetState(EBH_AIState::Idle);
+		return;
+	}
+	StatCircleTime += DeltaSeconds;
+
+	SetFocus(T);
+	if (ABH_CharacterBase* BHPawn = Cast<ABH_CharacterBase>(Me))
+	{
+		BHPawn->SetAIDesiredGait(EBH_Gait::Walk); // a menacing prowl (SetState resets to Run outside Approach)
+	}
+	FaceTarget(DeltaSeconds, 10.f);
+
+	// Ask every tick (cheap): the subsystem keeps us a fresh waiter and hands the token to the best-scored one.
+	if (AcquireAttackToken())
+	{
+		SetState(EBH_AIState::Approach); // run in (Approach picks the run gait at this range) and swing
+		return;
+	}
+
+	const FVector MyLocation = Me->GetActorLocation();
+	FVector ToTarget = T->GetActorLocation() - MyLocation;
+	ToTarget.Z = 0.0;
+	const float Dist = static_cast<float>(ToTarget.Size());
+	FVector Dir = ToTarget.GetSafeNormal();
+	if (Dir.IsNearlyZero())
+	{
+		Dir = Me->GetActorForwardVector().GetSafeNormal2D();
+	}
+
+	// Flip: on a timer, or when we are not getting anywhere (a wall / another body in the way).
+	bool bFlip = false;
+	CircleFlipTimeLeft -= DeltaSeconds;
+	if (CircleFlipTimeLeft <= 0.f)
+	{
+		bFlip = true;
+	}
+	if (CircleGraceTimeLeft > 0.f)
+	{
+		CircleGraceTimeLeft -= DeltaSeconds;
+		CircleBlockedTimer = 0.f;
+	}
+	else if (FeintTimeLeft <= 0.f)
+	{
+		CircleBlockedTimer = Me->GetVelocity().Size2D() < CircleBlockedSpeed ? CircleBlockedTimer + DeltaSeconds : 0.f;
+		if (CircleBlockedTimer >= CircleBlockedTime)
+		{
+			bFlip = true;
+		}
+	}
+	if (bFlip)
+	{
+		CircleDir = -CircleDir;
+		CircleFlipTimeLeft = FMath::FRandRange(CircleFlipTimeMin, FMath::Max(CircleFlipTimeMin, CircleFlipTimeMax));
+		CircleBlockedTimer = 0.f;
+		CircleGraceTimeLeft = 0.5f;
+		if (FeintTimeLeft <= 0.f && FMath::FRand() < CircleFeintChance)
+		{
+			FeintTimeLeft = CircleFeintDuration; // a quick step in and back out; no token, never an attack
+		}
+	}
+
+	// Feint: half the time toward the target, half back.
+	if (FeintTimeLeft > 0.f)
+	{
+		FeintTimeLeft -= DeltaSeconds;
+		const float Phase = FeintTimeLeft > CircleFeintDuration * 0.5f ? 1.f : -1.f;
+		Me->AddMovementInput(Dir, Phase);
+		return;
+	}
+
+	// Strafe along the tangent, nudged back into the [Min, Max] ring.
+	const FVector Tangent = FVector::CrossProduct(FVector::UpVector, Dir) * CircleDir;
+	float Radial = 0.f; // + toward the target
+	if (Dist < CircleRadiusMin)
+	{
+		Radial = -FMath::Clamp((CircleRadiusMin - Dist) / 60.f, 0.4f, 1.f);
+	}
+	else if (Dist > CircleRadiusMax)
+	{
+		Radial = FMath::Clamp((Dist - CircleRadiusMax) / 120.f, 0.4f, 1.f);
+	}
+
+	// Separation: do not stack on the other circling AIs.
+	FVector Push = FVector::ZeroVector;
+	if (CircleSeparationRadius > 0.f && GetWorld())
+	{
+		for (FConstControllerIterator It = GetWorld()->GetControllerIterator(); It; ++It)
+		{
+			const ABH_AIController* Other = Cast<ABH_AIController>(It->Get());
+			const APawn* OtherPawn = (Other && Other != this) ? Other->GetPawn() : nullptr;
+			if (!OtherPawn)
+			{
+				continue;
+			}
+			FVector Away = MyLocation - OtherPawn->GetActorLocation();
+			Away.Z = 0.0;
+			const float OtherDist = static_cast<float>(Away.Size());
+			if (OtherDist < CircleSeparationRadius)
+			{
+				Push += (OtherDist > KINDA_SMALL_NUMBER ? Away / OtherDist : Tangent) * (1.f - OtherDist / CircleSeparationRadius);
+			}
+		}
+	}
+
+	const FVector Move = (Tangent + Dir * Radial + Push * CircleSeparationWeight).GetClampedToMaxSize(1.0);
+	if (!Move.IsNearlyZero())
+	{
+		Me->AddMovementInput(Move.GetSafeNormal(), static_cast<float>(Move.Size()));
 	}
 }
 
@@ -652,7 +878,7 @@ void ABH_AIController::Tick(float DeltaSeconds)
 	}
 
 	// (Re)acquire between fights.
-	if (State == EBH_AIState::Idle || State == EBH_AIState::Approach || State == EBH_AIState::Recover)
+	if (State == EBH_AIState::Idle || State == EBH_AIState::Approach || State == EBH_AIState::Recover || State == EBH_AIState::Circle)
 	{
 		ScanTimer -= DeltaSeconds;
 		if (ScanTimer <= 0.f)
@@ -669,6 +895,7 @@ void ABH_AIController::Tick(float DeltaSeconds)
 	case EBH_AIState::Attack: TickAttack(DeltaSeconds); break;
 	case EBH_AIState::Recover: TickRecover(DeltaSeconds); break;
 	case EBH_AIState::Defend: TickDefend(DeltaSeconds); break;
+	case EBH_AIState::Circle: TickCircle(DeltaSeconds); break;
 	default: break;
 	}
 }

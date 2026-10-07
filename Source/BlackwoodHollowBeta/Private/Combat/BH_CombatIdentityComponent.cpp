@@ -2,6 +2,8 @@
 
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "Combat/BH_StanceWatcherComponent.h"
+#include "Combat/BH_StanceComponent.h"
+#include "Characters/BH_CharacterBase.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
@@ -29,11 +31,43 @@ void UBH_CombatIdentityComponent::GetLifetimeReplicatedProps(TArray<FLifetimePro
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UBH_CombatIdentityComponent, DisplayName);
 	DOREPLIFETIME(UBH_CombatIdentityComponent, CombatTeam);
+	DOREPLIFETIME(UBH_CombatIdentityComponent, AggroTarget);
+}
+
+FBH_OnAnyAggroTargetChanged& UBH_CombatIdentityComponent::OnAnyAggroTargetChanged()
+{
+	static FBH_OnAnyAggroTargetChanged Delegate;
+	return Delegate;
+}
+
+void UBH_CombatIdentityComponent::SetAggroTarget(AActor* NewTarget)
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority() || AggroTarget == NewTarget)
+	{
+		return;
+	}
+	AggroTarget = NewTarget;
+	// The server (and a listen-server host) never gets the OnRep: notify here. Clients notify from OnRep_AggroTarget.
+	OnAggroTargetChanged.Broadcast(AggroTarget);
+	OnAnyAggroTargetChanged().Broadcast(this, AggroTarget);
+}
+
+void UBH_CombatIdentityComponent::OnRep_AggroTarget()
+{
+	OnAggroTargetChanged.Broadcast(AggroTarget);
+	OnAnyAggroTargetChanged().Broadcast(this, AggroTarget);
 }
 
 UBH_CombatIdentityComponent* UBH_CombatIdentityComponent::Find(const AActor* Actor)
 {
 	return Actor ? Actor->FindComponentByClass<UBH_CombatIdentityComponent>() : nullptr;
+}
+
+float UBH_CombatIdentityComponent::GetOutgoingCombatMultiplier(const AActor* Actor)
+{
+	const UBH_CombatIdentityComponent* Identity = Find(Actor);
+	return Identity ? Identity->OutgoingCombatMultiplier : 1.f;
 }
 
 UAbilitySystemComponent* UBH_CombatIdentityComponent::ResolveASC() const
@@ -69,6 +103,23 @@ void UBH_CombatIdentityComponent::BeginPlay()
 		if (WeaponLoadouts && !Watcher->FallbackLoadouts)
 		{
 			Watcher->FallbackLoadouts = WeaponLoadouts;
+		}
+	}
+
+	// ABH_CharacterBase descendants (motion-matching enemies): the replicated base team mirrors ours, and the native
+	// stance component takes our loadouts when it has none of its own.
+	if (Owner->HasAuthority())
+	{
+		if (ABH_CharacterBase* BaseCharacter = Cast<ABH_CharacterBase>(Owner))
+		{
+			BaseCharacter->SetGenericTeamId(BH_CombatTeam::ToGenericTeamId(CombatTeam));
+		}
+	}
+	if (UBH_StanceComponent* NativeStance = UBH_StanceComponent::FindStanceComponent(Owner))
+	{
+		if (WeaponLoadouts && !NativeStance->WeaponLoadouts)
+		{
+			NativeStance->WeaponLoadouts = WeaponLoadouts;
 		}
 	}
 
@@ -221,6 +272,14 @@ void UBH_CombatIdentityComponent::ApplyStartingStance()
 {
 	if (AActor* Owner = GetOwner())
 	{
+		if (StartingStanceTag.IsValid())
+		{
+			if (UBH_StanceComponent* NativeStance = UBH_StanceComponent::FindStanceComponent(Owner))
+			{
+				NativeStance->SetStance(StartingStanceTag);
+				return;
+			}
+		}
 		if (!StartingStance.IsNone())
 		{
 			UBH_CombatFunctionLibrary::ApplyOverlayPoseByDisplayName(Owner, StartingStance.ToString());

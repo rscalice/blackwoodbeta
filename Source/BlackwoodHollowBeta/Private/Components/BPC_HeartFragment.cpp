@@ -5,6 +5,8 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Abilities/AH_GA_FragmentBase.h"
 #include "AbilitySystem/Abilities/AH_GA_OverloadBurst.h"
+#include "Player/BH_PlayerState.h"
+#include "GameFramework/Pawn.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemInterface.h"
@@ -51,6 +53,18 @@ void UBPC_HeartFragment::BeginPlay()
 	TrimFragmentsToMax();
 
 	const AActor* Owner = GetOwner();
+	if (Owner && Owner->HasAuthority())
+	{
+		// Phase 8B: the PlayerState owns the slot model. The pawn may be spawned before its PlayerState / ASC are ready,
+		// so retry (also covers the legacy GrantEquippedFragments path below).
+		if (!SyncFromPlayerState())
+		{
+			if (UWorld* World = GetWorld())
+			{
+				World->GetTimerManager().SetTimer(PlayerStateSyncTimer, this, &UBPC_HeartFragment::RetrySyncFromPlayerState, 0.25f, true);
+			}
+		}
+	}
 	if (Owner && Owner->HasAuthority() && !GrantEquippedFragments())
 	{
 		// The player's ASC is initialised by SetupCombatCharacter (which also calls GrantEquippedFragments);
@@ -67,6 +81,7 @@ void UBPC_HeartFragment::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(GrantRetryTimer);
+		World->GetTimerManager().ClearTimer(PlayerStateSyncTimer);
 	}
 	Super::EndPlay(EndPlayReason);
 }
@@ -193,22 +208,6 @@ void UBPC_HeartFragment::RechargeBlightShield()
 	}
 }
 
-float UBPC_HeartFragment::GetCurrentMana() const
-{
-	return CachedAttributeSet ? CachedAttributeSet->GetMana() : 0.f;
-}
-
-float UBPC_HeartFragment::GetMaxMana() const
-{
-	return CachedAttributeSet ? CachedAttributeSet->GetMaxMana() : 0.f;
-}
-
-float UBPC_HeartFragment::GetManaPercent() const
-{
-	const float Max = GetMaxMana();
-	return Max > 0.f ? GetCurrentMana() / Max : 0.f;
-}
-
 // ============================================================================
 // Fragment loadout
 // ============================================================================
@@ -267,6 +266,44 @@ bool UBPC_HeartFragment::GrantEquippedFragments()
 	}
 
 	bFragmentsGranted = true;
+	return true;
+}
+
+void UBPC_HeartFragment::RetrySyncFromPlayerState()
+{
+	constexpr int32 MaxRetries = 80; // ~20 s
+	++PlayerStateSyncRetryCount;
+
+	if (SyncFromPlayerState() || PlayerStateSyncRetryCount >= MaxRetries)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(PlayerStateSyncTimer);
+		}
+	}
+}
+
+bool UBPC_HeartFragment::SyncFromPlayerState()
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority())
+	{
+		return false;
+	}
+
+	const APawn* OwnerPawn = Cast<APawn>(Owner);
+	const ABH_PlayerState* PS = OwnerPawn ? Cast<ABH_PlayerState>(OwnerPawn->GetPlayerState()) : nullptr;
+	if (!PS || !IsASCReady(GetOwnerASC()))
+	{
+		return false;
+	}
+
+	GrantEquippedFragments();
+	for (int32 SlotIndex = 0; SlotIndex < MaxFragmentSlots; ++SlotIndex)
+	{
+		SetFragmentInSlot(SlotIndex, PS->GetFragmentInSlot(SlotIndex));
+	}
+	bSyncedFromPlayerState = true;
 	return true;
 }
 

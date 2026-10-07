@@ -7,16 +7,27 @@
 //
 // Toggle from the console:  BH.HUD.ToggleDebug   or   BH.HUD.Debug 0|1
 // or from Blueprint: UBH_CombatFunctionLibrary::ToggleDebugHUD.
+//
+// Boss bar: once SetupHUD has run, this subsystem also decides when the boss health bar (MainHUD->BossBarClass, one instance
+// per local player) is shown. A boss is a pawn whose UBH_CombatIdentityComponent has bIsBoss; the bar shows for the NEAREST living
+// boss whose replicated AggroTarget is the local pawn, fades in, and goes 1.5 s after that boss dies or drops aggro.
+// Event driven (UBH_CombatIdentityComponent::OnAnyAggroTargetChanged) with a cheap 0.5 s fallback scan.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Subsystems/LocalPlayerSubsystem.h"
+#include "Engine/TimerHandle.h"
+#include "GameplayEffectTypes.h"
 #include "BH_HUDSubsystem.generated.h"
 
 class APawn;
 class UUserWidget;
 class UBH_HUDWidget;
+class UBH_BossHealthBarWidget;
+class UBH_CombatIdentityComponent;
+class UAbilitySystemComponent;
+class UWorld;
 
 UCLASS()
 class BLACKWOODHOLLOWBETA_API UBH_HUDSubsystem : public ULocalPlayerSubsystem
@@ -46,10 +57,44 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
 	UUserWidget* GetDebugHUD() const { return DebugHUD; }
 
+	/** The boss health bar widget (created on first need; null before any boss has been shown). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
+	UBH_BossHealthBarWidget* GetBossBar() const { return BossBar; }
+
+	/** The boss the bar is currently presenting (may be dying / fading out), or null. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
+	AActor* GetPresentedBoss() const { return PresentedBoss.Get(); }
+
 	virtual void Deinitialize() override;
 
 private:
 	void ApplyVisibility();
+
+	// -- Boss bar ---------------------------------------------------------------
+	void StartBossWatch();
+	void StopBossWatch();
+	void OnAnyAggroChanged(UBH_CombatIdentityComponent* Source, AActor* NewTarget);
+	/** Picks the nearest living boss aggroed on the local pawn and shows / schedules the hide of the bar accordingly. */
+	void EvaluateBoss();
+	void ShowBossBar(AActor* Boss);
+	void HideBossBar();
+	APawn* GetLocalPawn() const;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UBH_BossHealthBarWidget> BossBar;
+
+	TWeakObjectPtr<AActor> PresentedBoss;
+	FTimerHandle BossScanTimer;
+	FTimerHandle BossHideTimer;
+	FDelegateHandle AggroHandle;
+	TWeakObjectPtr<UWorld> WatchWorld;
+
+	/** Health watch on the presented boss so its death hides the bar on time without waiting for the next scan. */
+	void BindBossHealth(AActor* Boss);
+	void UnbindBossHealth();
+	void OnBossHealthChanged(const FOnAttributeChangeData& ChangeData);
+	TWeakObjectPtr<UAbilitySystemComponent> BossHealthASC;
+	FDelegateHandle BossHealthHandle;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UBH_HUDWidget> MainHUD;

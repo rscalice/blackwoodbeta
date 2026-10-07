@@ -7,7 +7,7 @@
 //   1) it shields its owner against Blight damage (the Blight shield), and
 //   2) it is the Heart-Fragment LOADOUT MANAGER: up to 5 equipped fragment
 //      abilities (UAH_GA_FragmentBase), granted to the owner's ASC and fired by
-//      slot (keys 1-5). Fragments have no mana cost; each owns a GAS cooldown.
+//      slot (keys 1-3). Phase 8B: the slot model lives on ABH_PlayerState; this component mirrors it. Fragments have no resource cost; each owns a GAS cooldown.
 
 #pragma once
 
@@ -39,8 +39,8 @@ class BLACKWOODHOLLOWBETA_API UBPC_HeartFragment : public UActorComponent
 public:
 	UBPC_HeartFragment();
 
-	/** Maximum number of equipped fragments (keys 1-5). */
-	static constexpr int32 MaxFragmentSlots = 5;
+	/** Maximum number of equipped fragments (keys 1-3; Phase 8B: three category-restricted slots). */
+	static constexpr int32 MaxFragmentSlots = 3;
 
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
@@ -93,21 +93,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "HeartFragment|BlightShield")
 	FOnBlightShieldDepleted OnBlightShieldDepleted;
 
-	// -- Mana (read-only; fragments no longer use Mana) --------------------------
-
-	UFUNCTION(BlueprintPure, Category = "HeartFragment|Mana")
-	float GetCurrentMana() const;
-
-	UFUNCTION(BlueprintPure, Category = "HeartFragment|Mana")
-	float GetMaxMana() const;
-
-	UFUNCTION(BlueprintPure, Category = "HeartFragment|Mana")
-	float GetManaPercent() const;
-
 	// -- Fragment loadout --------------------------------------------------------
 
 	/**
-	 * Equipped fragment abilities by slot (index 0 = key 1). Max 5; null/empty slots are allowed.
+	 * Equipped fragment abilities by slot (index 0 = key 1). Max 3; null/empty slots are allowed.
 	 * Granted to the owner's ASC on the server; replicated so clients can resolve slots.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Replicated, Category = "BH|Fragments")
@@ -122,12 +111,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BH|Fragments")
 	bool GrantEquippedFragments();
 
-	/** Server only: replaces the fragment in Slot (0-4). Clears the old ability spec (unless another slot uses it) and grants the new one. Pass null to empty the slot. */
+	/** Server only: replaces the fragment in Slot (0-2). Clears the old ability spec (unless another slot uses it) and grants the new one. Pass null to empty the slot. */
 	UFUNCTION(BlueprintCallable, Category = "BH|Fragments")
 	bool SetFragmentInSlot(int32 Slot, TSubclassOf<UAH_GA_FragmentBase> FragmentClass);
 
 	/**
-	 * Fires the fragment in Slot (0-4) on the owning client or the server; GAS handles prediction/RPCs per the
+	 * Phase 8B (server only): mirrors ABH_PlayerState's replicated slot model onto this component, granting / clearing the
+	 * abilities. Called from BeginPlay (retried until the ASC and PlayerState exist) and by ABH_PlayerState whenever a slot changes.
+	 * @return true if the pawn's PlayerState was found and the slots were applied.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BH|Fragments")
+	bool SyncFromPlayerState();
+
+	/**
+	 * Fires the fragment in Slot (0-2) on the owning client or the server; GAS handles prediction/RPCs per the
 	 * ability's NetExecutionPolicy. Empty slots do nothing.
 	 * @return true if activation was started (it can still be refused by the server).
 	 */
@@ -160,6 +157,10 @@ private:
 	TArray<FGameplayAbilitySpecHandle> FragmentHandles;
 
 	bool bFragmentsGranted = false;
+	bool bSyncedFromPlayerState = false;
+	int32 PlayerStateSyncRetryCount = 0;
+	FTimerHandle PlayerStateSyncTimer;
+	void RetrySyncFromPlayerState();
 	int32 GrantRetryCount = 0;
 	FTimerHandle GrantRetryTimer;
 

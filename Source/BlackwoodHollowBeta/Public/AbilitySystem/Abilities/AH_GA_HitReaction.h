@@ -78,6 +78,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReaction")
 	TMap<FName, FBH_HitMontageSet> StanceHitMontages;
 
+	/** Tag-keyed twin of StanceHitMontages (Stance.Weapon.*); read first, the legacy map is the fallback. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReaction", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, FBH_HitMontageSet> StanceHitMontagesByTag;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReaction", meta = (ClampMin = "0.1"))
 	float MontagePlayRate = 1.f;
 

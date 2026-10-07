@@ -15,6 +15,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "Components/ActorComponent.h"
 #include "Engine/TimerHandle.h"
 #include "Combat/BH_CombatTeam.h"
@@ -25,9 +26,13 @@ class UBH_WeaponLoadoutDataAsset;
 class UMaterialInterface;
 class UBH_VoiceSetDataAsset;
 class UAbilitySystemComponent;
+class UBH_CombatIdentityComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnIdentityDeath, AActor*, Killer);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnIdentityReset);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnAggroTargetChanged, AActor*, NewAggroTarget);
+/** Native, static twin of FBH_OnAggroTargetChanged: fires for ANY identity component on this machine (the HUD listens once instead of per boss). */
+DECLARE_MULTICAST_DELEGATE_TwoParams(FBH_OnAnyAggroTargetChanged, UBH_CombatIdentityComponent* /*Source*/, AActor* /*NewAggroTarget*/);
 
 UCLASS(ClassGroup = (BlackwoodHollow), meta = (BlueprintSpawnableComponent))
 class BLACKWOODHOLLOWBETA_API UBH_CombatIdentityComponent : public UActorComponent
@@ -42,6 +47,10 @@ public:
 	/** The identity component on Actor, or null. */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Combat")
 	static UBH_CombatIdentityComponent* Find(const AActor* Actor);
+
+	/** The owner's OutgoingCombatMultiplier, or 1 when the actor has no identity component (e.g. the player). */
+	UFUNCTION(BlueprintPure, Category = "BH|Combat")
+	static float GetOutgoingCombatMultiplier(const AActor* Actor);
 
 	/** Name shown on the lock-on target vitals. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "BH|Identity")
@@ -64,6 +73,10 @@ public:
 	/** GASP overlay pose (Enum_OverlayPose display name) applied on the server shortly after BeginPlay. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Setup")
 	FName StartingStance = TEXT("SwordAndShield");
+
+	/** Tag-keyed twin of StartingStance, applied through the native UBH_StanceComponent when set (motion-matching enemies leave both empty and use the stance component's DefaultStance). Wins over StartingStance. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Setup", meta = (Categories = "Stance.Weapon"))
+	FGameplayTag StartingStanceTag;
 
 	/** Seconds after BeginPlay before the starting stance is applied (GASP's own setup must have run first). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Setup", meta = (ClampMin = "0.0"))
@@ -111,6 +124,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Stats", meta = (EditCondition = "bOverrideAttackSpeed", ClampMin = "0.5", ClampMax = "2.0"))
 	float AttackSpeed = 1.f;
 
+	/** Scales this pawn's outgoing melee damage and posture damage (1 = unchanged). Lets enemy archetypes
+	 *  share the player's combo abilities without inheriting player-facing damage numbers. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Stats", meta = (ClampMin = "0"))
+	float OutgoingCombatMultiplier = 1.f;
+
 	// -- Collision ----------------------------------------------------------------------
 
 	/** Makes the capsule Block the Pawn channel on every machine (GASP's capsule profile ignores it, so pawns would pass through each other). Melee hitboxes use object-type sweeps and are unaffected. */
@@ -148,11 +166,49 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BH|Death")
 	void SetResetOnDeath(bool bInResetOnDeath) { bResetOnDeath = bInResetOnDeath; }
 
+	// -- Boss (BH|Boss) -----------------------------------------------------------------
+	// A boss gets the big bottom-centre health bar (UBH_BossHealthBarWidget, driven by UBH_HUDSubsystem) on the machine of every
+	// player it is currently fighting, and no small overhead bar. AggroTarget is who the owner's AI is fighting: the server's
+	// ABH_AIController::SetTarget sets it, it replicates, and OnAggroTargetChanged fires on every machine (server on set, clients in the OnRep).
+
+	/** Marks the owner as a boss: boss health bar on the local HUD while it is aggroed on the local pawn, no overhead bar. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Boss")
+	bool bIsBoss = false;
+
+	/** Name shown on the boss health bar (falls back to DisplayName when empty). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Boss", meta = (EditCondition = "bIsBoss"))
+	FText BossDisplayName;
+
+	/** Who the owner's AI is currently fighting (null = nobody). Replicated; set only through SetAggroTarget on the server. */
+	UPROPERTY(ReplicatedUsing = OnRep_AggroTarget, VisibleInstanceOnly, BlueprintReadOnly, Category = "BH|Boss")
+	TObjectPtr<AActor> AggroTarget;
+
+	/** Server only: records the AI's current target (nullptr to clear) and notifies listeners. No-op when unchanged. */
+	UFUNCTION(BlueprintCallable, Category = "BH|Boss")
+	void SetAggroTarget(AActor* NewTarget);
+
+	UFUNCTION(BlueprintPure, Category = "BH|Boss")
+	AActor* GetAggroTarget() const { return AggroTarget; }
+
+	/** The name for the boss bar: BossDisplayName, else DisplayName. */
+	UFUNCTION(BlueprintPure, Category = "BH|Boss")
+	FText GetBossBarName() const { return BossDisplayName.IsEmpty() ? DisplayName : BossDisplayName; }
+
+	/** Fires on every machine when AggroTarget changes (server: in SetAggroTarget; clients: when the replicated value arrives). */
+	UPROPERTY(BlueprintAssignable, Category = "BH|Boss")
+	FBH_OnAggroTargetChanged OnAggroTargetChanged;
+
+	/** Same event for every identity component (native only); remove your handle when you are done. */
+	static FBH_OnAnyAggroTargetChanged& OnAnyAggroTargetChanged();
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+	UFUNCTION()
+	void OnRep_AggroTarget();
+
 	void ApplyCosmetics();
 	void ApplyCollision();
 	void ApplyLateSetup();

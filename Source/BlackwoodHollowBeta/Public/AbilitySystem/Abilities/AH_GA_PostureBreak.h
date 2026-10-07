@@ -42,6 +42,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PostureBreak")
 	TMap<FName, TObjectPtr<UAnimMontage>> StancePostureBreakMontages;
 
+	/** Tag-keyed twin of StancePostureBreakMontages (Stance.Weapon.*); read first, the legacy map is the fallback. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PostureBreak", meta = (Categories = "Stance.Weapon"))
+	TMap<FGameplayTag, TObjectPtr<UAnimMontage>> StancePostureBreakMontagesByTag;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "PostureBreak", meta = (ClampMin = "0.1"))
 	float MontagePlayRate = 1.f;
 

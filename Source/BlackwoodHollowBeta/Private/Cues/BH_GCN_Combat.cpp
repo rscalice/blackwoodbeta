@@ -2,6 +2,7 @@
 
 #include "Cues/BH_GCN_Combat.h"
 #include "Cues/BH_CueUtils.h"
+#include "UI/BH_OverheadVitalsComponent.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -11,6 +12,7 @@
 #include "Sound/SoundAttenuation.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/PlayerController.h"
 
 namespace
 {
@@ -56,6 +58,7 @@ namespace
 UBH_GCN_CombatHit::UBH_GCN_CombatHit()
 {
 	GameplayCueTag = TAG_GameplayCue_Combat_Hit;
+	TierFXScales = { 0.85f, 1.f, 1.3f, 1.5f }; // Light, Medium, Heavy, Massive
 }
 
 bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGameplayCueParameters& Parameters) const
@@ -79,7 +82,10 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 		ImpactLocation = Anchor->GetActorLocation() + FallbackVictimOffset;
 	}
 	const FVector Normal = FVector(Parameters.Normal);
-	const FRotator ImpactRotation = Normal.IsNearlyZero() ? FRotator::ZeroRotator : Normal.Rotation();
+	// Flesh FX (blood) follows the blow, into the victim. Blocked FX (sparks, local +X = spray axis) bounces back out of the blocker
+	// toward the attacker, so it is oriented along -Normal.
+	const FVector FXDirection = bBlocked ? -Normal : Normal;
+	const FRotator ImpactRotation = FXDirection.IsNearlyZero() ? FRotator::ZeroRotator : FXDirection.Rotation();
 
 	// Tiered feel (hit-stop + shake + flash) and vocals. Tier rules live in BH_CombatFeel.h.
 	bool bBlockerStaminaZero = false;
@@ -98,7 +104,10 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 	{
 		Tier = EBH_ImpactTier::Heavy;
 	}
-	UBH_CombatFeelLibrary::PlayImpactFeel(Attacker ? Attacker : Victim, Tier, Attacker, Victim, ImpactLocation, /*bEscalateForVictim*/ !bBlocked, false);
+	UBH_CombatFeelLibrary::PlayImpactFeel(Attacker ? Attacker : Victim, Tier, Attacker, Victim, ImpactLocation, /*bEscalateForVictim*/ !bBlocked, false, /*bBlocked*/ bBlocked);
+
+	// Overhead enemy bar: a hit (blocked or not) by the LOCAL player shows the victim's bar for a few seconds (cosmetic, per machine).
+	UBH_OverheadVitalsComponent::NotifyHitByLocalPlayer(Attacker, Victim);
 
 	if (Victim && !bBlocked)
 	{
@@ -108,6 +117,10 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 	UE_LOG(LogBHCue, Verbose, TEXT("BH_GCN_CombatHit(%s): %s FX at %s"), *GetNameSafe(this), bBlocked ? TEXT("blocked") : TEXT("flesh"), *ImpactLocation.ToCompactString());
 	// VFX every hit; the impact sound is rate-limited per victim (multi-hit spins would otherwise stack ~1.3 s clips).
 	FBH_CueFX FX = bBlocked ? BlockedFX : FleshFX;
+	if (TierFXScales.IsValidIndex(static_cast<int32>(Tier)))
+	{
+		FX.Scale *= TierFXScales[static_cast<int32>(Tier)]; // bigger blood / sparks for bigger hits
+	}
 	const AActor* SoundKey = Victim ? Victim : Attacker;
 	if (!ConsumeHitSoundSlot(SoundKey, SoundKey ? SoundKey->GetWorld() : nullptr, MinSoundInterval))
 	{
@@ -151,8 +164,16 @@ bool UBH_GCN_ParrySuccess::OnExecute_Implementation(AActor* MyTarget, const FGam
 	const FVector Midpoint = (ParrierLocation + AttackerLocation) * 0.5 + FVector(0.0, 0.0, ParryFXHeight);
 	const FVector Normal = FVector(Parameters.Normal);
 
-	// Heavy feel: hit-stop on both, camera punch only for the local parrier (a local player who merely got parried gets no big shake).
-	UBH_CombatFeelLibrary::PlayImpactFeel(Parrier ? Parrier : Attacker, EBH_ImpactTier::Heavy, Parrier, Attacker, Midpoint, false, /*bInstigatorOnlyShake*/ true);
+	// Heavy feel: camera punch only for the local parrier (a local player who merely got parried gets no big shake).
+	// The animation freeze is the attacker's alone (the parrier keeps moving so the counter feels responsive): bSkipFreeze + an explicit attacker freeze.
+	UBH_CombatFeelLibrary::PlayImpactFeel(Parrier ? Parrier : Attacker, EBH_ImpactTier::Heavy, Parrier, Attacker, Midpoint, false, /*bInstigatorOnlyShake*/ true, false, /*bSkipFreeze*/ true);
+	UBH_CombatFeelLibrary::ApplyTierFreeze(Attacker, UBH_CombatFeelSettings::Get()->ParryFreezeTier, 1.f, false);
+
+	// Camera punch for the local parrier: strong short shake + FOV kick + rumble (no-op for everyone else).
+	if (APlayerController* LocalPC = BH_CueUtils::FindLocalControllerInvolving(Parrier, nullptr))
+	{
+		UBH_CombatFeelLibrary::PlayParryPunch(LocalPC);
+	}
 
 	BH_CueUtils::PlayCueFX(Parrier ? Parrier : Attacker, ParryFX, Midpoint, Normal.IsNearlyZero() ? FRotator::ZeroRotator : Normal.Rotation(), Attenuation);
 	return true;
@@ -187,5 +208,6 @@ bool UBH_GCN_PostureBroken::OnExecute_Implementation(AActor* MyTarget, const FGa
 
 	BH_CueUtils::PlayCueFX(MyTarget, PrimaryFX, SpawnLocation, FRotator::ZeroRotator, Attenuation);
 	BH_CueUtils::PlayCueFX(MyTarget, SecondaryFX, SpawnLocation, FRotator::ZeroRotator, Attenuation);
+	BH_CueUtils::PlayRandomSound(MyTarget, ShatterSounds, SpawnLocation, ShatterVolumeRange, ShatterPitchRange, Attenuation); // empty = silent
 	return true;
 }

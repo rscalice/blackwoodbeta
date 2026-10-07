@@ -108,6 +108,13 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	/**
+	 * Native death hook (authority): runs inside the Health-zero handler, after all abilities were cancelled and BEFORE
+	 * K2_OnDeath. Subclasses override this to ragdoll / despawn (ABH_EnemyCrab). Note the State.Combat.Dead loose tag is
+	 * added by the attribute set right AFTER this runs.
+	 */
+	virtual void OnDeathNative(AActor* Killer) {}
+
 	/** Health reached zero (authority). */
 	UFUNCTION(BlueprintImplementableEvent, Category = "BlackwoodHollow|Enemy", meta = (DisplayName = "On Death"))
 	void K2_OnDeath(AActor* Killer);

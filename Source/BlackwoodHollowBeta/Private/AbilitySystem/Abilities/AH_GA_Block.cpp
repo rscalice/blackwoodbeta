@@ -2,6 +2,7 @@
 
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
@@ -107,6 +108,15 @@ void UAH_GA_Block::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 	// Stance-specific guard (e.g. both hands on the greatsword hilt); SnS / DS and anything unlisted use GuardMontage.
 	ActiveGuardMontage = GuardMontage;
 	{
+		AActor* StanceAvatar = ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr;
+		const FGameplayTag StanceTag = UBH_StanceComponent::FindStanceComponent(StanceAvatar) ? UBH_StanceComponent::GetStanceTagOf(StanceAvatar) : FGameplayTag();
+		const TObjectPtr<UAnimMontage>* TagFound = StanceTag.IsValid() ? StanceGuardMontagesByTag.Find(StanceTag) : nullptr;
+		if (TagFound && *TagFound)
+		{
+			ActiveGuardMontage = *TagFound;
+		}
+		else
+		{
 		const FString Stance = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr);
 		if (!Stance.IsEmpty())
 		{
@@ -118,12 +128,22 @@ void UAH_GA_Block::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 				}
 			}
 		}
+		}
 	}
 
 	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
+	}
+
+	// A combat ability draws the weapon (authority only; replicates through the stance component).
+	if (HasAuthority(&ActivationInfo))
+	{
+		if (UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(GetAvatarActorFromActorInfo()))
+		{
+			StanceComp->NotifyCombatActivity();
+		}
 	}
 
 	UAbilityTask_WaitGameplayEvent* ImpactTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TAG_Event_Combat_BlockImpact, nullptr, false, true);
@@ -177,7 +197,22 @@ void UAH_GA_Block::OnBlockImpact(FGameplayEventData Payload)
 void UAH_GA_Block::DrainStaminaForBlock(float PostureCost)
 {
 	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
-	const float StaminaDrain = PostureCost * BlockStaminaScale;
+	// Per-stance guard cost (the block BP is shared by every stance): SnS is the cheap shield guard, Dual Sword a poor one.
+	float Scale = BlockStaminaScale;
+	if (const AActor* StanceAvatar = GetAvatarActorFromActorInfo())
+	{
+		if (UBH_StanceComponent::FindStanceComponent(StanceAvatar))
+		{
+			const FGameplayTag StanceTag = UBH_StanceComponent::GetStanceTagOf(StanceAvatar);
+			if (StanceTag.IsValid())
+			{
+				if (StanceTag.MatchesTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Stance.Weapon.SwordShield")), false))) { Scale = 0.6f; }
+				else if (StanceTag.MatchesTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Stance.Weapon.Greatsword")), false))) { Scale = 1.0f; }
+				else if (StanceTag.MatchesTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Stance.Weapon.DualSword")), false))) { Scale = 1.3f; }
+			}
+		}
+	}
+	const float StaminaDrain = PostureCost * Scale;
 	if (!ASC || StaminaDrain <= 0.f)
 	{
 		return;

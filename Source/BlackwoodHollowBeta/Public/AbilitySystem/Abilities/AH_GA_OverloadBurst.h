@@ -7,7 +7,7 @@
 //
 // Activation: it is a UAH_GA_FragmentBase, so it is granted and fired by the
 // Heart-Fragment loadout (UBPC_HeartFragment::TryActivateFragment, keys 1-5).
-// There is no event trigger and no mana cost; the 20 s cooldown comes from
+// There is no event trigger and no resource cost; the 20 s cooldown comes from
 // UAH_GA_FragmentBase (tag Cooldown.Fragment.OverloadBurst). On activation (authority)
 // it still broadcasts Event.Combat.OverloadBurst on its ASC for BP_BlightVolume.
 

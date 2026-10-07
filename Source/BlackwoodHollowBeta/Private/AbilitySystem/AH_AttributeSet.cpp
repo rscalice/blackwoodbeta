@@ -3,6 +3,7 @@
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
+#include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "Combat/BH_CombatFeel.h"
 #include "GameplayCueManager.h"
 #include "GameplayEffectTypes.h"
@@ -20,22 +21,35 @@ static TAutoConsoleVariable<float> CVarBHPostureRegenDelay(
 
 static TAutoConsoleVariable<float> CVarBHStaminaRegenDelay(
 	TEXT("bh.Combat.StaminaRegenDelay"),
-	0.5f,
+	0.9f,
 	TEXT("Seconds passive stamina regeneration stays paused after any stamina spend (0 = no delay)."),
 	ECVF_Default);
+
+namespace BH_AttributeSetBlightPrivate
+{
+	/** Phase 8C: true for Blight DoT ticks (UAH_GE_BlightDoT or anything tagged Damage.Type.Blight). They bypass block mitigation and the DamageReceived reaction event. */
+	static bool IsBlightSpec(const FGameplayEffectSpec& Spec)
+	{
+		if (Spec.Def && Spec.Def->IsA(UAH_GE_BlightDoT::StaticClass()))
+		{
+			return true;
+		}
+		FGameplayTagContainer SpecAssetTags;
+		Spec.GetAllAssetTags(SpecAssetTags);
+		return SpecAssetTags.HasTag(TAG_Damage_Type_Blight);
+	}
+}
 
 UAH_AttributeSet::UAH_AttributeSet()
 {
 	InitHealth(100.f);
 	InitMaxHealth(100.f);
-	InitMana(50.f);
-	InitMaxMana(50.f);
 	InitPosture(100.f);
 	InitMaxPosture(100.f);
 	InitPostureRegenRate(5.f);
 	InitStamina(100.f);
 	InitMaxStamina(100.f);
-	InitStaminaRegenRate(25.f);
+	InitStaminaRegenRate(22.f);
 	InitAttackPower(10.f);
 	InitDefense(5.f);
 	InitAttackSpeed(1.f);
@@ -49,8 +63,6 @@ void UAH_AttributeSet::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Health, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, MaxHealth, COND_None, REPNOTIFY_Always);
-	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Mana, COND_None, REPNOTIFY_Always);
-	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, MaxMana, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Posture, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, MaxPosture, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, PostureRegenRate, COND_None, REPNOTIFY_Always);
@@ -69,10 +81,6 @@ void UAH_AttributeSet::ClampAttribute(const FGameplayAttribute& Attribute, float
 	{
 		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxHealth());
 	}
-	else if (Attribute == GetManaAttribute())
-	{
-		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxMana());
-	}
 	else if (Attribute == GetPostureAttribute())
 	{
 		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxPosture());
@@ -81,7 +89,7 @@ void UAH_AttributeSet::ClampAttribute(const FGameplayAttribute& Attribute, float
 	{
 		NewValue = FMath::Clamp(NewValue, 0.f, GetMaxStamina());
 	}
-	else if (Attribute == GetMaxHealthAttribute() || Attribute == GetMaxManaAttribute() || Attribute == GetMaxPostureAttribute()
+	else if (Attribute == GetMaxHealthAttribute() || Attribute == GetMaxPostureAttribute()
 		|| Attribute == GetMaxStaminaAttribute())
 	{
 		NewValue = FMath::Max(NewValue, 1.f);
@@ -212,7 +220,8 @@ bool UAH_AttributeSet::PreGameplayEffectExecute(FGameplayEffectModCallbackData& 
 	// Posture loss. Tunables live on the active block ability instance.
 	if (Data.EvaluatedData.Attribute == GetIncomingDamageAttribute()
 		&& Data.EvaluatedData.Magnitude > 0.f
-		&& Data.Target.HasMatchingGameplayTag(FBH_GameplayTags::Get().State_Combat_Blocking))
+		&& Data.Target.HasMatchingGameplayTag(FBH_GameplayTags::Get().State_Combat_Blocking)
+		&& !BH_AttributeSetBlightPrivate::IsBlightSpec(Data.EffectSpec))
 	{
 		if (const UAH_GA_Block* Block = UAH_GA_Block::FindActiveBlock(&Data.Target))
 		{
@@ -284,6 +293,16 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 				TargetASC->HandleGameplayEvent(Tags.Event_Combat_BlockImpact, &BlockEvent);
 			}
 		}
+		else if (DamageDone > 0.f && TargetASC && BH_AttributeSetBlightPrivate::IsBlightSpec(Data.EffectSpec))
+		{
+			// Blight DoT tick: Health only. No DamageReceived (that drives UAH_GA_HitReaction / flash), no posture, no cue.
+			FGameplayEventData BlightEvent;
+			BlightEvent.EventTag = Tags.Event_Combat_BlightDamage;
+			BlightEvent.Instigator = Instigator;
+			BlightEvent.Target = TargetActor;
+			BlightEvent.EventMagnitude = DamageDone;
+			TargetASC->HandleGameplayEvent(Tags.Event_Combat_BlightDamage, &BlightEvent);
+		}
 		else if (DamageDone > 0.f && TargetASC)
 		{
 			// Post-damage notification (UAH_GA_HitReaction, UI). Event.Combat.Hit is
@@ -312,7 +331,7 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 			TargetASC->HandleGameplayEvent(Tags.Event_Combat_Death, &DeathEvent);
 		}
 	}
-	// -- Health/Posture/Mana can also be modified directly by effects -----
+	// -- Health/Posture can also be modified directly by effects -----
 	else if (Data.EvaluatedData.Attribute == GetHealthAttribute())
 	{
 		const float NewHealth = FMath::Clamp(GetHealth(), 0.f, GetMaxHealth());
@@ -343,10 +362,6 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 		{
 			HandlePostureDepleted(TargetASC, Instigator, TargetActor);
 		}
-	}
-	else if (Data.EvaluatedData.Attribute == GetManaAttribute())
-	{
-		SetMana(FMath::Clamp(GetMana(), 0.f, GetMaxMana()));
 	}
 	else if (Data.EvaluatedData.Attribute == GetStaminaAttribute())
 	{
@@ -446,16 +461,6 @@ void UAH_AttributeSet::OnRep_Health(const FGameplayAttributeData& OldValue)
 void UAH_AttributeSet::OnRep_MaxHealth(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, MaxHealth, OldValue);
-}
-
-void UAH_AttributeSet::OnRep_Mana(const FGameplayAttributeData& OldValue)
-{
-	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, Mana, OldValue);
-}
-
-void UAH_AttributeSet::OnRep_MaxMana(const FGameplayAttributeData& OldValue)
-{
-	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, MaxMana, OldValue);
 }
 
 void UAH_AttributeSet::OnRep_Posture(const FGameplayAttributeData& OldValue)
