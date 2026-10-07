@@ -11,7 +11,7 @@
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "GameFramework/Actor.h"
 
-namespace
+namespace BH_BossHealthBar_Private
 {
 	const FName ShearDegreesParam(TEXT("ShearDegrees"));
 	const FName AspectRatioParam(TEXT("AspectRatio"));
@@ -21,6 +21,7 @@ namespace
 		return Image ? FVector2D(Image->GetCachedGeometry().GetLocalSize()) : FVector2D::ZeroVector;
 	}
 }
+using namespace BH_BossHealthBar_Private;
 
 UBH_BossHealthBarWidget::UBH_BossHealthBarWidget(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)

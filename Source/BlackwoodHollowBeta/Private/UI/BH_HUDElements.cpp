@@ -15,7 +15,7 @@
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 
-namespace
+namespace BH_HUDElements_Private
 {
 	const FName ShearDegreesParam(TEXT("ShearDegrees"));
 	const FName AspectRatioParam(TEXT("AspectRatio"));
@@ -33,6 +33,7 @@ namespace
 		return Image ? FVector2D(Image->GetCachedGeometry().GetLocalSize()) : FVector2D::ZeroVector;
 	}
 }
+using namespace BH_HUDElements_Private;
 
 // ============================================================================
 // FBH_TwoToneRatioText
