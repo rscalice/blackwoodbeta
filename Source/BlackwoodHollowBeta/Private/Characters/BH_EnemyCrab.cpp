@@ -15,6 +15,7 @@
 ABH_EnemyCrab::ABH_EnemyCrab()
 {
 	DisplayName = NSLOCTEXT("BlackwoodHollow", "CrabDefaultName", "Hollow Crab");
+	ScalingRowPrefix = TEXT("Crab");
 
 	Telegraph = CreateDefaultSubobject<UBH_TelegraphComponent>(TEXT("Telegraph"));
 
@@ -45,8 +46,6 @@ void ABH_EnemyCrab::BeginPlay()
 
 	if (HasAuthority() && AbilitySystemComponent)
 	{
-		ApplyInitialStats();
-
 		PostureBrokenHandle = AbilitySystemComponent->RegisterGameplayTagEvent(TAG_State_Combat_PostureBroken, EGameplayTagEventType::NewOrRemoved)
 			.AddUObject(this, &ABH_EnemyCrab::OnStatusTagChanged);
 		StaggeredHandle = AbilitySystemComponent->RegisterGameplayTagEvent(TAG_State_Combat_Staggered, EGameplayTagEventType::NewOrRemoved)
@@ -75,6 +74,16 @@ void ABH_EnemyCrab::EndPlay(const EEndPlayReason::Type EndPlayReason)
 // ============================================================================
 // Stats
 // ============================================================================
+
+void ABH_EnemyCrab::InitializeServerStats()
+{
+	// Called by ABH_EnemyBase::BeginPlay (server): this class's Initial* values, then the level scaling on top.
+	if (AbilitySystemComponent)
+	{
+		ApplyInitialStats();
+	}
+	Super::InitializeServerStats();
+}
 
 void ABH_EnemyCrab::ApplyInitialStats_Implementation()
 {

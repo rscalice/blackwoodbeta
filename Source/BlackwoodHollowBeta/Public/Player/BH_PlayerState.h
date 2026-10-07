@@ -18,6 +18,7 @@
 
 class UNarrativeInventoryComponent;
 class UAH_GA_FragmentBase;
+class UBH_ProgressionComponent;
 
 /** Broadcast (server and owning client) when a fragment slot changes. SlotIndex -1 = several / unknown slots changed. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnFragmentSlotsChanged, int32, SlotIndex);
@@ -32,6 +33,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Inventory")
 	UNarrativeInventoryComponent* GetInventory() const { return Inventory; }
+
+	/** Phase 9: replicated XP / level (survives pawn respawns; applies the level to each new pawn). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Progression")
+	UBH_ProgressionComponent* GetProgression() const { return Progression; }
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
@@ -81,6 +86,9 @@ public:
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Inventory")
 	TObjectPtr<UNarrativeInventoryComponent> Inventory;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Progression")
+	TObjectPtr<UBH_ProgressionComponent> Progression;
 
 	/**
 	 * Category restriction per slot (index 0 = key 1). Default {Offensive, Vitality, BlightResist}: Overload Burst (Offensive)

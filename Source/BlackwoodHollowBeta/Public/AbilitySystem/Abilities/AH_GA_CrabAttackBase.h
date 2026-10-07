@@ -6,7 +6,8 @@
 //   1. Event.Combat.Hit to the victim first (a parry reacts to it),
 //   2. parried -> stop (the parry ability handles posture),
 //   3. blocked? (target holds a block and the attacker is inside its arc),
-//   4. Damage GE (tagged Damage.Type.Melee, SetByCaller Data.Damage) and, unless blocked, the Posture GE,
+//   4. Damage GE (tagged Damage.Type.Melee; UAH_GE_Damage_Formula with SetByCaller Data.Damage / Data.DamageMultiplier /
+//      Data.AttackPowerScale) and, unless blocked, the Posture GE,
 //   5. tiered pushback and the GameplayCue.Combat.Hit cue (hit-stop / shake).
 //
 // Server only (NetExecutionPolicy ServerOnly, instanced per actor). The AI starts the abilities from the Behavior Tree
@@ -56,17 +57,23 @@ public:
 
 	// -- Damage (BH|Crab|Damage) ---------------------------------------------------------------
 
-	/** Flat damage per hit before AttackPower / Defense. */
+	/** Flat damage per hit before AttackPower and the multiplier (Data.Damage of the damage formula). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Damage", meta = (ClampMin = "0.0"))
 	float BaseDamage = 4.f;
 
+	/** Per-attack damage multiplier (Data.DamageMultiplier), on top of the crab's combat identity multiplier. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Damage", meta = (ClampMin = "0.0"))
+	float AttackDamageMultiplier = 1.f;
+
+	/** Add the crab's AttackPower to BaseDamage (Data.AttackPowerScale 1, else 0). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Damage")
 	bool bAddAttackPower = true;
 
+	/** No longer used (Phase 9): Defense is always applied by the damage formula, as a divisor. Kept so existing Blueprints still load. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Damage")
 	bool bSubtractTargetDefense = true;
 
-	/** Floor after Defense. */
+	/** No longer used (Phase 9): the damage formula floors every hit at 1. Kept so existing Blueprints still load. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Damage", meta = (ClampMin = "0.0"))
 	float MinimumDamage = 1.f;
 
@@ -136,7 +143,10 @@ protected:
 	/** Full damage / posture / pushback / cue pipeline for one victim. Server. Each victim only once per activation unless bAllowRepeat. */
 	FBH_CrabHitOutcome ResolveHitOnActor(AActor* Victim, const FVector& ImpactPoint, bool bAllowRepeat = false);
 
-	/** Damage for Target (BaseDamage + AttackPower - Defense, identity multiplier, floor). */
+	/** Data.DamageMultiplier of this attack: AttackDamageMultiplier * the crab's combat identity multiplier. */
+	float GetDamageMultiplier() const;
+
+	/** Final damage for Target: UBH_CombatFunctionLibrary::ComputeDamage with the inputs the damage GE gets (for hit-feel tiers). */
 	float CalculateDamage(const AActor* Target) const;
 
 	/** Horizontal lunge: moves the crab Distance cm along Direction over Duration seconds (override root motion, ends at rest). */

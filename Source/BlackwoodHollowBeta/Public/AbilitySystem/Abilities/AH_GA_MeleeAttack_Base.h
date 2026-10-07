@@ -106,26 +106,31 @@ public:
 
 	// -- Damage ------------------------------------------------------------------
 
-	/** Instant GE that adds SetByCaller(Data.Damage) to UAH_AttributeSet::IncomingDamage. */
+	/**
+	 * Instant GE that applies the hit. Default UAH_GE_Damage_Formula: it receives BaseDamage / the multiplier / the AttackPower scale as
+	 * SetByCaller keys and runs UAH_ExecCalc_Damage (UBH_CombatFunctionLibrary::ComputeDamage). A legacy GE that only reads Data.Damage
+	 * (e.g. UAH_GE_MeleeDamage) is sent the FINAL damage number instead.
+	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Damage")
 	TSubclassOf<UGameplayEffect> DamageEffectClass;
 
-	/** Flat damage per hit before multipliers. */
+	/** Flat damage per hit before AttackPower and multipliers (Data.Damage). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Damage", meta = (ClampMin = "0.0"))
 	float BaseDamage = 10.f;
 
-	/** Add the attacker's AttackPower attribute to BaseDamage. */
+	/** Add the attacker's AttackPower to BaseDamage (Data.AttackPowerScale 1, else 0: shield bash). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Damage")
 	bool bAddAttackPower = true;
 
-	/** Subtract the target's Defense attribute (result never drops below MinimumDamage). */
+	/** No longer used (Phase 9): Defense is always applied by the damage formula, as a divisor. Kept so existing Blueprints still load. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Damage")
 	bool bSubtractTargetDefense = true;
 
+	/** No longer used (Phase 9): the damage formula floors every hit at 1. Kept so existing Blueprints still load. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Damage", meta = (ClampMin = "0.0"))
 	float MinimumDamage = 1.f;
 
-	/** Per-step multiplier, indexed like ComboSectionNames. Missing entries count as 1.0. */
+	/** Per-step multiplier, indexed like ComboSectionNames. Missing entries count as 1.0. This is the attack's damage multiplier source (Data.DamageMultiplier). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Damage")
 	TArray<float> ComboStepDamageMultipliers;
 
@@ -209,7 +214,12 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Melee", meta = (DisplayName = "On Attack Parried"))
 	void K2_OnAttackParried(AActor* Parrier);
 
-	/** Override to customise final damage (default: (Base [+AttackPower]) * StepMult * HitboxMult [- Defense]). */
+	/**
+	 * Final damage this hit would deal to Target: UBH_CombatFunctionLibrary::ComputeDamage with the same inputs the damage GE gets
+	 * (BaseDamage, attacker AttackPower * scale, GetDamageMultiplier, target Defense). Used for hit-feel tiers, pushback and K2_OnHitConfirmed
+	 * so they match the real number. The GE itself recomputes it from the SetByCaller inputs, so overriding this does not change the damage
+	 * dealt (override GetDamageMultiplier-style data via ComboStepDamageMultipliers instead) unless DamageEffectClass is a legacy raw GE.
+	 */
 	UFUNCTION(BlueprintNativeEvent, Category = "Melee|Damage")
 	float CalculateDamage(AActor* Target, int32 ComboStep, float HitboxMultiplier) const;
 
@@ -252,6 +262,9 @@ private:
 
 	/** Makes the montage stop at the end of SectionName instead of flowing into the next section. */
 	void UnlinkSection(FName SectionName) const;
+
+	/** Data.DamageMultiplier for one hit: step multiplier * hitbox multiplier * the pawn's combat identity multiplier (* RiposteDamageMultiplier when bRiposte). */
+	float GetDamageMultiplier(int32 ComboStep, float HitboxMultiplier, bool bRiposte) const;
 
 	float GetStepDamageMultiplier(int32 ComboStep) const;
 	float GetStepPostureMultiplier(int32 ComboStep) const;

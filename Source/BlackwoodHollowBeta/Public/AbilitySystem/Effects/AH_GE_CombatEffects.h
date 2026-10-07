@@ -16,8 +16,10 @@
 class UAbilitySystemComponent;
 
 /**
- * Instant: IncomingDamage += SetByCaller(Data.Damage).
+ * Instant: IncomingDamage += SetByCaller(Data.Damage), RAW (no AttackPower, no Defense).
  * UAH_AttributeSet routes IncomingDamage into Health in PostGameplayEffectExecute.
+ * Phase 9: melee / crab attacks now use UAH_GE_Damage_Formula; this effect stays for "true damage" callers and for legacy Blueprint
+ * abilities (UAH_GA_MeleeAttack_Base / UAH_GA_CrabAttackBase send the FINAL number when DamageEffectClass is not a formula effect).
  */
 UCLASS()
 class BLACKWOODHOLLOWBETA_API UAH_GE_MeleeDamage : public UGameplayEffect
@@ -26,6 +28,20 @@ class BLACKWOODHOLLOWBETA_API UAH_GE_MeleeDamage : public UGameplayEffect
 
 public:
 	UAH_GE_MeleeDamage();
+};
+
+/**
+ * Phase 9: the one melee damage effect. Instant, runs UAH_ExecCalc_Damage:
+ * IncomingDamage += ComputeDamage(Data.Damage, source AttackPower, Data.AttackPowerScale, Data.DamageMultiplier, target Defense).
+ * Default DamageEffectClass of UAH_GA_MeleeAttack_Base and UAH_GA_CrabAttackBase.
+ */
+UCLASS()
+class BLACKWOODHOLLOWBETA_API UAH_GE_Damage_Formula : public UGameplayEffect
+{
+	GENERATED_BODY()
+
+public:
+	UAH_GE_Damage_Formula();
 };
 
 /**
@@ -122,6 +138,40 @@ class BLACKWOODHOLLOWBETA_API UAH_GE_EquipmentStatMod : public UGameplayEffect
 
 public:
 	UAH_GE_EquipmentStatMod();
+};
+
+/**
+ * Phase 9: armor weight class. Infinite; StaminaRegenRate Multiplicative by SetByCaller(Data.Equip.StaminaRegenMult).
+ * This base class is the Cloth effect (no tag); UAH_GE_ArmorWeight_Medium / _Heavy add State.Armor.Weight.Medium / .Heavy.
+ * Applied (one at a time, the heaviest equipped class) by UBH_LoadoutComponent::RefreshArmorStatMods.
+ */
+UCLASS()
+class BLACKWOODHOLLOWBETA_API UAH_GE_ArmorWeight : public UGameplayEffect
+{
+	GENERATED_BODY()
+
+public:
+	UAH_GE_ArmorWeight();
+};
+
+/** UAH_GE_ArmorWeight + grants State.Armor.Weight.Medium. */
+UCLASS()
+class BLACKWOODHOLLOWBETA_API UAH_GE_ArmorWeight_Medium : public UAH_GE_ArmorWeight
+{
+	GENERATED_BODY()
+
+public:
+	UAH_GE_ArmorWeight_Medium();
+};
+
+/** UAH_GE_ArmorWeight + grants State.Armor.Weight.Heavy. */
+UCLASS()
+class BLACKWOODHOLLOWBETA_API UAH_GE_ArmorWeight_Heavy : public UAH_GE_ArmorWeight
+{
+	GENERATED_BODY()
+
+public:
+	UAH_GE_ArmorWeight_Heavy();
 };
 
 // ---------------------------------------------------------------------------

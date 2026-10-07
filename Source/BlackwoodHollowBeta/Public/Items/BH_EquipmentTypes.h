@@ -75,6 +75,18 @@ enum class EBH_LoadoutSet : uint8
 	B
 };
 
+/**
+ * Armor weight class (UBH_ArmorItem::WeightClass). The HEAVIEST equipped piece decides: it scales stamina regen
+ * (UAH_GE_ArmorWeight) and dodge distance (UAH_GA_Dodge), both tuned in UBH_RPGSettings. Cloth grants no tag.
+ */
+UENUM(BlueprintType)
+enum class EBH_ArmorWeightClass : uint8
+{
+	Cloth,
+	Medium,
+	Heavy
+};
+
 UCLASS()
 class BLACKWOODHOLLOWBETA_API UBH_EquipmentLibrary : public UBlueprintFunctionLibrary
 {

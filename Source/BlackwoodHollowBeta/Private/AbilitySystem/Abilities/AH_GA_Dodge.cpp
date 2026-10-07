@@ -5,6 +5,7 @@
 #include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "Combat/BH_CombatFeel.h"
+#include "Progression/BH_RPGSettings.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Animation/AnimMontage.h"
@@ -171,7 +172,24 @@ void UAH_GA_Dodge::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 			const FString StanceName = UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(Avatar);
 			StanceScale = StanceName.IsEmpty() ? nullptr : StanceRootMotionScale.Find(FName(*StanceName));
 		}
-		MutableCharacter->SetAnimRootMotionTranslationScale(StanceScale ? *StanceScale : RootMotionTranslationScale);
+
+		// Armor weight shortens the roll (State.Armor.Weight.* is granted by UBH_LoadoutComponent's weight effect).
+		EBH_ArmorWeightClass ArmorWeight = EBH_ArmorWeightClass::Cloth;
+		if (const UAbilitySystemComponent* OwnerASC = GetAbilitySystemComponentFromActorInfo())
+		{
+			if (OwnerASC->HasMatchingGameplayTag(TAG_State_Armor_Weight_Heavy))
+			{
+				ArmorWeight = EBH_ArmorWeightClass::Heavy;
+			}
+			else if (OwnerASC->HasMatchingGameplayTag(TAG_State_Armor_Weight_Medium))
+			{
+				ArmorWeight = EBH_ArmorWeightClass::Medium;
+			}
+		}
+		const UBH_RPGSettings* RPGSettings = UBH_RPGSettings::Get();
+		const float WeightScale = RPGSettings ? RPGSettings->GetDodgeDistanceMultiplier(ArmorWeight) : 1.f;
+
+		MutableCharacter->SetAnimRootMotionTranslationScale((StanceScale ? *StanceScale : RootMotionTranslationScale) * WeightScale);
 		ScaledCharacter = MutableCharacter;
 	}
 

@@ -15,6 +15,7 @@
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "Components/BPC_HeartFragment.h"
 #include "Combat/BH_LoadoutComponent.h"
+#include "Progression/BH_ProgressionComponent.h"
 #include "Characters/BH_EnemyBase.h"
 #include "Characters/BH_CharacterBase.h"
 #include "Combat/BH_StanceComponent.h"
@@ -186,6 +187,16 @@ bool UBH_CombatFunctionLibrary::SetupCombatCharacter(AActor* OwningActor, TSubcl
 			UBH_LoadoutComponent* Loadout = NewObject<UBH_LoadoutComponent>(Pawn, TEXT("Loadout"));
 			Pawn->AddInstanceComponent(Loadout);
 			Loadout->RegisterComponent();
+		}
+
+		// Phase 9: a player pawn (re)spawned with the PlayerState's level gets that level's stats now that the attribute set exists.
+		// (Also applied from UBH_ProgressionComponent on possess; this covers the case where possession came first.)
+		if (Pawn->HasAuthority())
+		{
+			if (UBH_ProgressionComponent* Progression = UBH_ProgressionComponent::FindProgression(Pawn))
+			{
+				Progression->ApplyToPawn(Pawn);
+			}
 		}
 	}
 
@@ -421,6 +432,12 @@ bool UBH_CombatFunctionLibrary::CheckStaminaCost(const UAbilitySystemComponent* 
 
 	const float Stamina = ASC->GetNumericAttribute(UAH_AttributeSet::GetStaminaAttribute());
 	return bAllowOvercommit ? Stamina > 0.f : Stamina >= Cost;
+}
+
+float UBH_CombatFunctionLibrary::ComputeDamage(float BaseDamage, float AttackPower, float AttackPowerScale, float Multiplier, float Defense)
+{
+	const float Raw = (BaseDamage + AttackPower * AttackPowerScale) * Multiplier;
+	return FMath::Max(1.f, Raw * 100.f / (100.f + FMath::Max(0.f, Defense)));
 }
 
 bool UBH_CombatFunctionLibrary::ApplyStaminaCost(UAbilitySystemComponent* ASC, float Cost)

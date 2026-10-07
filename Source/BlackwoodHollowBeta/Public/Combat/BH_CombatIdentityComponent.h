@@ -129,6 +129,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Stats", meta = (ClampMin = "0"))
 	float OutgoingCombatMultiplier = 1.f;
 
+	/** Phase 9: XP granted to every living player within UBH_RPGSettings::XPShareRadius when this character dies (no scaling-table rows here; ABH_EnemyBase uses the enemy curve table). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Stats", meta = (ClampMin = "0"))
+	int32 XPReward = 10;
+
 	// -- Collision ----------------------------------------------------------------------
 
 	/** Makes the capsule Block the Pawn channel on every machine (GASP's capsule profile ignores it, so pawns would pass through each other). Melee hitboxes use object-type sweeps and are unaffected. */

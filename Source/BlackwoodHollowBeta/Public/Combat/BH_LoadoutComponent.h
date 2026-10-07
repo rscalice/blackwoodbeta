@@ -159,6 +159,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Loadout")
 	void RefreshArmorStatMods();
 
+	/**
+	 * The heaviest WeightClass among the equipped (active) armor pieces. @return false when no armor is equipped
+	 * (OutWeight is then Cloth). Works on any machine (reads the replicated inventory).
+	 */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Loadout")
+	bool GetEquippedArmorWeight(EBH_ArmorWeightClass& OutWeight) const;
+
 	/** Multi-line dump of slots, stances, active set and the three stats (for console/verification). */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Loadout")
 	FString DescribeState() const;
@@ -186,6 +193,12 @@ private:
 
 	/** Server-only: armor stat-mod handles, one per equipped piece (weapons keep theirs on the item). */
 	TMap<TWeakObjectPtr<UBH_ArmorItem>, FActiveGameplayEffectHandle> ArmorStatModHandles;
+
+	/** Server-only: the single armor-weight effect (stamina regen multiplier + State.Armor.Weight.* tag) for the heaviest equipped class. */
+	FActiveGameplayEffectHandle ArmorWeightHandle;
+
+	/** Server-only: EBH_ArmorWeightClass the current ArmorWeightHandle was built for, -1 when none is applied. */
+	int32 AppliedArmorWeightIndex = -1;
 
 	FTimerHandle ReconcileTimer;
 	FTimerHandle PresetTimer;

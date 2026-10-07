@@ -13,8 +13,10 @@
 // collision profile and simulates its physics asset (on every machine, driven by the replicated Dead phase), and the actor
 // despawns DespawnDelay seconds later.
 //
-// STATS: ApplyInitialStats (BlueprintNativeEvent) runs on the server at BeginPlay. The defaults (MaxHealth 45, MaxPosture 30)
-// are EditDefaultsOnly, so the Blueprint can change them; untick bApplyStatOverrides to keep the attribute set's own defaults.
+// STATS: ApplyInitialStats (BlueprintNativeEvent) runs on the server at BeginPlay (through InitializeServerStats). The defaults
+// (MaxHealth 45, MaxPosture 30) are EditDefaultsOnly, so the Blueprint can change them; untick bApplyStatOverrides to keep the
+// attribute set's own defaults. Phase 9: after that the enemy level scaling (ScalingRowPrefix "Crab", ABH_EnemyBase::ApplyLevelScaling)
+// overrides every stat that has a row in the enemy curve table, so the Initial* values are the level-1 fallback when the table is absent.
 
 #pragma once
 
@@ -108,6 +110,9 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void OnDeathNative(AActor* Killer) override;
+
+	/** Initial* stats first, then the level scaling (Super). */
+	virtual void InitializeServerStats() override;
 
 	/** Server, BeginPlay: writes the Initial* stats into the attribute set. Override per Blueprint to do something else. */
 	UFUNCTION(BlueprintNativeEvent, Category = "BlackwoodHollow|Crab|Stats")

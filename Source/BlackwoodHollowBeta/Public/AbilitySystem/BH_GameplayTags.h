@@ -103,6 +103,16 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Equip_Defense);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Equip_MaxStamina);
 
 // ---------------------------------------------------------------------------
+// Phase 9: RPG scaling -- damage formula SetByCaller keys, armor weight class
+// ---------------------------------------------------------------------------
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_DamageMultiplier);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_AttackPowerScale);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Equip_StaminaRegenMult);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Armor_Weight_Medium);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Armor_Weight_Heavy);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_GameplayCue_Player_LevelUp);
+
+// ---------------------------------------------------------------------------
 // Phase 3: Stance.Weapon.* -- weapon stance (source of truth: UBH_StanceComponent::CurrentStance, replicated;
 // mirrored as a loose tag on the ASC on every machine)
 // ---------------------------------------------------------------------------

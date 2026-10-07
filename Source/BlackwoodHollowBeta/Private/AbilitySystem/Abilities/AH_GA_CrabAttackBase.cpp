@@ -34,7 +34,7 @@ UAH_GA_CrabAttackBase::UAH_GA_CrabAttackBase()
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Attacking);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Dodging);
 
-	DamageEffectClass = UAH_GE_MeleeDamage::StaticClass();
+	DamageEffectClass = UAH_GE_Damage_Formula::StaticClass();
 	PostureDamageEffectClass = UAH_GE_PostureDamage::StaticClass();
 	HitCueTag = TAG_GameplayCue_Combat_Hit;
 }
@@ -225,26 +225,30 @@ void UAH_GA_CrabAttackBase::CollectPawnsInSphere(const FVector& Center, float Ra
 	}
 }
 
+float UAH_GA_CrabAttackBase::GetDamageMultiplier() const
+{
+	return AttackDamageMultiplier * UBH_CombatIdentityComponent::GetOutgoingCombatMultiplier(GetAvatarActorFromActorInfo());
+}
+
 float UAH_GA_CrabAttackBase::CalculateDamage(const AActor* Target) const
 {
-	float Damage = BaseDamage;
 	const UAbilitySystemComponent* SourceASC = GetAbilitySystemComponentFromActorInfo();
-	if (bAddAttackPower && SourceASC && SourceASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetAttackPowerAttribute()))
+	float AttackPower = 0.f;
+	if (SourceASC && SourceASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetAttackPowerAttribute()))
 	{
-		Damage += SourceASC->GetNumericAttribute(UAH_AttributeSet::GetAttackPowerAttribute());
+		AttackPower = SourceASC->GetNumericAttribute(UAH_AttributeSet::GetAttackPowerAttribute());
 	}
-	Damage *= UBH_CombatIdentityComponent::GetOutgoingCombatMultiplier(GetAvatarActorFromActorInfo());
-	if (bSubtractTargetDefense)
+
+	float Defense = 0.f;
+	if (const UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(const_cast<AActor*>(Target)))
 	{
-		if (const UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(const_cast<AActor*>(Target)))
+		if (TargetASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetDefenseAttribute()))
 		{
-			if (TargetASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetDefenseAttribute()))
-			{
-				Damage -= TargetASC->GetNumericAttribute(UAH_AttributeSet::GetDefenseAttribute());
-			}
+			Defense = TargetASC->GetNumericAttribute(UAH_AttributeSet::GetDefenseAttribute());
 		}
 	}
-	return FMath::Max(Damage, MinimumDamage);
+
+	return UBH_CombatFunctionLibrary::ComputeDamage(BaseDamage, AttackPower, bAddAttackPower ? 1.f : 0.f, GetDamageMultiplier(), Defense);
 }
 
 FBH_CrabHitOutcome UAH_GA_CrabAttackBase::ResolveHitOnActor(AActor* Victim, const FVector& ImpactPoint, bool bAllowRepeat)
@@ -310,11 +314,22 @@ FBH_CrabHitOutcome UAH_GA_CrabAttackBase::ResolveHitOnActor(AActor* Victim, cons
 	float DamageApplied = 0.f;
 	if (DamageEffectClass)
 	{
+		// DamageApplied is the real number for hit-feel (same inputs as the GE); the formula GE gets the raw inputs instead.
 		DamageApplied = CalculateDamage(Victim);
 		FGameplayEffectSpecHandle DamageSpec = MakeOutgoingGameplayEffectSpec(DamageEffectClass, GetAbilityLevel());
 		if (DamageSpec.IsValid() && DamageSpec.Data.IsValid())
 		{
-			DamageSpec.Data->SetSetByCallerMagnitude(TAG_Data_Damage, DamageApplied);
+			if (DamageEffectClass->IsChildOf(UAH_GE_Damage_Formula::StaticClass()))
+			{
+				DamageSpec.Data->SetSetByCallerMagnitude(TAG_Data_Damage, BaseDamage);
+				DamageSpec.Data->SetSetByCallerMagnitude(TAG_Data_DamageMultiplier, GetDamageMultiplier());
+				DamageSpec.Data->SetSetByCallerMagnitude(TAG_Data_AttackPowerScale, bAddAttackPower ? 1.f : 0.f);
+			}
+			else
+			{
+				// Legacy raw GE (reads Data.Damage only): hand it the final number.
+				DamageSpec.Data->SetSetByCallerMagnitude(TAG_Data_Damage, DamageApplied);
+			}
 			DamageSpec.Data->AddDynamicAssetTag(TAG_Damage_Type_Melee);
 			DamageSpec.Data->GetContext().AddHitResult(HitResult, true);
 			SourceASC->ApplyGameplayEffectSpecToTarget(*DamageSpec.Data.Get(), TargetASC);

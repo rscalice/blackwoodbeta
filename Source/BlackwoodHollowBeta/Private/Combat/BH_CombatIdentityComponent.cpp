@@ -8,6 +8,7 @@
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
+#include "Progression/BH_ProgressionComponent.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemInterface.h"
 #include "Abilities/GameplayAbility.h"
@@ -290,6 +291,7 @@ void UBH_CombatIdentityComponent::ApplyStartingStance()
 void UBH_CombatIdentityComponent::HandleHealthZero(AActor* Killer)
 {
 	// The attribute set adds the loose State.Combat.Dead tag right after this broadcast.
+	const bool bWasDead = bDead;
 	bDead = true;
 
 	if (UAbilitySystemComponent* ASC = ResolveASC())
@@ -305,6 +307,10 @@ void UBH_CombatIdentityComponent::HandleHealthZero(AActor* Killer)
 		}
 	}
 
+	if (!bWasDead)
+	{
+		UBH_ProgressionComponent::GrantKillXP(GetOwner(), XPReward);
+	}
 	OnDeath.Broadcast(Killer);
 }
 

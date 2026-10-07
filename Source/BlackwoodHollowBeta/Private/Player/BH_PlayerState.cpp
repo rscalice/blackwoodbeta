@@ -6,6 +6,7 @@
 #include "AbilitySystem/Abilities/AH_GA_OverloadBurst.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Components/BPC_HeartFragment.h"
+#include "Progression/BH_ProgressionComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Net/UnrealNetwork.h"
 #include "Components/ActorComponent.h"
@@ -23,6 +24,9 @@ ABH_PlayerState::ABH_PlayerState()
 	{
 		Flag->SetPropertyValue_InContainer(Inventory, false);
 	}
+
+	// Phase 9: XP / level (the component is replicated by default).
+	Progression = CreateDefaultSubobject<UBH_ProgressionComponent>(TEXT("Progression"));
 
 	// PlayerState defaults to ~1 Hz; equipment changes should reach the client quickly (we also ForceNetUpdate on changes).
 	SetNetUpdateFrequency(10.f);

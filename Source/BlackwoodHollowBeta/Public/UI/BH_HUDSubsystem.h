@@ -19,6 +19,7 @@
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "Engine/TimerHandle.h"
 #include "GameplayEffectTypes.h"
+#include "Progression/BH_LevelUpInfo.h"
 #include "BH_HUDSubsystem.generated.h"
 
 class APawn;
@@ -28,6 +29,7 @@ class UBH_BossHealthBarWidget;
 class UBH_CombatIdentityComponent;
 class UAbilitySystemComponent;
 class UWorld;
+class SWidget;
 
 UCLASS()
 class BLACKWOODHOLLOWBETA_API UBH_HUDSubsystem : public ULocalPlayerSubsystem
@@ -65,6 +67,24 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
 	AActor* GetPresentedBoss() const { return PresentedBoss.Get(); }
 
+	/**
+	 * Phase 9: level-up flourish. Tells the main HUD (On Level Up event) and, when UBH_HUDWidget::bShowNativeLevelUpText is set,
+	 * shows a plain "Level N" text for LevelUpTextSeconds (~2 s). Safe to call before the HUD exists (the native text still shows).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|HUD")
+	void ShowLevelUp(int32 NewLevel);
+
+	/**
+	 * Phase 9: level-up flourish with the stat gains. Tells the main HUD (UBH_HUDWidget::NotifyLevelUp -> LevelUpBanner, "On Level Up" event).
+	 * The plain native "Level N" text is shown only when bShowNativeLevelUpText is set AND the main HUD has no LevelUpBanner bound.
+	 * ShowLevelUp(int32) forwards here with an info that has no stat gains.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|HUD")
+	void ShowLevelUpDetailed(const FBH_LevelUpInfo& Info);
+
+	/** Seconds the native "Level N" text stays up. */
+	static constexpr float LevelUpTextSeconds = 2.f;
+
 	virtual void Deinitialize() override;
 
 private:
@@ -95,6 +115,11 @@ private:
 	void OnBossHealthChanged(const FOnAttributeChangeData& ChangeData);
 	TWeakObjectPtr<UAbilitySystemComponent> BossHealthASC;
 	FDelegateHandle BossHealthHandle;
+
+	void HideLevelUpText();
+	TSharedPtr<SWidget> LevelUpTextWidget;
+	FTimerHandle LevelUpTextTimer;
+	TWeakObjectPtr<UWorld> LevelUpWorld;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UBH_HUDWidget> MainHUD;

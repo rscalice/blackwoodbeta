@@ -3,6 +3,7 @@
 #include "AI/BH_EnemyWaveSpawner.h"
 #include "AI/BH_AIController.h"
 #include "Combat/BH_CombatIdentityComponent.h"
+#include "Characters/BH_EnemyBase.h"
 #include "Combat/BH_CombatTeam.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Components/ArrowComponent.h"
@@ -13,8 +14,49 @@
 #include "GameFramework/Pawn.h"
 #include "NavigationSystem.h"
 #include "Engine/World.h"
+#include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/SCS_Node.h"
+#include "Engine/SimpleConstructionScript.h"
 #include "TimerManager.h"
 #include "CollisionQueryParams.h"
+
+namespace BH_WaveSpawner_Private
+{
+	/**
+	 * True when EnemyClass is a Blueprint class whose UBH_CombatIdentityComponent template has bIsBoss. The component is added in the
+	 * Blueprint (SCS), so it is read from the construction script of every Blueprint class in the chain, resolved against the most
+	 * derived class so a child Blueprint's override of bIsBoss wins.
+	 */
+	static bool IsBossClass(UClass* EnemyClass)
+	{
+		UBlueprintGeneratedClass* Leaf = Cast<UBlueprintGeneratedClass>(EnemyClass);
+		if (!Leaf)
+		{
+			return false;
+		}
+		for (UClass* Class = EnemyClass; Class; Class = Class->GetSuperClass())
+		{
+			const UBlueprintGeneratedClass* BPClass = Cast<UBlueprintGeneratedClass>(Class);
+			if (!BPClass || !BPClass->SimpleConstructionScript)
+			{
+				continue;
+			}
+			for (const USCS_Node* Node : BPClass->SimpleConstructionScript->GetAllNodes())
+			{
+				if (!Node || !Node->ComponentClass || !Node->ComponentClass->IsChildOf(UBH_CombatIdentityComponent::StaticClass()))
+				{
+					continue;
+				}
+				const UBH_CombatIdentityComponent* Template = Cast<UBH_CombatIdentityComponent>(Node->GetActualComponentTemplate(Leaf));
+				if (Template && Template->bIsBoss)
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+}
 
 ABH_EnemyWaveSpawner::ABH_EnemyWaveSpawner()
 {
@@ -93,6 +135,85 @@ int32 ABH_EnemyWaveSpawner::GetAliveCount() const
 }
 
 // ============================================================================
+// Debug
+// ============================================================================
+
+void ABH_EnemyWaveSpawner::DebugSkipToWave(int32 WaveNumber)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	const int32 WaveIndex = WaveNumber - 1;
+	if (!Waves.IsValidIndex(WaveIndex))
+	{
+		UE_LOG(LogBHCombat, Warning, TEXT("WaveSpawner '%s': SkipToWave %d is out of range (1..%d)."), *GetName(), WaveNumber, Waves.Num());
+		return;
+	}
+
+	StopWaves();
+
+	// Clear the field: untrack first (so nothing counts as a death), then remove.
+	const TArray<TObjectPtr<APawn>> Living = Alive;
+	for (APawn* Pawn : Living)
+	{
+		ReleaseEnemy(Pawn);
+		if (IsValid(Pawn))
+		{
+			Pawn->Destroy();
+		}
+	}
+	Alive.Reset();
+
+	UE_LOG(LogBHCombat, Log, TEXT("WaveSpawner '%s': debug skip to wave %d."), *GetName(), WaveNumber);
+	bRunning = true;
+	BeginWave(WaveIndex);
+}
+
+TSubclassOf<APawn> ABH_EnemyWaveSpawner::FindBossClass() const
+{
+	for (int32 WaveIndex = Waves.Num() - 1; WaveIndex >= 0; --WaveIndex)
+	{
+		for (const FBH_WaveEntry& Entry : Waves[WaveIndex].Entries)
+		{
+			if (Entry.EnemyClass && BH_WaveSpawner_Private::IsBossClass(Entry.EnemyClass.Get()))
+			{
+				return Entry.EnemyClass;
+			}
+		}
+	}
+	return nullptr;
+}
+
+void ABH_EnemyWaveSpawner::DebugSpawnBoss()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	TSubclassOf<APawn> BossClass = FindBossClass();
+	if (!BossClass)
+	{
+		// Nothing is flagged bIsBoss: the boss is, by convention, the last entry of the last wave that has entries.
+		for (int32 WaveIndex = Waves.Num() - 1; WaveIndex >= 0 && !BossClass; --WaveIndex)
+		{
+			for (int32 EntryIndex = Waves[WaveIndex].Entries.Num() - 1; EntryIndex >= 0 && !BossClass; --EntryIndex)
+			{
+				BossClass = Waves[WaveIndex].Entries[EntryIndex].EnemyClass;
+			}
+		}
+		UE_LOG(LogBHCombat, Warning, TEXT("WaveSpawner '%s': no wave entry has bIsBoss on its identity component; falling back to the last entry of the last wave (%s)."), *GetName(), *GetNameSafe(BossClass));
+	}
+	if (!BossClass)
+	{
+		UE_LOG(LogBHCombat, Warning, TEXT("WaveSpawner '%s': SpawnBoss has no wave entries to take a boss from."), *GetName());
+		return;
+	}
+	SpawnEnemy(BossClass, SpawnedInWave, 1);
+	++SpawnedInWave;
+}
+
+// ============================================================================
 // Waves
 // ============================================================================
 
@@ -111,7 +232,10 @@ void ABH_EnemyWaveSpawner::BeginWave(int32 WaveIndex)
 	{
 		for (int32 i = 0; i < Entry.SpawnCount; ++i)
 		{
-			PendingSpawns.Add(Entry.EnemyClass);
+			FBH_PendingWaveSpawn Pending;
+			Pending.EnemyClass = Entry.EnemyClass;
+			Pending.EnemyLevel = FMath::Max(1, Entry.EnemyLevel);
+			PendingSpawns.Add(Pending);
 		}
 	}
 
@@ -138,9 +262,9 @@ void ABH_EnemyWaveSpawner::SpawnNext()
 		return;
 	}
 
-	const TSubclassOf<APawn> EnemyClass = PendingSpawns[0];
+	const FBH_PendingWaveSpawn Next = PendingSpawns[0];
 	PendingSpawns.RemoveAt(0);
-	SpawnEnemy(EnemyClass, SpawnedInWave);
+	SpawnEnemy(Next.EnemyClass, SpawnedInWave, Next.EnemyLevel);
 	++SpawnedInWave;
 
 	if (PendingSpawns.IsEmpty())
@@ -211,7 +335,7 @@ FVector ABH_EnemyWaveSpawner::ResolveSpawnLocation(TSubclassOf<APawn> EnemyClass
 	return Floor + FVector(0.f, 0.f, HalfHeight + 2.f);
 }
 
-APawn* ABH_EnemyWaveSpawner::SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 SpawnIndex)
+APawn* ABH_EnemyWaveSpawner::SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 SpawnIndex, int32 EnemyLevel)
 {
 	UWorld* World = GetWorld();
 	if (!World || !EnemyClass)
@@ -229,40 +353,68 @@ APawn* ABH_EnemyWaveSpawner::SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 Spa
 		UE_LOG(LogBHCombat, Warning, TEXT("WaveSpawner '%s': failed to spawn %s."), *GetName(), *GetNameSafe(EnemyClass));
 		return nullptr;
 	}
+
+	// Native enemies (the crab) take their level and team BEFORE BeginPlay runs inside FinishSpawning, so ApplyLevelScaling sees them.
+	ABH_EnemyBase* EnemyBase = Cast<ABH_EnemyBase>(Pawn);
+	if (EnemyBase)
+	{
+		EnemyBase->EnemyLevel = FMath::Max(1, EnemyLevel);
+		EnemyBase->CombatTeam = EBH_CombatTeam::Enemies;
+		EnemyBase->bResetOnDeath = false;
+	}
 	Pawn->FinishSpawning(FTransform(Rotation, Location));
 
-	// The identity component is a Blueprint (SCS) component: it only exists once construction ran inside FinishSpawning.
-	UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(Pawn);
-	if (!Identity)
+	// Two kinds of enemy are tracked: an ABH_EnemyBase (native death delegate), or a Blueprint character with a UBH_CombatIdentityComponent
+	// (which only exists once construction ran inside FinishSpawning). Anything else cannot report its death.
+	UBH_CombatIdentityComponent* Identity = EnemyBase ? nullptr : UBH_CombatIdentityComponent::Find(Pawn);
+	if (!EnemyBase && !Identity)
 	{
-		UE_LOG(LogBHCombat, Warning, TEXT("WaveSpawner '%s': %s has no UBH_CombatIdentityComponent; it cannot be tracked and was destroyed."), *GetName(), *GetNameSafe(EnemyClass));
+		UE_LOG(LogBHCombat, Warning, TEXT("WaveSpawner '%s': %s is neither an ABH_EnemyBase nor has a UBH_CombatIdentityComponent; it cannot be tracked and was destroyed."), *GetName(), *GetNameSafe(EnemyClass));
 		Pawn->Destroy();
 		return nullptr;
 	}
 
-	Identity->CombatTeam = EBH_CombatTeam::Enemies;
-	Identity->SetResetOnDeath(false);
+	if (Identity)
+	{
+		Identity->CombatTeam = EBH_CombatTeam::Enemies;
+		Identity->SetResetOnDeath(false);
+		Identity->OnDeath.AddDynamic(this, &ABH_EnemyWaveSpawner::HandleEnemyDeath);
+	}
+	else
+	{
+		EnemyBase->OnEnemyDeath.AddUObject(this, &ABH_EnemyWaveSpawner::HandleEnemyBaseDeath);
+	}
 	if (ABH_AIController* Brain = Cast<ABH_AIController>(Pawn->GetController()))
 	{
 		Brain->SetGenericTeamId(BH_CombatTeam::ToGenericTeamId(EBH_CombatTeam::Enemies));
 	}
 
-	Identity->OnDeath.AddDynamic(this, &ABH_EnemyWaveSpawner::HandleEnemyDeath);
 	Pawn->OnDestroyed.AddDynamic(this, &ABH_EnemyWaveSpawner::HandleEnemyDestroyed);
 	Alive.Add(Pawn);
 
-	UE_LOG(LogBHCombat, Log, TEXT("WaveSpawner '%s': wave %d spawned %s at %s (alive %d)."), *GetName(), CurrentWaveIndex, *Pawn->GetName(), *Location.ToCompactString(), Alive.Num());
+	UE_LOG(LogBHCombat, Log, TEXT("WaveSpawner '%s': wave %d spawned %s (level %d) at %s (alive %d)."), *GetName(), CurrentWaveIndex, *Pawn->GetName(), EnemyBase ? EnemyBase->EnemyLevel : 0, *Location.ToCompactString(), Alive.Num());
 	return Pawn;
+}
+
+void ABH_EnemyWaveSpawner::HandleEnemyBaseDeath(ABH_EnemyBase* /*Enemy*/, AActor* Killer)
+{
+	HandleEnemyDeath(Killer);
 }
 
 void ABH_EnemyWaveSpawner::HandleEnemyDeath(AActor* /*Killer*/)
 {
-	// The dynamic delegate does not say who died: sweep for pawns whose identity reports dead.
+	// The delegates do not say who died: sweep for pawns that report dead.
 	TArray<APawn*> Dead;
 	for (APawn* Pawn : Alive)
 	{
+		if (!IsValid(Pawn))
+		{
+			Dead.Add(Pawn);
+			continue;
+		}
+		const ABH_EnemyBase* EnemyBase = Cast<ABH_EnemyBase>(Pawn);
 		const UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(Pawn);
-		if (!IsValid(Pawn) || !Identity || Identity->IsDead())
+		if (EnemyBase ? EnemyBase->IsEnemyDead() : (!Identity || Identity->IsDead()))
 		{
 			Dead.Add(Pawn);
 		}
@@ -270,7 +422,8 @@ void ABH_EnemyWaveSpawner::HandleEnemyDeath(AActor* /*Killer*/)
 	for (APawn* Pawn : Dead)
 	{
 		ReleaseEnemy(Pawn);
-		if (IsValid(Pawn))
+		// An enemy that already scheduled its own despawn (the crab's ragdoll timer) keeps it.
+		if (IsValid(Pawn) && Pawn->GetLifeSpan() <= 0.f)
 		{
 			Pawn->SetLifeSpan(FMath::Max(0.01f, DespawnDelay));
 		}
@@ -296,6 +449,10 @@ void ABH_EnemyWaveSpawner::ReleaseEnemy(APawn* Pawn)
 	if (IsValid(Pawn))
 	{
 		Pawn->OnDestroyed.RemoveDynamic(this, &ABH_EnemyWaveSpawner::HandleEnemyDestroyed);
+		if (ABH_EnemyBase* EnemyBase = Cast<ABH_EnemyBase>(Pawn))
+		{
+			EnemyBase->OnEnemyDeath.RemoveAll(this);
+		}
 		if (UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(Pawn))
 		{
 			Identity->OnDeath.RemoveDynamic(this, &ABH_EnemyWaveSpawner::HandleEnemyDeath);

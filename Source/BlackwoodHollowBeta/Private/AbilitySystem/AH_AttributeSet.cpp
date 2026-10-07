@@ -5,6 +5,7 @@
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "Combat/BH_CombatFeel.h"
+#include "Progression/BH_RPGSettings.h"
 #include "GameplayCueManager.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayEffectExtension.h"
@@ -54,6 +55,7 @@ UAH_AttributeSet::UAH_AttributeSet()
 	InitDefense(5.f);
 	InitAttackSpeed(1.f);
 	InitBlightResistance(0.f);
+	InitLevel(1.f);
 	InitIncomingDamage(0.f);
 }
 
@@ -73,6 +75,7 @@ void UAH_AttributeSet::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Defense, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, AttackSpeed, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, BlightResistance, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Level, COND_None, REPNOTIFY_Always);
 }
 
 void UAH_AttributeSet::ClampAttribute(const FGameplayAttribute& Attribute, float& NewValue) const
@@ -106,6 +109,10 @@ void UAH_AttributeSet::ClampAttribute(const FGameplayAttribute& Attribute, float
 	else if (Attribute == GetAttackSpeedAttribute())
 	{
 		NewValue = FMath::Clamp(NewValue, 0.5f, 2.0f);
+	}
+	else if (Attribute == GetLevelAttribute())
+	{
+		NewValue = FMath::Clamp(NewValue, 1.f, static_cast<float>(FMath::Max(UBH_RPGSettings::GetMaxLevel(), 1)));
 	}
 	else if (Attribute == GetDefenseAttribute() || Attribute == GetAttackPowerAttribute())
 	{
@@ -511,4 +518,9 @@ void UAH_AttributeSet::OnRep_AttackSpeed(const FGameplayAttributeData& OldValue)
 void UAH_AttributeSet::OnRep_BlightResistance(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, BlightResistance, OldValue);
+}
+
+void UAH_AttributeSet::OnRep_Level(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, Level, OldValue);
 }

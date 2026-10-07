@@ -4,6 +4,8 @@
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
+#include "Progression/BH_ProgressionComponent.h"
+#include "Progression/BH_RPGSettings.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
@@ -33,6 +35,8 @@ ABH_EnemyBase::ABH_EnemyBase()
 	{
 		// Anim notifies (hitboxes, combo windows) must fire even when not rendered (dedicated server / off-screen).
 		SkelMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+		// Attack telegraph decals must not tint the character itself.
+		SkelMesh->SetReceivesDecals(false);
 	}
 }
 
@@ -80,6 +84,12 @@ void ABH_EnemyBase::BeginPlay()
 	if (AttributeSet && HasAuthority())
 	{
 		AttributeSet->OnHealthZero.AddUObject(this, &ABH_EnemyBase::HandleHealthZero);
+	}
+
+	// After the Initial* values / identity setup: the scaling table has the last word.
+	if (HasAuthority())
+	{
+		InitializeServerStats();
 	}
 
 	// Cosmetic weapon meshes: every machine attaches its own copy.
@@ -144,6 +154,60 @@ void ABH_EnemyBase::Tick(float DeltaSeconds)
 	SetActorRotation(FMath::RInterpTo(GetActorRotation(), Desired, DeltaSeconds, FaceTargetInterpSpeed));
 }
 
+void ABH_EnemyBase::InitializeServerStats()
+{
+	ApplyLevelScaling();
+}
+
+void ABH_EnemyBase::ApplyLevelScaling()
+{
+	if (!HasAuthority() || !AbilitySystemComponent || !AttributeSet)
+	{
+		return;
+	}
+
+	const int32 Lvl = FMath::Max(1, EnemyLevel);
+	AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetLevelAttribute(), static_cast<float>(Lvl));
+
+	const UBH_RPGSettings* Settings = UBH_RPGSettings::Get();
+	if (!Settings || ScalingRowPrefix.IsNone())
+	{
+		return;
+	}
+
+	float Value = 0.f;
+	// Max first, then the current value (the attribute set clamps current to max).
+	if (Settings->GetEnemyStat(ScalingRowPrefix, FName(BH_ScalingRows::MaxHealth), Lvl, Value))
+	{
+		AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetMaxHealthAttribute(), Value);
+		AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetHealthAttribute(), Value);
+	}
+	if (Settings->GetEnemyStat(ScalingRowPrefix, FName(BH_ScalingRows::MaxPosture), Lvl, Value))
+	{
+		AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetMaxPostureAttribute(), Value);
+		AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetPostureAttribute(), Value);
+	}
+	if (Settings->GetEnemyStat(ScalingRowPrefix, FName(BH_ScalingRows::AttackPower), Lvl, Value))
+	{
+		AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetAttackPowerAttribute(), Value);
+	}
+	if (Settings->GetEnemyStat(ScalingRowPrefix, FName(BH_ScalingRows::Defense), Lvl, Value))
+	{
+		AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetDefenseAttribute(), Value);
+	}
+}
+
+int32 ABH_EnemyBase::GetXPReward() const
+{
+	float Value = 0.f;
+	const UBH_RPGSettings* Settings = UBH_RPGSettings::Get();
+	if (Settings && Settings->GetEnemyStat(ScalingRowPrefix, FName(BH_ScalingRows::XPReward), FMath::Max(1, EnemyLevel), Value))
+	{
+		return FMath::Max(0, FMath::RoundToInt(Value));
+	}
+	return FMath::Max(0, XPRewardOverride);
+}
+
 float ABH_EnemyBase::GetHealth() const
 {
 	return AttributeSet ? AttributeSet->GetHealth() : 0.f;
@@ -177,6 +241,12 @@ void ABH_EnemyBase::StartHoldBlock()
 
 void ABH_EnemyBase::HandleHealthZero(AActor* Killer)
 {
+	if (bDead)
+	{
+		return; // the attribute set can report zero more than once: one death, one XP grant
+	}
+	bDead = true;
+
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(AutoAttackTimerHandle);
@@ -191,8 +261,12 @@ void ABH_EnemyBase::HandleHealthZero(AActor* Killer)
 		AbilitySystemComponent->CancelAllAbilities();
 	}
 
+	// XP first (positions are read now, before a subclass ragdolls / despawns the body).
+	UBH_ProgressionComponent::GrantKillXP(this, GetXPReward());
+
 	OnDeathNative(Killer);
 	K2_OnDeath(Killer);
+	OnEnemyDeath.Broadcast(this, Killer);
 }
 
 void ABH_EnemyBase::ResetAfterDeath()
@@ -206,6 +280,7 @@ void ABH_EnemyBase::ResetAfterDeath()
 	AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetPostureAttribute(), AttributeSet->GetMaxPosture());
 	AbilitySystemComponent->SetLooseGameplayTagCount(TAG_State_Combat_Dead, 0);
 	AbilitySystemComponent->SetLooseGameplayTagCount(TAG_State_Combat_PostureBroken, 0);
+	bDead = false;
 
 	UWorld* World = GetWorld();
 	if (World && bAutoAttack && AutoAttackAbility)

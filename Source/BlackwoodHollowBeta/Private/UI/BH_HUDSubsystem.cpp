@@ -18,6 +18,11 @@
 #include "HAL/IConsoleManager.h"
 #include "EngineUtils.h"
 #include "TimerManager.h"
+#include "Engine/GameViewportClient.h"
+#include "Fonts/SlateFontInfo.h"
+#include "Styling/CoreStyle.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Text/STextBlock.h"
 
 namespace
 {
@@ -334,8 +339,69 @@ void UBH_HUDSubsystem::OnBossHealthChanged(const FOnAttributeChangeData& ChangeD
 	}
 }
 
+void UBH_HUDSubsystem::ShowLevelUp(int32 NewLevel)
+{
+	FBH_LevelUpInfo Info;
+	Info.NewLevel = NewLevel;
+	Info.PreviousLevel = FMath::Max(1, NewLevel - 1);
+	ShowLevelUpDetailed(Info);
+}
+
+void UBH_HUDSubsystem::ShowLevelUpDetailed(const FBH_LevelUpInfo& Info)
+{
+	const int32 NewLevel = Info.NewLevel;
+	if (MainHUD)
+	{
+		MainHUD->NotifyLevelUp(Info);
+	}
+
+	// A bound LevelUpBanner replaces the plain Slate text.
+	const bool bNativeText = !MainHUD || (MainHUD->bShowNativeLevelUpText && !MainHUD->HasLevelUpBanner());
+	const ULocalPlayer* LocalPlayer = GetLocalPlayer();
+	UWorld* World = LocalPlayer ? LocalPlayer->GetWorld() : nullptr;
+	UGameViewportClient* Viewport = World ? World->GetGameViewport() : nullptr;
+	if (!bNativeText || !Viewport)
+	{
+		return;
+	}
+
+	HideLevelUpText();
+	LevelUpTextWidget = SNew(SBox)
+		.HAlign(HAlign_Center)
+		.VAlign(VAlign_Top)
+		.Padding(FMargin(0.f, 140.f, 0.f, 0.f))
+		.Visibility(EVisibility::HitTestInvisible)
+		[
+			SNew(STextBlock)
+			.Text(FText::Format(NSLOCTEXT("BHHUD", "LevelUpText", "Level {0}"), FText::AsNumber(NewLevel)))
+			.Font(FCoreStyle::GetDefaultFontStyle("Bold", 40))
+			.ColorAndOpacity(FLinearColor(1.f, 0.85f, 0.4f, 1.f))
+		];
+	Viewport->AddViewportWidgetContent(LevelUpTextWidget.ToSharedRef(), 20);
+
+	LevelUpWorld = World;
+	World->GetTimerManager().SetTimer(LevelUpTextTimer, this, &UBH_HUDSubsystem::HideLevelUpText, LevelUpTextSeconds, false);
+}
+
+void UBH_HUDSubsystem::HideLevelUpText()
+{
+	if (UWorld* World = LevelUpWorld.Get())
+	{
+		World->GetTimerManager().ClearTimer(LevelUpTextTimer);
+		if (UGameViewportClient* Viewport = World->GetGameViewport())
+		{
+			if (LevelUpTextWidget.IsValid())
+			{
+				Viewport->RemoveViewportWidgetContent(LevelUpTextWidget.ToSharedRef());
+			}
+		}
+	}
+	LevelUpTextWidget.Reset();
+}
+
 void UBH_HUDSubsystem::Deinitialize()
 {
+	HideLevelUpText();
 	StopBossWatch();
 	if (BossBar)
 	{

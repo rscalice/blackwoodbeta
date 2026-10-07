@@ -4,6 +4,7 @@
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
+#include "UI/BH_LevelUpBannerWidget.h"
 #include "AbilitySystemComponent.h"
 #include "Blueprint/WidgetTree.h"
 #include "UObject/UObjectIterator.h"
@@ -161,6 +162,46 @@ void UBH_HUDWidget::RefreshPostureBroken()
 	bPostureBroken = bBroken;
 	HandlePostureBrokenChanged(bBroken);
 	K2_OnPostureBrokenChanged(bBroken);
+}
+
+void UBH_HUDWidget::NotifyLevelUp(int32 NewLevel)
+{
+	// Legacy entry point: no previous level / stat gains known.
+	FBH_LevelUpInfo Info;
+	Info.NewLevel = NewLevel;
+	Info.PreviousLevel = FMath::Max(1, NewLevel - 1);
+	NotifyLevelUp(Info);
+}
+
+void UBH_HUDWidget::NotifyLevelUp(const FBH_LevelUpInfo& Info)
+{
+	HandleLevelUpDetailed(Info);
+	K2_OnLevelUp(Info.NewLevel); // always fired, with or without a banner
+
+	if (WidgetTree)
+	{
+		WidgetTree->ForEachWidget([&Info](UWidget* Widget)
+		{
+			if (UBH_HUDWidget* Child = Cast<UBH_HUDWidget>(Widget))
+			{
+				Child->NotifyLevelUp(Info);
+			}
+		});
+	}
+}
+
+bool UBH_HUDWidget::HasLevelUpBanner() const
+{
+	return LevelUpBanner != nullptr;
+}
+
+void UBH_HUDWidget::HandleLevelUpDetailed(const FBH_LevelUpInfo& Info)
+{
+	if (LevelUpBanner)
+	{
+		LevelUpBanner->ShowLevelUp(Info);
+	}
+	HandleLevelUp(Info.NewLevel);
 }
 
 void UBH_HUDWidget::NotifyStanceChanged(const FString& StanceName)
