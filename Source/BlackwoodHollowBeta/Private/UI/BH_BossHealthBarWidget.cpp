@@ -21,7 +21,6 @@ namespace BH_BossHealthBar_Private
 		return Image ? FVector2D(Image->GetCachedGeometry().GetLocalSize()) : FVector2D::ZeroVector;
 	}
 }
-using namespace BH_BossHealthBar_Private;
 
 UBH_BossHealthBarWidget::UBH_BossHealthBarWidget(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -42,7 +41,7 @@ void UBH_BossHealthBarWidget::EnsureBarMaterials()
 		HealthBarMID = Img_HealthBar->GetDynamicMaterial();
 		if (HealthBarMID)
 		{
-			HealthBarMID->SetScalarParameterValue(ShearDegreesParam, SlantDegrees);
+			HealthBarMID->SetScalarParameterValue(BH_BossHealthBar_Private::ShearDegreesParam, SlantDegrees);
 		}
 	}
 	if (Img_HealthTrail && !TrailBarMID)
@@ -50,7 +49,7 @@ void UBH_BossHealthBarWidget::EnsureBarMaterials()
 		TrailBarMID = Img_HealthTrail->GetDynamicMaterial();
 		if (TrailBarMID)
 		{
-			TrailBarMID->SetScalarParameterValue(ShearDegreesParam, SlantDegrees);
+			TrailBarMID->SetScalarParameterValue(BH_BossHealthBar_Private::ShearDegreesParam, SlantDegrees);
 		}
 	}
 }
@@ -86,7 +85,7 @@ void UBH_BossHealthBarWidget::NativeConstruct()
 	{
 		if (UMaterialInstanceDynamic* PostureMID = Img_PostureBar->GetDynamicMaterial())
 		{
-			PostureMID->SetScalarParameterValue(ShearDegreesParam, SlantDegrees);
+			PostureMID->SetScalarParameterValue(BH_BossHealthBar_Private::ShearDegreesParam, SlantDegrees);
 		}
 	}
 	if (Bar_Posture && Img_PostureBar)
@@ -202,11 +201,11 @@ void UBH_BossHealthBarWidget::ApplyBarPercents()
 void UBH_BossHealthBarWidget::SyncAspectRatio(UImage* Image, UMaterialInstanceDynamic* MID, FVector2D& LastSize)
 {
 	// Keeps the slant true to the real pixel aspect (the material shears in UV space).
-	const FVector2D Size = GetLocalSize(Image);
+	const FVector2D Size = BH_BossHealthBar_Private::GetLocalSize(Image);
 	if (MID && Size.X > 1.0 && Size.Y > 1.0 && !Size.Equals(LastSize, 0.01))
 	{
 		LastSize = Size;
-		MID->SetScalarParameterValue(AspectRatioParam, static_cast<float>(Size.X / Size.Y));
+		MID->SetScalarParameterValue(BH_BossHealthBar_Private::AspectRatioParam, static_cast<float>(Size.X / Size.Y));
 	}
 }
 

@@ -2,6 +2,8 @@
 
 #include "Combat/BH_LoadoutComponent.h"
 #include "Items/BH_WeaponItem.h"
+#include "Items/BH_ArmorItem.h"
+#include "Items/BH_EquipmentStats.h"
 #include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
@@ -686,6 +688,7 @@ void UBH_LoadoutComponent::RefreshStatMods()
 	{
 		return;
 	}
+	RefreshArmorStatMods();
 	UAbilitySystemComponent* ASC = GetOwnerASC();
 	UNarrativeInventoryComponent* Inventory = GetInventory();
 	if (!ASC || !Inventory)
@@ -709,23 +712,66 @@ void UBH_LoadoutComponent::RefreshStatMods()
 
 		if (bShouldApply && !bHasHandle)
 		{
-			FGameplayEffectContextHandle Context = ASC->MakeEffectContext();
-			Context.AddSourceObject(Weapon);
-			FGameplayEffectSpecHandle Spec = ASC->MakeOutgoingSpec(UAH_GE_EquipmentStatMod::StaticClass(), 1.f, Context);
-			if (Spec.IsValid())
-			{
-				Spec.Data->SetSetByCallerMagnitude(TAG_Data_Equip_AttackPower, Weapon->AttackPowerBonus);
-				Spec.Data->SetSetByCallerMagnitude(TAG_Data_Equip_Defense, Weapon->DefenseBonus);
-				Spec.Data->SetSetByCallerMagnitude(TAG_Data_Equip_MaxStamina, Weapon->MaxStaminaBonus);
-				Weapon->StatModHandle = ASC->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
-				UE_LOG(LogBHLoadout, Log, TEXT("Stat mod ON  %s (%s)"), *Weapon->GetFriendlyName(), *Weapon->DescribeBonuses());
-			}
+			Weapon->StatModHandle = BH_EquipmentStats::Apply(ASC, Weapon, Weapon->AttackPowerBonus, Weapon->DefenseBonus, Weapon->MaxStaminaBonus);
+			UE_LOG(LogBHLoadout, Log, TEXT("Stat mod ON  %s (%s)"), *Weapon->GetFriendlyName(), *Weapon->DescribeBonuses());
 		}
 		else if (!bShouldApply && bHasHandle)
 		{
-			ASC->RemoveActiveGameplayEffect(Weapon->StatModHandle);
-			Weapon->StatModHandle = FActiveGameplayEffectHandle();
+			BH_EquipmentStats::Remove(ASC, Weapon->StatModHandle);
 			UE_LOG(LogBHLoadout, Log, TEXT("Stat mod OFF %s"), *Weapon->GetFriendlyName());
+		}
+	}
+}
+
+void UBH_LoadoutComponent::RefreshArmorStatMods()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+	UAbilitySystemComponent* ASC = GetOwnerASC();
+	UNarrativeInventoryComponent* Inventory = GetInventory();
+	if (!ASC)
+	{
+		return;
+	}
+
+	TSet<TWeakObjectPtr<UBH_ArmorItem>> Seen;
+	if (Inventory)
+	{
+		for (UNarrativeItem* Item : Inventory->GetItems())
+		{
+			UBH_ArmorItem* Armor = Cast<UBH_ArmorItem>(Item);
+			if (!Armor)
+			{
+				continue;
+			}
+			Seen.Add(Armor);
+
+			FActiveGameplayEffectHandle* Existing = ArmorStatModHandles.Find(Armor);
+			const bool bHasHandle = Existing && Existing->IsValid();
+			if (Armor->bActive && !bHasHandle)
+			{
+				const FActiveGameplayEffectHandle Handle = BH_EquipmentStats::Apply(ASC, Armor, Armor->AttackPowerBonus, Armor->DefenseBonus, Armor->MaxStaminaBonus);
+				ArmorStatModHandles.Add(Armor, Handle);
+				UE_LOG(LogBHLoadout, Log, TEXT("Armor stat mod ON  %s (%s)"), *Armor->GetFriendlyName(), *Armor->DescribeBonuses());
+			}
+			else if (!Armor->bActive && Existing)
+			{
+				BH_EquipmentStats::Remove(ASC, *Existing);
+				ArmorStatModHandles.Remove(Armor);
+				UE_LOG(LogBHLoadout, Log, TEXT("Armor stat mod OFF %s"), *Armor->GetFriendlyName());
+			}
+		}
+	}
+
+	// Pieces that left the inventory (or were destroyed) while still applied: drop their effects so nothing leaks.
+	for (auto It = ArmorStatModHandles.CreateIterator(); It; ++It)
+	{
+		if (!Seen.Contains(It.Key()))
+		{
+			BH_EquipmentStats::Remove(ASC, It.Value());
+			It.RemoveCurrent();
 		}
 	}
 }

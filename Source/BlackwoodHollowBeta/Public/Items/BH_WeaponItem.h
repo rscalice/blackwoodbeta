@@ -81,6 +81,9 @@ public:
 
 	virtual bool CanUse_Implementation() const override;
 
+	/** Returns the bonus floats for the Narrative item Stats rows; falls back to Super. */
+	virtual FString GetStringVariable_Implementation(const FString& VariableName) override;
+
 protected:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void Activated_Implementation() override;

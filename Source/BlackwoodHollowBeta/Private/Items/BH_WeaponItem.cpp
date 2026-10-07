@@ -2,6 +2,7 @@
 
 #include "Items/BH_WeaponItem.h"
 #include "Combat/BH_LoadoutComponent.h"
+#include "Items/BH_EquipmentStats.h"
 #include "Net/UnrealNetwork.h"
 #include "Engine/StaticMesh.h"
 
@@ -12,6 +13,19 @@ UBH_WeaponItem::UBH_WeaponItem()
 	bStackable = false;
 	EquippableSlot = EEquippableSlot::ES_Weapon;
 	UseActionText = NSLOCTEXT("BHWeaponItem", "UseActionText", "Equip");
+
+	// Keep Narrative's default Weight / Quantity rows; append ours.
+	BH_EquipmentStats::AddStatRows(Stats);
+}
+
+FString UBH_WeaponItem::GetStringVariable_Implementation(const FString& VariableName)
+{
+	FString Value;
+	if (BH_EquipmentStats::GetStatString(VariableName, AttackPowerBonus, DefenseBonus, MaxStaminaBonus, Value))
+	{
+		return Value;
+	}
+	return Super::GetStringVariable_Implementation(VariableName);
 }
 
 void UBH_WeaponItem::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

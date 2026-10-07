@@ -1,5 +1,4 @@
 // Blackwood Hollow - Code-only camera shakes (implementation)
-// Tier shakes (Light..Massive): durations are x1.3 of the original; amplitude escalation is DA_CombatFeel Tiers[].ShakeScale (x2.5).
 
 #include "Cues/BH_CameraShakes.h"
 #include "Shakes/WaveOscillatorCameraShakePattern.h"
@@ -61,7 +60,7 @@ UBH_CameraShake_Light::UBH_CameraShake_Light(const FObjectInitializer& ObjectIni
 	: Super(ObjectInitializer)
 {
 	UWaveOscillatorCameraShakePattern* Pattern = CreateDefaultSubobject<UWaveOscillatorCameraShakePattern>(TEXT("RootShakePattern"));
-	BH_CameraShakes_Private::Configure(Pattern, /*Duration*/ 0.156f, /*In*/ 0.01f, /*Out*/ 0.104f,
+	BH_CameraShakes_Private::Configure(Pattern, /*Duration*/ 0.12f, /*In*/ 0.01f, /*Out*/ 0.08f,
 		/*Pitch*/ 0.6f, /*Yaw*/ 0.3f, /*Roll*/ 0.2f, /*Hz*/ 30.f);
 	SetRootShakePattern(Pattern);
 }
@@ -70,7 +69,7 @@ UBH_CameraShake_Medium::UBH_CameraShake_Medium(const FObjectInitializer& ObjectI
 	: Super(ObjectInitializer)
 {
 	UWaveOscillatorCameraShakePattern* Pattern = CreateDefaultSubobject<UWaveOscillatorCameraShakePattern>(TEXT("RootShakePattern"));
-	BH_CameraShakes_Private::Configure(Pattern, /*Duration*/ 0.26f, /*In*/ 0.015f, /*Out*/ 0.182f,
+	BH_CameraShakes_Private::Configure(Pattern, /*Duration*/ 0.2f, /*In*/ 0.015f, /*Out*/ 0.14f,
 		/*Pitch*/ 1.5f, /*Yaw*/ 0.8f, /*Roll*/ 0.6f, /*Hz*/ 26.f);
 	SetRootShakePattern(Pattern);
 }
@@ -79,7 +78,7 @@ UBH_CameraShake_Heavy::UBH_CameraShake_Heavy(const FObjectInitializer& ObjectIni
 	: Super(ObjectInitializer)
 {
 	UWaveOscillatorCameraShakePattern* Pattern = CreateDefaultSubobject<UWaveOscillatorCameraShakePattern>(TEXT("RootShakePattern"));
-	BH_CameraShakes_Private::Configure(Pattern, /*Duration*/ 0.39f, /*In*/ 0.02f, /*Out*/ 0.26f,
+	BH_CameraShakes_Private::Configure(Pattern, /*Duration*/ 0.3f, /*In*/ 0.02f, /*Out*/ 0.2f,
 		/*Pitch*/ 3.4f, /*Yaw*/ 1.9f, /*Roll*/ 1.8f, /*Hz*/ 22.f, /*FOV*/ 1.5f, /*KickX*/ 2.0f, /*KickZ*/ 0.f);
 	SetRootShakePattern(Pattern);
 }
@@ -127,7 +126,7 @@ UBH_CameraShake_Massive::UBH_CameraShake_Massive(const FObjectInitializer& Objec
 	: Super(ObjectInitializer)
 {
 	UWaveOscillatorCameraShakePattern* Pattern = CreateDefaultSubobject<UWaveOscillatorCameraShakePattern>(TEXT("RootShakePattern"));
-	BH_CameraShakes_Private::Configure(Pattern, /*Duration*/ 0.65f, /*In*/ 0.02f, /*Out*/ 0.455f,
+	BH_CameraShakes_Private::Configure(Pattern, /*Duration*/ 0.5f, /*In*/ 0.02f, /*Out*/ 0.35f,
 		/*Pitch*/ 5.5f, /*Yaw*/ 3.2f, /*Roll*/ 3.6f, /*Hz*/ 11.f, /*FOV*/ 3.5f, /*KickX*/ 7.0f, /*KickZ*/ 2.0f);
 	SetRootShakePattern(Pattern);
 }

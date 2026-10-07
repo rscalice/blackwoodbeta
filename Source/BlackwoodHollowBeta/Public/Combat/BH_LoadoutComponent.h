@@ -28,9 +28,11 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Items/BH_EquipmentTypes.h"
+#include "ActiveGameplayEffectHandle.h"
 #include "BH_LoadoutComponent.generated.h"
 
 class UBH_WeaponItem;
+class UBH_ArmorItem;
 class UEquippableItem;
 class UEquipmentComponent;
 class UNarrativeInventoryComponent;
@@ -150,6 +152,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Loadout")
 	void RefreshStatMods();
 
+	/**
+	 * Server only: applies/removes the stat-mod effect of every UBH_ArmorItem so exactly the equipped (active) pieces contribute,
+	 * independent of the weapon stance. Called from RefreshStatMods; also drops effects of pieces that left the inventory.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Loadout")
+	void RefreshArmorStatMods();
+
 	/** Multi-line dump of slots, stances, active set and the three stats (for console/verification). */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Loadout")
 	FString DescribeState() const;
@@ -174,6 +183,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UEquipmentComponent> Equipment;
+
+	/** Server-only: armor stat-mod handles, one per equipped piece (weapons keep theirs on the item). */
+	TMap<TWeakObjectPtr<UBH_ArmorItem>, FActiveGameplayEffectHandle> ArmorStatModHandles;
 
 	FTimerHandle ReconcileTimer;
 	FTimerHandle PresetTimer;

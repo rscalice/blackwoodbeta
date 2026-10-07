@@ -33,7 +33,6 @@ namespace BH_HUDElements_Private
 		return Image ? FVector2D(Image->GetCachedGeometry().GetLocalSize()) : FVector2D::ZeroVector;
 	}
 }
-using namespace BH_HUDElements_Private;
 
 // ============================================================================
 // FBH_TwoToneRatioText
@@ -114,8 +113,8 @@ float FBH_TwoToneRatioText::ComputeShearDegrees(const UMaterialInstanceDynamic* 
 	// M_UI_SlantedBar shifts the fill edge by (v - 0.5) * tan(ShearDegrees) / AspectRatio in U. In pixels that is
 	// dx/dy = -tan(ShearDegrees) * (W / H) / AspectRatio (top of the bar is further left for the default -20 deg).
 	UMaterialInstanceDynamic* MID = const_cast<UMaterialInstanceDynamic*>(BarMID);
-	const float ShearParamDeg = MID->K2_GetScalarParameterValue(ShearDegreesParam);
-	float AspectRatio = MID->K2_GetScalarParameterValue(AspectRatioParam);
+	const float ShearParamDeg = MID->K2_GetScalarParameterValue(BH_HUDElements_Private::ShearDegreesParam);
+	float AspectRatio = MID->K2_GetScalarParameterValue(BH_HUDElements_Private::AspectRatioParam);
 	if (AspectRatio < 0.01f)
 	{
 		AspectRatio = 10.f;
@@ -211,36 +210,36 @@ void FBH_PostureBarPresenter::SyncGeometryParams(const FBH_PostureBarStyle& Styl
 	// Keep the materials' slant true to the real pixel aspect, and the bracket frame in step with the bar's slant.
 	if (UMaterialInstanceDynamic* Bar = BarMID.Get())
 	{
-		const FVector2D Size = GetImageSize(BarImage.Get());
+		const FVector2D Size = BH_HUDElements_Private::GetImageSize(BarImage.Get());
 		if (Size.X > 1.0 && Size.Y > 1.0 && !Size.Equals(LastBarSize, 0.01))
 		{
 			LastBarSize = Size;
-			Bar->SetScalarParameterValue(AspectRatioParam, static_cast<float>(Size.X / Size.Y));
+			Bar->SetScalarParameterValue(BH_HUDElements_Private::AspectRatioParam, static_cast<float>(Size.X / Size.Y));
 		}
 	}
 	if (UMaterialInstanceDynamic* Brackets = BracketMID.Get())
 	{
-		const FVector2D Size = GetImageSize(BracketImage.Get());
+		const FVector2D Size = BH_HUDElements_Private::GetImageSize(BracketImage.Get());
 		if (Size.X > 1.0 && Size.Y > 1.0 && !Size.Equals(LastBracketSize, 0.01))
 		{
 			LastBracketSize = Size;
-			Brackets->SetScalarParameterValue(AspectRatioParam, static_cast<float>(Size.X / Size.Y));
+			Brackets->SetScalarParameterValue(BH_HUDElements_Private::AspectRatioParam, static_cast<float>(Size.X / Size.Y));
 			if (Style.BracketThicknessPx > 0.f)
 			{
-				Brackets->SetScalarParameterValue(ThicknessParam, Style.BracketThicknessPx / static_cast<float>(Size.Y));
+				Brackets->SetScalarParameterValue(BH_HUDElements_Private::ThicknessParam, Style.BracketThicknessPx / static_cast<float>(Size.Y));
 			}
 			if (Style.BracketArmPx > 0.f)
 			{
-				Brackets->SetScalarParameterValue(ArmLengthParam, Style.BracketArmPx / static_cast<float>(Size.X));
+				Brackets->SetScalarParameterValue(BH_HUDElements_Private::ArmLengthParam, Style.BracketArmPx / static_cast<float>(Size.X));
 			}
 			if (Style.BracketVerticalArmPx > 0.f)
 			{
-				Brackets->SetScalarParameterValue(ArmLengthVParam, FMath::Min(0.45f, Style.BracketVerticalArmPx / static_cast<float>(Size.Y)));
+				Brackets->SetScalarParameterValue(BH_HUDElements_Private::ArmLengthVParam, FMath::Min(0.45f, Style.BracketVerticalArmPx / static_cast<float>(Size.Y)));
 			}
 			if (const UMaterialInstanceDynamic* Bar = BarMID.Get())
 			{
-				const float ShearDeg = const_cast<UMaterialInstanceDynamic*>(Bar)->K2_GetScalarParameterValue(ShearDegreesParam);
-				Brackets->SetScalarParameterValue(SlantParam, -FMath::Tan(FMath::DegreesToRadians(ShearDeg)));
+				const float ShearDeg = const_cast<UMaterialInstanceDynamic*>(Bar)->K2_GetScalarParameterValue(BH_HUDElements_Private::ShearDegreesParam);
+				Brackets->SetScalarParameterValue(BH_HUDElements_Private::SlantParam, -FMath::Tan(FMath::DegreesToRadians(ShearDeg)));
 			}
 		}
 	}
@@ -274,8 +273,8 @@ void FBH_PostureBarPresenter::Tick(float DeltaTime, const FBH_PostureBarStyle& S
 
 	if (UMaterialInstanceDynamic* Bar = BarMID.Get())
 	{
-		Bar->SetScalarParameterValue(PercentParam, Percent);
-		Bar->SetVectorParameterValue(FillColorParam, Fill);
+		Bar->SetScalarParameterValue(BH_HUDElements_Private::PercentParam, Percent);
+		Bar->SetVectorParameterValue(BH_HUDElements_Private::FillColorParam, Fill);
 	}
 	if (UProgressBar* Legacy = FallbackBar.Get())
 	{
@@ -288,8 +287,8 @@ void FBH_PostureBarPresenter::Tick(float DeltaTime, const FBH_PostureBarStyle& S
 	{
 		const float Wave = 0.5f + 0.5f * FMath::Sin(PulseTime * Style.DangerPulseHz * 2.f * PI);
 		const float Pulse = FMath::Max(Eased * Wave, PunchAlpha);
-		Brackets->SetVectorParameterValue(ColorParam, FMath::Lerp(Style.NormalBracketColor, Style.DangerColor, Eased));
-		Brackets->SetScalarParameterValue(PulseParam, Pulse);
+		Brackets->SetVectorParameterValue(BH_HUDElements_Private::ColorParam, FMath::Lerp(Style.NormalBracketColor, Style.DangerColor, Eased));
+		Brackets->SetScalarParameterValue(BH_HUDElements_Private::PulseParam, Pulse);
 	}
 
 	// -- Whole bar expands horizontally in danger; the break punch overshoots then settles back to the danger scale.
@@ -363,7 +362,7 @@ void UBH_VitalsClusterWidget::RefreshHealthSplit()
 {
 	if (HealthText.HasSplit() && Img_HealthBar)
 	{
-		const FVector2D Size = GetImageSize(Img_HealthBar);
+		const FVector2D Size = BH_HUDElements_Private::GetImageSize(Img_HealthBar);
 		HealthText.UpdateSplit(Size, DisplayedHealthPercent, FBH_TwoToneRatioText::ComputeShearDegrees(HealthBarMID, Size, RatioTextStyle.SlantSign));
 	}
 }
@@ -372,7 +371,7 @@ void UBH_VitalsClusterWidget::RefreshStaminaSplit()
 {
 	if (StaminaText.HasSplit() && Img_StaminaBar)
 	{
-		const FVector2D Size = GetImageSize(Img_StaminaBar);
+		const FVector2D Size = BH_HUDElements_Private::GetImageSize(Img_StaminaBar);
 		StaminaText.UpdateSplit(Size, DisplayedStaminaPercent, FBH_TwoToneRatioText::ComputeShearDegrees(StaminaBarMID, Size, RatioTextStyle.SlantSign));
 	}
 }
@@ -606,7 +605,7 @@ void UBH_TargetVitalsWidget::RefreshHealthSplit()
 {
 	if (HealthText.HasSplit() && Img_HealthBar)
 	{
-		const FVector2D Size = GetImageSize(Img_HealthBar);
+		const FVector2D Size = BH_HUDElements_Private::GetImageSize(Img_HealthBar);
 		HealthText.UpdateSplit(Size, DisplayedHealthPercent, FBH_TwoToneRatioText::ComputeShearDegrees(HealthBarMID, Size, RatioTextStyle.SlantSign));
 	}
 }
