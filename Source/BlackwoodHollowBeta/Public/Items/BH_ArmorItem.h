@@ -5,12 +5,14 @@
 // pieces go in Narrative's Torso / Helmet / Hands / Legs / Feet slots (see EBH_EquipSlot mapping in BH_EquipmentTypes.h);
 // set EquippableSlot in the Blueprint class defaults (default here: ES_Torso).
 // While the item is active (equipped) UBH_LoadoutComponent applies its three bonus floats through UAH_GE_EquipmentStatMod, server side,
-// regardless of the current weapon stance. No weight classes / stamina-regen effects (design on hold).
+// regardless of the current weapon stance. WeightClass (Cloth/Medium/Heavy): UBH_LoadoutComponent takes the heaviest equipped class and
+// applies one infinite effect (stamina regen multiplier + State.Armor.Weight.* tag); see UBH_RPGSettings for the multipliers.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "EquippableItem.h"
+#include "Items/BH_EquipmentTypes.h"
 #include "BH_ArmorItem.generated.h"
 
 UCLASS(Blueprintable)
@@ -33,6 +35,10 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Armor|Stats")
 	float MaxStaminaBonus = 0.f;
+
+	/** Weight class. The heaviest equipped class drives the stamina regen multiplier and the dodge distance multiplier. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Armor")
+	EBH_ArmorWeightClass WeightClass = EBH_ArmorWeightClass::Cloth;
 
 	/** The BH slot this piece occupies (derived from EquippableSlot). @return false if EquippableSlot is not an armor slot. */
 	UFUNCTION(BlueprintPure, Category = "Armor")

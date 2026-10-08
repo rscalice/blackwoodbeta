@@ -3,6 +3,7 @@
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "AbilitySystem/Effects/AH_ExecCalc_Damage.h"
 #include "Components/BPC_HeartFragment.h"
 #include "AbilitySystemComponent.h"
 #include "GameplayEffectComponents/AssetTagsGameplayEffectComponent.h"
@@ -73,6 +74,15 @@ UAH_GE_MeleeDamage::UAH_GE_MeleeDamage()
 		UAH_AttributeSet::GetIncomingDamageAttribute(), TAG_Data_Damage));
 }
 
+UAH_GE_Damage_Formula::UAH_GE_Damage_Formula()
+{
+	DurationPolicy = EGameplayEffectDurationType::Instant;
+
+	FGameplayEffectExecutionDefinition Execution;
+	Execution.CalculationClass = UAH_ExecCalc_Damage::StaticClass();
+	Executions.Add(Execution);
+}
+
 UAH_GE_PostureDamage::UAH_GE_PostureDamage()
 {
 	DurationPolicy = EGameplayEffectDurationType::Instant;
@@ -139,6 +149,35 @@ UAH_GE_StaminaRegen::UAH_GE_StaminaRegen()
 	TagRequirements->OngoingTagRequirements.IgnoreTags.AddTag(TAG_State_Combat_Dodging);
 	TagRequirements->OngoingTagRequirements.IgnoreTags.AddTag(TAG_State_Combat_StaminaRegenDelayed);
 	GEComponents.Add(TagRequirements);
+}
+
+UAH_GE_ArmorWeight::UAH_GE_ArmorWeight()
+{
+	DurationPolicy = EGameplayEffectDurationType::Infinite;
+
+	// Multiplicative (aggregator) mod: removing the effect restores the regen rate exactly; stacks with other regen mods.
+	FSetByCallerFloat SetByCaller;
+	SetByCaller.DataTag = TAG_Data_Equip_StaminaRegenMult;
+
+	FGameplayModifierInfo Modifier;
+	Modifier.Attribute = UAH_AttributeSet::GetStaminaRegenRateAttribute();
+	Modifier.ModifierOp = EGameplayModOp::MultiplyAdditive;
+	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(SetByCaller);
+	Modifiers.Add(Modifier);
+}
+
+UAH_GE_ArmorWeight_Medium::UAH_GE_ArmorWeight_Medium()
+{
+	UTargetTagsGameplayEffectComponent* GrantedTags = CreateDefaultSubobject<UTargetTagsGameplayEffectComponent>(TEXT("ArmorWeightMediumTags"));
+	AH_GE_CombatEffects_Private::ConfigureGrantedTag(GrantedTags, TAG_State_Armor_Weight_Medium);
+	GEComponents.Add(GrantedTags);
+}
+
+UAH_GE_ArmorWeight_Heavy::UAH_GE_ArmorWeight_Heavy()
+{
+	UTargetTagsGameplayEffectComponent* GrantedTags = CreateDefaultSubobject<UTargetTagsGameplayEffectComponent>(TEXT("ArmorWeightHeavyTags"));
+	AH_GE_CombatEffects_Private::ConfigureGrantedTag(GrantedTags, TAG_State_Armor_Weight_Heavy);
+	GEComponents.Add(GrantedTags);
 }
 
 UAH_GE_Flurry::UAH_GE_Flurry()

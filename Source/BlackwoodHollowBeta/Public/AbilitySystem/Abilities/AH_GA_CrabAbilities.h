@@ -30,10 +30,10 @@ public:
 	float WindupTime = 0.30f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Jab", meta = (ClampMin = "0.0"))
-	float LungeSpeed = 900.f;
+	float LungeSpeed = 450.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Jab", meta = (ClampMin = "0.01"))
-	float LungeDuration = 0.18f;
+	float LungeDuration = 0.20f;
 
 	/** Length of the hit window (starts with the lunge). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Jab", meta = (ClampMin = "0.01"))
@@ -74,14 +74,14 @@ public:
 
 	/** The lunge covers at most this much of the way to the telegraphed point. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Pinch", meta = (ClampMin = "0.0"))
-	float LungeMaxDistance = 300.f;
+	float LungeMaxDistance = 180.f;
 
 	/** The lunge stops this far short of the telegraphed point. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Pinch", meta = (ClampMin = "0.0"))
 	float StopShortDistance = 60.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Pinch", meta = (ClampMin = "0.01"))
-	float LungeDuration = 0.22f;
+	float LungeDuration = 0.30f;
 
 	/** Seconds after the lunge starts at which the area hit lands (PinchSnap). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Pinch", meta = (ClampMin = "0.01"))
@@ -122,14 +122,14 @@ public:
 		const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Sidestep", meta = (ClampMin = "10.0"))
-	float Distance = 350.f;
+	float Distance = 180.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Sidestep", meta = (ClampMin = "0.05"))
-	float Duration = 0.28f;
+	float Duration = 0.30f;
 
 	/** Smallest clear distance (cm) a side needs for the dash to happen. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Sidestep", meta = (ClampMin = "0.0"))
-	float MinClearDistance = 120.f;
+	float MinClearDistance = 90.f;
 
 	/** Grant State.Combat.Invulnerable for IFrameDuration (melee passes through the crab). Off by default. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Sidestep")

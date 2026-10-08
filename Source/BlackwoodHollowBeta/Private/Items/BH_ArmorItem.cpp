@@ -27,7 +27,8 @@ FString UBH_ArmorItem::GetStringVariable_Implementation(const FString& VariableN
 
 FString UBH_ArmorItem::DescribeBonuses() const
 {
-	return FString::Printf(TEXT("AP%+.0f DEF%+.0f MaxSTA%+.0f"), AttackPowerBonus, DefenseBonus, MaxStaminaBonus);
+	const TCHAR* WeightName = (WeightClass == EBH_ArmorWeightClass::Heavy) ? TEXT("Heavy") : (WeightClass == EBH_ArmorWeightClass::Medium) ? TEXT("Medium") : TEXT("Cloth");
+	return FString::Printf(TEXT("%s AP%+.0f DEF%+.0f MaxSTA%+.0f"), WeightName, AttackPowerBonus, DefenseBonus, MaxStaminaBonus);
 }
 
 bool UBH_ArmorItem::GetArmorSlot(EBH_EquipSlot& OutSlot) const

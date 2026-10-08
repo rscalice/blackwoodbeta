@@ -5,6 +5,7 @@
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "Combat/BH_CombatFeel.h"
+#include "Progression/BH_RPGSettings.h"
 #include "GameplayCueManager.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayEffectExtension.h"
@@ -54,6 +55,7 @@ UAH_AttributeSet::UAH_AttributeSet()
 	InitDefense(5.f);
 	InitAttackSpeed(1.f);
 	InitBlightResistance(0.f);
+	InitLevel(1.f);
 	InitIncomingDamage(0.f);
 }
 
@@ -73,6 +75,7 @@ void UAH_AttributeSet::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Defense, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, AttackSpeed, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, BlightResistance, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Level, COND_None, REPNOTIFY_Always);
 }
 
 void UAH_AttributeSet::ClampAttribute(const FGameplayAttribute& Attribute, float& NewValue) const
@@ -106,6 +109,10 @@ void UAH_AttributeSet::ClampAttribute(const FGameplayAttribute& Attribute, float
 	else if (Attribute == GetAttackSpeedAttribute())
 	{
 		NewValue = FMath::Clamp(NewValue, 0.5f, 2.0f);
+	}
+	else if (Attribute == GetLevelAttribute())
+	{
+		NewValue = FMath::Clamp(NewValue, 1.f, static_cast<float>(FMath::Max(UBH_RPGSettings::GetMaxLevel(), 1)));
 	}
 	else if (Attribute == GetDefenseAttribute() || Attribute == GetAttackPowerAttribute())
 	{
@@ -318,7 +325,8 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 		if (DamageDone > 0.f && NewHealth <= 0.f && TargetASC && !TargetASC->HasMatchingGameplayTag(Tags.State_Combat_Dead))
 		{
 			OnHealthZero.Broadcast(Instigator);
-			TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead);
+			// Replicated loose tag (TagOnly): UpdateTagMap also bumps the authority's own count, so the server sees it too.
+			TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead, 1, EGameplayTagReplicationState::TagOnly);
 
 			// Death vocal (cosmetic, this machine). Melee kills are also voiced by the hit cue on every machine; PlayVoice's
 			// 2 s per-actor death limit keeps that from doubling here. Covers non-melee deaths (blight, effects) on the host.
@@ -342,7 +350,7 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 			OnHealthZero.Broadcast(Instigator);
 			if (TargetASC)
 			{
-				TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead);
+				TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead, 1, EGameplayTagReplicationState::TagOnly);
 			}
 		}
 	}
@@ -428,7 +436,8 @@ void UAH_AttributeSet::HandlePostureDepleted(UAbilitySystemComponent* TargetASC,
 		return;
 	}
 
-	TargetASC->AddLooseGameplayTag(Tags.State_Combat_PostureBroken);
+	// Replicated loose tag (TagOnly) so every machine sees the broken state; UAH_GA_PostureBreak clears it on the server.
+	TargetASC->AddLooseGameplayTag(Tags.State_Combat_PostureBroken, 1, EGameplayTagReplicationState::TagOnly);
 	OnPostureBroken.Broadcast(Instigator);
 
 	// Cosmetic cue (replicated): shatter VFX/SFX on every machine. Server-side only (this runs from GE execution).
@@ -511,4 +520,9 @@ void UAH_AttributeSet::OnRep_AttackSpeed(const FGameplayAttributeData& OldValue)
 void UAH_AttributeSet::OnRep_BlightResistance(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, BlightResistance, OldValue);
+}
+
+void UAH_AttributeSet::OnRep_Level(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, Level, OldValue);
 }

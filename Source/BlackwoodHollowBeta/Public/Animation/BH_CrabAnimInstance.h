@@ -35,7 +35,7 @@ public:
 
 	/** Ground speed (cm/s) at which the scuttle loop plays at its authored rate (PlayRateForScuttle = 1). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crab|Tuning", meta = (ClampMin = "1"))
-	float ReferenceScuttleSpeed = 300.f;
+	float ReferenceScuttleSpeed = 145.f;
 
 	/** Speed (cm/s) above which bIsMoving is true. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crab|Tuning", meta = (ClampMin = "0"))

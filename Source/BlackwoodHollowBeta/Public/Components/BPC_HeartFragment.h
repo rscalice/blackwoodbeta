@@ -68,8 +68,8 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|BlightShield")
 	float BlightShieldRegenDelay = 3.f;
 
-	/** Current Blight shield value; absorbs BP_BlightVolume / Blight fog damage before it reaches Health. */
-	UPROPERTY(BlueprintReadOnly, Category = "HeartFragment|BlightShield")
+	/** Current Blight shield value; absorbs BP_BlightVolume / Blight fog damage before it reaches Health. Replicated to the owning client only (OnRep fires the shield events there). */
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_CurrentBlightShield, Category = "HeartFragment|BlightShield")
 	float CurrentBlightShield = 0.f;
 
 	/**
@@ -153,6 +153,10 @@ protected:
 	bool EnsureAbilitySystemCached();
 
 private:
+	/** Owning client: broadcasts OnBlightShieldChanged, and OnBlightShieldDepleted when the value crossed to zero. */
+	UFUNCTION()
+	void OnRep_CurrentBlightShield(float OldValue);
+
 	/** Spec handles parallel to EquippedFragments (server only; clients resolve by class). */
 	TArray<FGameplayAbilitySpecHandle> FragmentHandles;
 

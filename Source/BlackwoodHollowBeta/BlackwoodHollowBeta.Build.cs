@@ -30,6 +30,7 @@ public class BlackwoodHollowBeta : ModuleRules
 			"NarrativeEquipment", // Phase 8C: UEquipmentComponent / UEquippableItem (UBH_WeaponItem)
 			"RadialSelector",     // Phase 8C: stance radial menu (UBH_StanceRadialComponent)
 			"ProceduralMeshComponent", // weapon swing trails (UBH_WeaponTrailComponent)
+			"DeveloperSettings", // Phase 9: UBH_RPGSettings (Project Settings > Game > Blackwood Hollow RPG)
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]

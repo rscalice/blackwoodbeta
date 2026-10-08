@@ -66,6 +66,7 @@ UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_ParrySuccess, "GameplayCue
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_PostureBroken, "GameplayCue.Combat.PostureBroken", "Cosmetic cue: a target's posture broke (shatter VFX/SFX).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_Hit_ShieldBash, "GameplayCue.Combat.Hit.ShieldBash", "Cosmetic cue: a shield bash connected (heavier, metallic variant of the Hit cue).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Combat_HitResult_Blocked, "Combat.HitResult.Blocked", "Flag carried in FGameplayCueParameters::AggregatedSourceTags: the victim blocked this hit.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Combat_HitResult_Fatal, "Combat.HitResult.Fatal", "Flag carried in FGameplayCueParameters::AggregatedSourceTags: the victim's Health was zero after this hit's damage (set on the server, so every machine agrees).");
 
 // Phase 7A
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Combat_Dodging, "State.Combat.Dodging", "A dodge ability is active (granted by UAH_GA_Dodge).");
@@ -82,6 +83,14 @@ UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Cooldown_Fragment_OverloadBurst, "Cooldown.Fr
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Equip_AttackPower, "Data.Equip.AttackPower", "SetByCaller key: additive AttackPower bonus read by UAH_GE_EquipmentStatMod.");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Equip_Defense, "Data.Equip.Defense", "SetByCaller key: additive Defense bonus read by UAH_GE_EquipmentStatMod.");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Equip_MaxStamina, "Data.Equip.MaxStamina", "SetByCaller key: additive MaxStamina bonus read by UAH_GE_EquipmentStatMod.");
+
+// Phase 9: RPG scaling
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_DamageMultiplier, "Data.DamageMultiplier", "SetByCaller key: total damage multiplier (step * hitbox * identity * riposte), read by UAH_ExecCalc_Damage. Default 1.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_AttackPowerScale, "Data.AttackPowerScale", "SetByCaller key: how much of the source's AttackPower is added to the base damage, read by UAH_ExecCalc_Damage. Default 1; shield bash passes 0.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Equip_StaminaRegenMult, "Data.Equip.StaminaRegenMult", "SetByCaller key: multiplier on StaminaRegenRate read by UAH_GE_ArmorWeight (heaviest equipped armor class).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Armor_Weight_Medium, "State.Armor.Weight.Medium", "Heaviest equipped armor piece is Medium (granted by UAH_GE_ArmorWeight_Medium).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Armor_Weight_Heavy, "State.Armor.Weight.Heavy", "Heaviest equipped armor piece is Heavy (granted by UAH_GE_ArmorWeight_Heavy).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Player_LevelUp, "GameplayCue.Player.LevelUp", "Cosmetic cue: a player gained a level (server-executed on the pawn ASC by UBH_ProgressionComponent; Instigator = pawn, Location = pawn location, RawMagnitude = new level).");
 
 // Phase 3: weapon stance
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon, "Stance.Weapon", "Parent of the weapon stance tags (UBH_StanceComponent).");

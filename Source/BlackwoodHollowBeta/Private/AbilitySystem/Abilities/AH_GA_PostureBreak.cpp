@@ -82,10 +82,15 @@ void UAH_GA_PostureBreak::ActivateAbility(const FGameplayAbilitySpecHandle Handl
 		}
 	}
 
-	// The attribute set only tags the server; make sure the owning client has it too.
-	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+	// The attribute set adds State.Combat.PostureBroken as a replicated loose tag on the server, so clients receive it
+	// through replication. Set (not add) on the server only: idempotent, no double count, and no client-side copy that
+	// could outlive the replicated removal.
+	if (HasAuthority(&ActivationInfo))
 	{
-		ASC->SetLooseGameplayTagCount(TAG_State_Combat_PostureBroken, 1);
+		if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+		{
+			ASC->SetLooseGameplayTagCount(TAG_State_Combat_PostureBroken, 1, EGameplayTagReplicationState::TagOnly);
+		}
 	}
 
 	if (bDisableMovement)
@@ -176,9 +181,13 @@ void UAH_GA_PostureBreak::EndAbility(const FGameplayAbilitySpecHandle Handle, co
 
 	SetMovementDisabled(false);
 
+	// Server clears the replicated tag; clients get the removal through replication.
 	if (UAbilitySystemComponent* ASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr)
 	{
-		ASC->SetLooseGameplayTagCount(TAG_State_Combat_PostureBroken, 0);
+		if (ASC->IsOwnerActorAuthoritative())
+		{
+			ASC->SetLooseGameplayTagCount(TAG_State_Combat_PostureBroken, 0, EGameplayTagReplicationState::TagOnly);
+		}
 	}
 
 	MontageTask = nullptr;

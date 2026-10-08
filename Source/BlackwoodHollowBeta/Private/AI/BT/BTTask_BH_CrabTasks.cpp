@@ -7,10 +7,17 @@
 #include "Abilities/GameplayAbility.h"
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "BrainComponent.h"
 #include "NavigationSystem.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
+
+namespace
+{
+	/** Orbit mode: chance to keep circling the same way as the previous orbit move. */
+	constexpr float OrbitKeepSideChance = 0.7f;
+}
 
 // ============================================================================
 // Request Attack Token
@@ -200,8 +207,20 @@ UBTTask_BH_FlankMove::UBTTask_BH_FlankMove(const FObjectInitializer& ObjectIniti
 	INIT_TASK_NODE_NOTIFY_FLAGS();
 }
 
+void UBTTask_BH_FlankMove::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	FBTBHFlankMemory* Memory = CastInstanceNodeMemory<FBTBHFlankMemory>(NodeMemory);
+	Memory->Elapsed = 0.f;
+	Memory->LastOrbitSide = 0;
+}
+
 FString UBTTask_BH_FlankMove::GetStaticDescription() const
 {
+	if (bOrbit)
+	{
+		return FString::Printf(TEXT("Orbit target at %.0f-%.0f cm, %.0f-%.0f deg round the approach line (%.0f%% same side), accept %.0f cm, max %.1f s -> %s"),
+			OrbitMinRadius, OrbitMaxRadius, OrbitAngleMin, OrbitAngleMax, OrbitKeepSideChance * 100.f, AcceptanceRadius, MaxMoveTime, *FlankLocationKeyName.ToString());
+	}
 	return FString::Printf(TEXT("Strafe to %.0f cm from target, %.0f deg off the approach line -> %s"), FlankRadius, FlankAngle, *FlankLocationKeyName.ToString());
 }
 
@@ -217,7 +236,7 @@ EBTNodeResult::Type UBTTask_BH_FlankMove::ExecuteTask(UBehaviorTreeComponent& Ow
 		return EBTNodeResult::Failed;
 	}
 
-	FBTBHCrabTaskMemory* Memory = CastInstanceNodeMemory<FBTBHCrabTaskMemory>(NodeMemory);
+	FBTBHFlankMemory* Memory = CastInstanceNodeMemory<FBTBHFlankMemory>(NodeMemory);
 	Memory->Elapsed = 0.f;
 
 	const FVector TargetLoc = Target->GetActorLocation();
@@ -227,16 +246,37 @@ EBTNodeResult::Type UBTTask_BH_FlankMove::ExecuteTask(UBehaviorTreeComponent& Ow
 		OutDir = -Target->GetActorForwardVector().GetSafeNormal2D();
 	}
 
-	// Try a random side first, then the other one.
-	const float FirstSide = FMath::RandBool() ? 1.f : -1.f;
+	// Orbit mode picks its side/radius/angle here; the flank mode keeps its fixed radius and angle with a random side.
+	float Radius = FlankRadius;
+	float Angle = FlankAngle;
+	float FirstSide = FMath::RandBool() ? 1.f : -1.f;
+	if (bOrbit)
+	{
+		const float MinRadius = FMath::Min(OrbitMinRadius, OrbitMaxRadius);
+		const float MaxRadius = FMath::Max(OrbitMinRadius, OrbitMaxRadius);
+		const float CrabDist = FVector::Dist2D(Pawn->GetActorLocation(), TargetLoc);
+		// Already inside the ring: step out to its inner edge (a small back-off), otherwise any radius in the ring.
+		Radius = (CrabDist < MinRadius) ? MinRadius : FMath::FRandRange(MinRadius, MaxRadius);
+		Angle = FMath::FRandRange(FMath::Min(OrbitAngleMin, OrbitAngleMax), FMath::Max(OrbitAngleMin, OrbitAngleMax));
+		if (Memory->LastOrbitSide != 0 && FMath::FRand() < OrbitKeepSideChance)
+		{
+			FirstSide = static_cast<float>(Memory->LastOrbitSide);
+		}
+	}
+
+	// Try the chosen side first, then the other one.
 	FNavLocation NavPoint;
 	bool bFound = false;
 	for (int32 Attempt = 0; Attempt < 2 && !bFound; ++Attempt)
 	{
 		const float Side = (Attempt == 0) ? FirstSide : -FirstSide;
-		const FVector Dir = OutDir.RotateAngleAxis(Side * FlankAngle, FVector::UpVector);
-		const FVector Wanted = TargetLoc + Dir * FlankRadius;
+		const FVector Dir = OutDir.RotateAngleAxis(Side * Angle, FVector::UpVector);
+		const FVector Wanted = TargetLoc + Dir * Radius;
 		bFound = NavSys->ProjectPointToNavigation(Wanted, NavPoint, FVector(150.f, 150.f, 250.f));
+		if (bFound && bOrbit)
+		{
+			Memory->LastOrbitSide = (Side > 0.f) ? 1 : -1;
+		}
 	}
 	if (!bFound)
 	{
@@ -278,7 +318,7 @@ void UBTTask_BH_FlankMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* No
 		return;
 	}
 
-	FBTBHCrabTaskMemory* Memory = CastInstanceNodeMemory<FBTBHCrabTaskMemory>(NodeMemory);
+	FBTBHFlankMemory* Memory = CastInstanceNodeMemory<FBTBHFlankMemory>(NodeMemory);
 	Memory->Elapsed += DeltaSeconds;
 
 	if (Controller->GetMoveStatus() == EPathFollowingStatus::Idle)
@@ -299,4 +339,113 @@ EBTNodeResult::Type UBTTask_BH_FlankMove::AbortTask(UBehaviorTreeComponent& Owne
 		Controller->StopMovement();
 	}
 	return EBTNodeResult::Aborted;
+}
+
+// ============================================================================
+// Chase Target
+// ============================================================================
+
+UBTTask_BH_ChaseTarget::UBTTask_BH_ChaseTarget(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	NodeName = TEXT("BH Chase Target");
+	INIT_TASK_NODE_NOTIFY_FLAGS();
+}
+
+FString UBTTask_BH_ChaseTarget::GetStaticDescription() const
+{
+	return FString::Printf(TEXT("Chase the target (no strafe) to within %.0f cm, max %.1f s"), AcceptanceRadius, MaxChaseTime);
+}
+
+EBTNodeResult::Type UBTTask_BH_ChaseTarget::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
+{
+	ABH_CrabAIController* Controller = Cast<ABH_CrabAIController>(OwnerComp.GetAIOwner());
+	const AActor* Target = Controller ? Controller->GetCrabTarget() : nullptr;
+	if (!Controller || !Controller->GetPawn() || !Target)
+	{
+		return EBTNodeResult::Failed;
+	}
+
+	FBTBHChaseMemory* Memory = CastInstanceNodeMemory<FBTBHChaseMemory>(NodeMemory);
+	Memory->Elapsed = 0.f;
+
+	FAIMoveRequest MoveRequest(Target);
+	MoveRequest.SetAcceptanceRadius(AcceptanceRadius);
+	MoveRequest.SetCanStrafe(false);
+	MoveRequest.SetUsePathfinding(true);
+
+	const FPathFollowingRequestResult Result = Controller->MoveTo(MoveRequest);
+	switch (Result.Code)
+	{
+	case EPathFollowingRequestResult::AlreadyAtGoal:
+		return EBTNodeResult::Succeeded;
+	case EPathFollowingRequestResult::RequestSuccessful:
+		// The path following component reports the end of this request (default OnMessage finishes the task with its success flag).
+		WaitForMessage(OwnerComp, UBrainComponent::AIMessage_MoveFinished, static_cast<int32>(Result.MoveId.GetID()));
+		return EBTNodeResult::InProgress;
+	default:
+		return EBTNodeResult::Failed;
+	}
+}
+
+void UBTTask_BH_ChaseTarget::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds)
+{
+	ABH_CrabAIController* Controller = Cast<ABH_CrabAIController>(OwnerComp.GetAIOwner());
+	FBTBHChaseMemory* Memory = CastInstanceNodeMemory<FBTBHChaseMemory>(NodeMemory);
+	Memory->Elapsed += DeltaSeconds;
+
+	if (!Controller || !Controller->GetCrabTarget() || Memory->Elapsed >= MaxChaseTime)
+	{
+		StopWaitingForMessages(OwnerComp); // the stop below would otherwise report back into a finished task
+		if (Controller)
+		{
+			Controller->StopMovement();
+		}
+		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
+	}
+}
+
+EBTNodeResult::Type UBTTask_BH_ChaseTarget::AbortTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
+{
+	StopWaitingForMessages(OwnerComp);
+	if (ABH_CrabAIController* Controller = Cast<ABH_CrabAIController>(OwnerComp.GetAIOwner()))
+	{
+		Controller->StopMovement();
+	}
+	return EBTNodeResult::Aborted;
+}
+
+// ============================================================================
+// Wait
+// ============================================================================
+
+UBTTask_BH_Wait::UBTTask_BH_Wait(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	NodeName = TEXT("BH Wait");
+	INIT_TASK_NODE_NOTIFY_FLAGS();
+}
+
+FString UBTTask_BH_Wait::GetStaticDescription() const
+{
+	return RandomDeviation > 0.f
+		? FString::Printf(TEXT("Wait %.2f s (+/- %.2f)"), WaitTime, RandomDeviation)
+		: FString::Printf(TEXT("Wait %.2f s"), WaitTime);
+}
+
+EBTNodeResult::Type UBTTask_BH_Wait::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
+{
+	FBTBHWaitMemory* Memory = CastInstanceNodeMemory<FBTBHWaitMemory>(NodeMemory);
+	Memory->Remaining = FMath::Max(0.f, WaitTime + FMath::FRandRange(-RandomDeviation, RandomDeviation));
+	return Memory->Remaining > 0.f ? EBTNodeResult::InProgress : EBTNodeResult::Succeeded;
+}
+
+void UBTTask_BH_Wait::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds)
+{
+	FBTBHWaitMemory* Memory = CastInstanceNodeMemory<FBTBHWaitMemory>(NodeMemory);
+	Memory->Remaining -= DeltaSeconds;
+	if (Memory->Remaining <= 0.f)
+	{
+		FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
+	}
 }

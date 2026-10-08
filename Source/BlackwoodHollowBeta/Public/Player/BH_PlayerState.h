@@ -18,6 +18,7 @@
 
 class UNarrativeInventoryComponent;
 class UAH_GA_FragmentBase;
+class UBH_ProgressionComponent;
 
 /** Broadcast (server and owning client) when a fragment slot changes. SlotIndex -1 = several / unknown slots changed. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnFragmentSlotsChanged, int32, SlotIndex);
@@ -32,6 +33,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Inventory")
 	UNarrativeInventoryComponent* GetInventory() const { return Inventory; }
+
+	/** Phase 9: replicated XP / level (survives pawn respawns; applies the level to each new pawn). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Progression")
+	UBH_ProgressionComponent* GetProgression() const { return Progression; }
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
@@ -78,9 +83,37 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|Fragments")
 	FBH_OnFragmentSlotsChanged OnFragmentSlotsChanged;
 
+	// Debug RPCs: declared in every build (UHT forbids UFUNCTION inside #if); bodies are compiled out of Shipping.
+	// -- Debug RPCs (non-shipping) -------------------------------------------------------------
+	// The bh.* console commands (BH_RPGDebugCommands.cpp) call these from a client window; they act on the SERVER world exactly like
+	// the commands do on the host (every player / every wave spawner). Ranges are validated here and pre-checked by the commands.
+
+	static constexpr int32 MaxDebugXP = 1000000;
+	static constexpr int32 MaxDebugLevel = 1000;
+	static constexpr int32 MaxDebugWave = 1000;
+
+	/** Server: gives Amount XP to every player (bh.XP.Grant from a client). */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugGrantXP(int32 Amount);
+
+	/** Server: sets every player's level (bh.Level.Set from a client). */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugSetLevel(int32 NewLevel);
+
+	/** Server: abandons the current wave and starts WaveNumber (1 = first) on every wave spawner (bh.Arena.SkipToWave from a client). */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugSkipToWave(int32 WaveNumber);
+
+	/** Server: spawns the boss from every wave spawner (bh.Arena.SpawnBoss from a client). */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugSpawnBoss();
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Inventory")
 	TObjectPtr<UNarrativeInventoryComponent> Inventory;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Progression")
+	TObjectPtr<UBH_ProgressionComponent> Progression;
 
 	/**
 	 * Category restriction per slot (index 0 = key 1). Default {Offensive, Vitality, BlightResist}: Overload Burst (Offensive)

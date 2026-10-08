@@ -10,8 +10,14 @@
 // Testing helpers:
 //   bAutoAttack   - periodically activates AutoAttackAbility (tests your parry/block)
 //   bHoldBlock    - keeps BlockAbility active (tests guard / posture break)
-//   bFaceTarget   - turns to face player 0
+//   bFaceTarget   - turns to face the nearest living player pawn (or the AI's aggro target), re-evaluated every 0.25 s
 //   bResetOnDeath - refills Health/Posture a few seconds after dying
+//
+// Phase 9 scaling: EnemyLevel (set it before BeginPlay: placed in the level, ExposeOnSpawn, or a deferred spawn) and
+// ScalingRowPrefix pick rows of UBH_RPGSettings::EnemyScalingTable ("<Prefix>.MaxHealth / .MaxPosture / .AttackPower / .Defense /
+// .XPReward"). ApplyLevelScaling runs on the server at the end of BeginPlay, AFTER the per-class Initial* values, and only touches
+// stats whose row exists. On death the enemy grants its XP (curve row at its level, else XPRewardOverride) to every living player
+// pawn within UBH_RPGSettings::XPShareRadius.
 
 #pragma once
 
@@ -26,6 +32,10 @@ class UAbilitySystemComponent;
 class UAH_AttributeSet;
 class UGameplayAbility;
 class UBH_WeaponLoadoutDataAsset;
+class ABH_EnemyBase;
+
+/** Server: this enemy's health reached zero (fires after the death hooks and the XP grant). */
+DECLARE_MULTICAST_DELEGATE_TwoParams(FBH_OnEnemyDeath, ABH_EnemyBase* /*Enemy*/, AActor* /*Killer*/);
 
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API ABH_EnemyBase : public ACharacter, public IAbilitySystemInterface, public IGenericTeamAgentInterface
@@ -43,6 +53,7 @@ public:
 	virtual FGenericTeamId GetGenericTeamId() const override { return BH_CombatTeam::ToGenericTeamId(CombatTeam); }
 	virtual void SetGenericTeamId(const FGenericTeamId& NewTeamId) override { CombatTeam = BH_CombatTeam::FromGenericTeamId(NewTeamId); }
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Enemy")
 	UAH_AttributeSet* GetAttributeSet() const { return AttributeSet; }
@@ -60,7 +71,7 @@ public:
 	FText DisplayName;
 
 	/** Team for friendly-fire filtering: same-team hitboxes never connect. Neutral = hittable by everyone. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Enemy")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Replicated, Category = "BlackwoodHollow|Enemy")
 	EBH_CombatTeam CombatTeam = EBH_CombatTeam::Enemies;
 
 	/** Granted on BeginPlay (authority). Typically HitReaction, PostureBreak, Block, Parry, a melee attack. */
@@ -74,6 +85,38 @@ public:
 	/** Loadout entry to use (an Enum_OverlayPose display name). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BlackwoodHollow|Enemy")
 	FString WeaponLoadoutName = TEXT("SwordAndShield");
+
+	// -- Level scaling (Phase 9) ---------------------------------------------
+
+	/** Enemy level. Set before BeginPlay (placed instance, Expose on Spawn, or the wave spawner's deferred spawn). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Enemy|Scaling", meta = (ExposeOnSpawn = true, ClampMin = "1"))
+	int32 EnemyLevel = 1;
+
+	/** Row prefix in the enemy scaling table ("Crab" -> "Crab.MaxHealth", ...). None = this enemy is not scaled by the table. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Enemy|Scaling")
+	FName ScalingRowPrefix;
+
+	/** XP granted on death when the enemy table has no "<Prefix>.XPReward" row. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Enemy|Scaling", meta = (ClampMin = "0"))
+	int32 XPRewardOverride = 10;
+
+	/**
+	 * SERVER. Writes EnemyLevel into the Level attribute and, for every row that exists in the enemy scaling table, sets the BASE
+	 * MaxHealth (refilling Health), MaxPosture (refilling Posture), AttackPower and Defense. Missing rows leave the current value alone.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Enemy|Scaling")
+	void ApplyLevelScaling();
+
+	/** XP this enemy grants on death: the table's "<Prefix>.XPReward" at EnemyLevel, else XPRewardOverride. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Enemy|Scaling")
+	int32 GetXPReward() const;
+
+	/** True from the moment the health hits zero (cleared again if bResetOnDeath revives it). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Enemy")
+	bool IsEnemyDead() const { return bDead; }
+
+	/** Server only: fires when this enemy dies (the wave spawner listens to it). */
+	FBH_OnEnemyDeath OnEnemyDeath;
 
 	// -- Test behaviour ------------------------------------------------------
 
@@ -115,6 +158,12 @@ protected:
 	 */
 	virtual void OnDeathNative(AActor* Killer) {}
 
+	/**
+	 * Server, end of BeginPlay: writes this class's starting stats. The base applies the level scaling; subclasses that have their own
+	 * Initial* values (ABH_EnemyCrab) apply those first and then call Super, so the scaling table always wins where a row exists.
+	 */
+	virtual void InitializeServerStats();
+
 	/** Health reached zero (authority). */
 	UFUNCTION(BlueprintImplementableEvent, Category = "BlackwoodHollow|Enemy", meta = (DisplayName = "On Death"))
 	void K2_OnDeath(AActor* Killer);
@@ -132,8 +181,21 @@ private:
 	void DoAutoAttack();
 	void StartHoldBlock();
 
+	/** Nearest living player pawn, or the identity component's aggro target when it is alive. Cached for FaceTargetSearchInterval. */
+	const AActor* ResolveFaceTarget();
+
+	/** Seconds between face-target searches. */
+	static constexpr float FaceTargetSearchInterval = 0.25f;
+
+	TWeakObjectPtr<const AActor> CachedFaceTarget;
+	double NextFaceTargetSearchTime = 0.0;
+
 	FTimerHandle AutoAttackTimerHandle;
 	FTimerHandle ResetTimerHandle;
 	FTimerHandle HoldBlockTimerHandle;
 	bool bAbilitiesGranted = false;
+
+	/** Replicated so clients (health bars, wave UI) can read IsEnemyDead(). */
+	UPROPERTY(Replicated)
+	bool bDead = false;
 };

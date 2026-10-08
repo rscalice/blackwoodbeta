@@ -4,6 +4,8 @@
 // Server only. Runs the pawn's ABH_EnemyCrab::CrabBehaviorTree (else DefaultBehaviorTree below), finds and keeps a target
 // (aggro / lose range, line of sight), focuses it, mirrors a few facts into the Blackboard at ~10 Hz and brokers the attack token
 // (UBH_AttackTokenSubsystem) for the BT tasks. It never attacks by itself: all decisions live in the Behavior Tree.
+// With bUseCodeBuiltTree (default) the tree is assembled in C++ at runtime (BuildCrabTree) because the BT_BH_Crab asset is corrupted
+// and cannot be authored in this build; the asset path (CrabBehaviorTree / DefaultBehaviorTree) is only used when it is off.
 //
 // BLACKBOARD KEYS (create these in BB_BH_Crab; names are the constants in BH_CrabBB below)
 //   TargetActor ........ Object (Actor)   current target, cleared when lost
@@ -23,10 +25,12 @@
 #include "AIController.h"
 #include "GameplayTagContainer.h"
 #include "TimerManager.h"
+#include "UObject/SoftObjectPtr.h"
 #include "BH_CrabAIController.generated.h"
 
 class UAbilitySystemComponent;
 class UBehaviorTree;
+class UBlackboardData;
 
 namespace BH_CrabBB
 {
@@ -77,6 +81,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|CrabAI")
 	bool bUseAttackTokens = true;
 
+	/** true: StartBrain builds the crab's Behavior Tree in code (BuildCrabTree) and ignores the BT assets. false: run CrabBehaviorTree / DefaultBehaviorTree. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI")
+	bool bUseCodeBuiltTree = true;
+
+	/** Blackboard asset the code-built tree runs on (needs the keys listed in BH_CrabBB). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI")
+	TSoftObjectPtr<UBlackboardData> CodeTreeBlackboard;
+
 	// -- Queries ----------------------------------------------------------------------------
 
 	UFUNCTION(BlueprintPure, Category = "BH|CrabAI")
@@ -118,6 +130,12 @@ private:
 	UAbilitySystemComponent* GetPawnASC() const;
 
 	void StartBrain();
+
+	/** Builds (once per controller) the crab Behavior Tree from node objects: no asset, no editor graph. Null when the blackboard cannot be loaded. */
+	UBehaviorTree* BuildCrabTree();
+
+	/** Logs (once per controller) when a tree's root children have an empty composite entry or a null decorator. */
+	void ValidateBehaviorTree(const UBehaviorTree* Tree);
 	void OnTargetAttackingChanged(const FGameplayTag Tag, int32 NewCount);
 
 	TWeakObjectPtr<AActor> CrabTarget;
@@ -128,6 +146,13 @@ private:
 	double LastTargetAttackStartTime = -1.0;
 
 	bool bHoldingToken = false;
+
+	/** The corrupted-tree error has been logged for this controller. */
+	bool bLoggedCorruptTree = false;
+
+	/** The tree BuildCrabTree assembled (kept alive here; the Behavior Tree manager caches its template by this object). */
+	UPROPERTY(Transient)
+	TObjectPtr<UBehaviorTree> CodeBuiltTree;
 
 	FTimerHandle ScanTimerHandle;
 	FTimerHandle BlackboardTimerHandle;

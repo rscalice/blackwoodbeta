@@ -132,6 +132,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Combat")
 	static bool HandleParryInput(AActor* OwningActor);
 
+	// -- Damage formula (Phase 9) ----------------------------------------------
+
+	/**
+	 * THE damage formula, shared by UAH_ExecCalc_Damage (the real hit) and the abilities' local estimate (hit-feel tiers):
+	 *   max(1, (BaseDamage + AttackPower * AttackPowerScale) * Multiplier * 100 / (100 + max(0, Defense)))
+	 * Defense is a diminishing-returns divisor, never a flat subtraction; every hit does at least 1.
+	 * @param AttackPowerScale  how much of the attacker's AttackPower is added to the base (1 = all, 0 = none: shield bash).
+	 * @param Multiplier        combo step * hitbox * identity * riposte, ...
+	 */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Combat|Damage")
+	static float ComputeDamage(float BaseDamage, float AttackPower, float AttackPowerScale, float Multiplier, float Defense);
+
 	// -- Stamina ---------------------------------------------------------------
 
 	/**

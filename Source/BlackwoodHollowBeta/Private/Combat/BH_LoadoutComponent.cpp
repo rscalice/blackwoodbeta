@@ -9,6 +9,7 @@
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
+#include "Progression/BH_RPGSettings.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "EquipmentComponent.h"
@@ -774,6 +775,72 @@ void UBH_LoadoutComponent::RefreshArmorStatMods()
 			It.RemoveCurrent();
 		}
 	}
+
+	// Armor weight: ONE infinite effect for the heaviest equipped class (stamina regen multiplier + weight tag).
+	// Re-applied only when the class changes; no armor equipped -> no effect.
+	EBH_ArmorWeightClass Weight = EBH_ArmorWeightClass::Cloth;
+	const bool bHasArmor = GetEquippedArmorWeight(Weight);
+	const int32 DesiredIndex = bHasArmor ? static_cast<int32>(Weight) : -1;
+	const bool bHandleAlive = ArmorWeightHandle.IsValid() && ASC->GetActiveGameplayEffect(ArmorWeightHandle) != nullptr;
+	if (DesiredIndex != AppliedArmorWeightIndex || (DesiredIndex >= 0 && !bHandleAlive))
+	{
+		if (ArmorWeightHandle.IsValid())
+		{
+			ASC->RemoveActiveGameplayEffect(ArmorWeightHandle);
+		}
+		ArmorWeightHandle = FActiveGameplayEffectHandle();
+		AppliedArmorWeightIndex = -1;
+
+		if (bHasArmor)
+		{
+			TSubclassOf<UGameplayEffect> WeightEffect = UAH_GE_ArmorWeight::StaticClass();
+			if (Weight == EBH_ArmorWeightClass::Medium)
+			{
+				WeightEffect = UAH_GE_ArmorWeight_Medium::StaticClass();
+			}
+			else if (Weight == EBH_ArmorWeightClass::Heavy)
+			{
+				WeightEffect = UAH_GE_ArmorWeight_Heavy::StaticClass();
+			}
+
+			const UBH_RPGSettings* Settings = UBH_RPGSettings::Get();
+			FGameplayEffectContextHandle Context = ASC->MakeEffectContext();
+			FGameplayEffectSpecHandle Spec = ASC->MakeOutgoingSpec(WeightEffect, 1.f, Context);
+			if (Spec.IsValid() && Settings)
+			{
+				Spec.Data->SetSetByCallerMagnitude(TAG_Data_Equip_StaminaRegenMult, Settings->GetStaminaRegenMultiplier(Weight));
+				ArmorWeightHandle = ASC->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+				AppliedArmorWeightIndex = static_cast<int32>(Weight);
+				UE_LOG(LogBHLoadout, Log, TEXT("Armor weight ON  class=%d regen x%.2f"), AppliedArmorWeightIndex, Settings->GetStaminaRegenMultiplier(Weight));
+			}
+		}
+	}
+}
+
+bool UBH_LoadoutComponent::GetEquippedArmorWeight(EBH_ArmorWeightClass& OutWeight) const
+{
+	OutWeight = EBH_ArmorWeightClass::Cloth;
+	const UNarrativeInventoryComponent* Inventory = GetInventory();
+	if (!Inventory)
+	{
+		return false;
+	}
+
+	bool bAny = false;
+	for (const UNarrativeItem* Item : Inventory->GetItems())
+	{
+		const UBH_ArmorItem* Armor = Cast<UBH_ArmorItem>(Item);
+		if (!Armor || !Armor->bActive)
+		{
+			continue;
+		}
+		bAny = true;
+		if (static_cast<uint8>(Armor->WeightClass) > static_cast<uint8>(OutWeight))
+		{
+			OutWeight = Armor->WeightClass;
+		}
+	}
+	return bAny;
 }
 
 // ---------------------------------------------------------------------------
@@ -872,10 +939,17 @@ FString UBH_LoadoutComponent::DescribeState() const
 	const bool bHasSet = GetActiveLoadoutSet(ActiveSet);
 	Out += FString::Printf(TEXT("AvailableStances = [%s] | Pose = %s | ActiveSet = %s\n"), *Stances, *UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(GetOwner()), bHasSet ? (ActiveSet == EBH_LoadoutSet::A ? TEXT("A") : TEXT("B")) : TEXT("none"));
 
+	EBH_ArmorWeightClass ArmorWeight = EBH_ArmorWeightClass::Cloth;
+	const bool bArmorWorn = GetEquippedArmorWeight(ArmorWeight);
+	const TCHAR* ArmorWeightName = !bArmorWorn ? TEXT("none") : (ArmorWeight == EBH_ArmorWeightClass::Heavy) ? TEXT("Heavy") : (ArmorWeight == EBH_ArmorWeightClass::Medium) ? TEXT("Medium") : TEXT("Cloth");
+	float RegenRate = 0.f;
+
 	if (const UAbilitySystemComponent* ASC = GetOwnerASC())
 	{
 		if (const UAH_AttributeSet* Attr = ASC->GetSet<UAH_AttributeSet>())
 		{
+			RegenRate = Attr->GetStaminaRegenRate();
+			Out += FString::Printf(TEXT("ArmorWeight = %s | StaminaRegenRate = %.2f\n"), ArmorWeightName, RegenRate);
 			Out += FString::Printf(TEXT("AttackPower=%.1f Defense=%.1f MaxStamina=%.1f Stamina=%.1f MaxHealth=%.1f Health=%.1f"), Attr->GetAttackPower(), Attr->GetDefense(), Attr->GetMaxStamina(), Attr->GetStamina(), Attr->GetMaxHealth(), Attr->GetHealth());
 		}
 	}

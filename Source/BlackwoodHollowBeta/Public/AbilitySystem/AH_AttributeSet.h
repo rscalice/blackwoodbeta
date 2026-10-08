@@ -104,6 +104,14 @@ public:
 	FGameplayAttributeData AttackSpeed;
 	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, AttackSpeed)
 
+	// -- Level (Phase 9) -----------------------------------------------------
+	// Character level, clamped to [1, UBH_RPGSettings::MaxLevel]. Players: pushed by UBH_ProgressionComponent (the PlayerState owns the
+	// authoritative replicated level). Enemies: set from ABH_EnemyBase::EnemyLevel. Informational for the damage formula / HUD; the
+	// scaled stats themselves are written to the Max* / AttackPower / Defense base values.
+	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Level", ReplicatedUsing = OnRep_Level)
+	FGameplayAttributeData Level;
+	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, Level)
+
 	// -- Blight resistance (mitigates BP_BlightVolume / Blight fog damage) -
 	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Blight", ReplicatedUsing = OnRep_BlightResistance)
 	FGameplayAttributeData BlightResistance;
@@ -158,6 +166,9 @@ protected:
 
 	UFUNCTION()
 	virtual void OnRep_BlightResistance(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	virtual void OnRep_Level(const FGameplayAttributeData& OldValue);
 
 private:
 	/** Shared clamp helper used by both PreAttributeChange and PostGameplayEffectExecute. */

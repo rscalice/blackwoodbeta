@@ -41,7 +41,7 @@ UAH_GA_MeleeAttack_Base::UAH_GA_MeleeAttack_Base()
 	StaminaCost = 12.f;
 	bAllowStaminaOvercommit = true;
 
-	DamageEffectClass = UAH_GE_MeleeDamage::StaticClass();
+	DamageEffectClass = UAH_GE_Damage_Formula::StaticClass();
 	PostureDamageEffectClass = UAH_GE_PostureDamage::StaticClass();
 	HitCueTag = TAG_GameplayCue_Combat_Hit;
 
@@ -415,43 +415,42 @@ float UAH_GA_MeleeAttack_Base::GetEffectivePlayRate(float BaseRate) const
 	return FMath::Max(BaseRate * Speed, 0.1f);
 }
 
-float UAH_GA_MeleeAttack_Base::CalculateDamage_Implementation(AActor* Target, int32 ComboStep, float HitboxMultiplier) const
+float UAH_GA_MeleeAttack_Base::GetDamageMultiplier(int32 ComboStep, float HitboxMultiplier, bool bRiposte) const
 {
-	float Damage = BaseDamage;
-
-	if (bAddAttackPower)
-	{
-		if (const UAbilitySystemComponent* SourceASC = GetAbilitySystemComponentFromActorInfo())
-		{
-			Damage += SourceASC->GetNumericAttribute(UAH_AttributeSet::GetAttackPowerAttribute());
-		}
-	}
-
-	Damage *= GetStepDamageMultiplier(ComboStep) * HitboxMultiplier;
-
-	// Per-pawn scale (enemy archetypes sharing player combos); applied before Defense so the target's Defense still subtracts in full.
-	Damage *= UBH_CombatIdentityComponent::GetOutgoingCombatMultiplier(GetAvatarActorFromActorInfo());
-
-	if (bSubtractTargetDefense)
-	{
-		if (const UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Target))
-		{
-			Damage -= TargetASC->GetNumericAttribute(UAH_AttributeSet::GetDefenseAttribute());
-		}
-	}
-
-	Damage = FMath::Max(Damage, MinimumDamage);
+	// Per-pawn scale (enemy archetypes sharing player combos) is part of the multiplier; Defense is applied by the formula.
+	float Multiplier = GetStepDamageMultiplier(ComboStep) * HitboxMultiplier
+		* UBH_CombatIdentityComponent::GetOutgoingCombatMultiplier(GetAvatarActorFromActorInfo());
 
 	// Riposte: the first hit after a perfect parry hits harder (OnHitDealt consumes the window afterwards).
-	if (const UAbilitySystemComponent* RiposteASC = GetAbilitySystemComponentFromActorInfo())
+	if (bRiposte)
 	{
-		if (RiposteASC->HasMatchingGameplayTag(TAG_State_Combat_RiposteReady))
+		Multiplier *= RiposteDamageMultiplier;
+	}
+	return Multiplier;
+}
+
+float UAH_GA_MeleeAttack_Base::CalculateDamage_Implementation(AActor* Target, int32 ComboStep, float HitboxMultiplier) const
+{
+	const UAbilitySystemComponent* SourceASC = GetAbilitySystemComponentFromActorInfo();
+
+	float AttackPower = 0.f;
+	if (SourceASC && SourceASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetAttackPowerAttribute()))
+	{
+		AttackPower = SourceASC->GetNumericAttribute(UAH_AttributeSet::GetAttackPowerAttribute());
+	}
+
+	float Defense = 0.f;
+	if (const UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Target))
+	{
+		if (TargetASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetDefenseAttribute()))
 		{
-			Damage *= RiposteDamageMultiplier;
+			Defense = TargetASC->GetNumericAttribute(UAH_AttributeSet::GetDefenseAttribute());
 		}
 	}
 
-	return Damage;
+	const bool bRiposte = SourceASC && SourceASC->HasMatchingGameplayTag(TAG_State_Combat_RiposteReady);
+	return UBH_CombatFunctionLibrary::ComputeDamage(BaseDamage, AttackPower, bAddAttackPower ? 1.f : 0.f,
+		GetDamageMultiplier(ComboStep, HitboxMultiplier, bRiposte), Defense);
 }
 
 void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
@@ -507,12 +506,23 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 	float DamageApplied = 0.f;
 	if (DamageEffectClass)
 	{
+		// DamageApplied is the real number for hit-feel (same inputs as the GE); the formula GE gets the raw inputs instead.
 		DamageApplied = CalculateDamage(Target, ComboStep, HitboxMultiplier);
 
 		FGameplayEffectSpecHandle DamageSpec = MakeOutgoingGameplayEffectSpec(DamageEffectClass, GetAbilityLevel());
 		if (DamageSpec.IsValid())
 		{
-			DamageSpec.Data->SetSetByCallerMagnitude(TAG_Data_Damage, DamageApplied);
+			if (DamageEffectClass->IsChildOf(UAH_GE_Damage_Formula::StaticClass()))
+			{
+				DamageSpec.Data->SetSetByCallerMagnitude(TAG_Data_Damage, BaseDamage);
+				DamageSpec.Data->SetSetByCallerMagnitude(TAG_Data_DamageMultiplier, GetDamageMultiplier(ComboStep, HitboxMultiplier, bRiposte));
+				DamageSpec.Data->SetSetByCallerMagnitude(TAG_Data_AttackPowerScale, bAddAttackPower ? 1.f : 0.f);
+			}
+			else
+			{
+				// Legacy raw GE (reads Data.Damage only): hand it the final number.
+				DamageSpec.Data->SetSetByCallerMagnitude(TAG_Data_Damage, DamageApplied);
+			}
 			DamageSpec.Data->AddDynamicAssetTag(TAG_Damage_Type_Melee);
 			DamageSpec.Data->GetContext().AddHitResult(HitResult, true);
 			SourceASC->ApplyGameplayEffectSpecToTarget(*DamageSpec.Data.Get(), TargetASC);
@@ -579,6 +589,12 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 		{
 			// Lets the cue pick the blocked (metal on metal) FX instead of the flesh FX.
 			CueParams.AggregatedSourceTags.AddTag(TAG_Combat_HitResult_Blocked);
+		}
+		// Server-evaluated after the damage GE ran: clients' copy of the victim's Health may not have replicated when the cue fires.
+		if (TargetASC->HasMatchingGameplayTag(TAG_State_Combat_Dead)
+			|| (TargetASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetHealthAttribute()) && TargetASC->GetNumericAttribute(UAH_AttributeSet::GetHealthAttribute()) <= 0.f))
+		{
+			CueParams.AggregatedSourceTags.AddTag(TAG_Combat_HitResult_Fatal);
 		}
 		SourceASC->ExecuteGameplayCue(HitCueTag.IsValid() ? HitCueTag : FGameplayTag(TAG_GameplayCue_Combat_Hit), CueParams);
 	}
