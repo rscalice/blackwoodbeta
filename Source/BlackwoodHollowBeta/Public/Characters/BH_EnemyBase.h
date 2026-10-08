@@ -10,7 +10,7 @@
 // Testing helpers:
 //   bAutoAttack   - periodically activates AutoAttackAbility (tests your parry/block)
 //   bHoldBlock    - keeps BlockAbility active (tests guard / posture break)
-//   bFaceTarget   - turns to face player 0
+//   bFaceTarget   - turns to face the nearest living player pawn (or the AI's aggro target), re-evaluated every 0.25 s
 //   bResetOnDeath - refills Health/Posture a few seconds after dying
 //
 // Phase 9 scaling: EnemyLevel (set it before BeginPlay: placed in the level, ExposeOnSpawn, or a deferred spawn) and
@@ -53,6 +53,7 @@ public:
 	virtual FGenericTeamId GetGenericTeamId() const override { return BH_CombatTeam::ToGenericTeamId(CombatTeam); }
 	virtual void SetGenericTeamId(const FGenericTeamId& NewTeamId) override { CombatTeam = BH_CombatTeam::FromGenericTeamId(NewTeamId); }
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Enemy")
 	UAH_AttributeSet* GetAttributeSet() const { return AttributeSet; }
@@ -70,7 +71,7 @@ public:
 	FText DisplayName;
 
 	/** Team for friendly-fire filtering: same-team hitboxes never connect. Neutral = hittable by everyone. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Enemy")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Replicated, Category = "BlackwoodHollow|Enemy")
 	EBH_CombatTeam CombatTeam = EBH_CombatTeam::Enemies;
 
 	/** Granted on BeginPlay (authority). Typically HitReaction, PostureBreak, Block, Parry, a melee attack. */
@@ -180,9 +181,21 @@ private:
 	void DoAutoAttack();
 	void StartHoldBlock();
 
+	/** Nearest living player pawn, or the identity component's aggro target when it is alive. Cached for FaceTargetSearchInterval. */
+	const AActor* ResolveFaceTarget();
+
+	/** Seconds between face-target searches. */
+	static constexpr float FaceTargetSearchInterval = 0.25f;
+
+	TWeakObjectPtr<const AActor> CachedFaceTarget;
+	double NextFaceTargetSearchTime = 0.0;
+
 	FTimerHandle AutoAttackTimerHandle;
 	FTimerHandle ResetTimerHandle;
 	FTimerHandle HoldBlockTimerHandle;
 	bool bAbilitiesGranted = false;
+
+	/** Replicated so clients (health bars, wave UI) can read IsEnemyDead(). */
+	UPROPERTY(Replicated)
 	bool bDead = false;
 };

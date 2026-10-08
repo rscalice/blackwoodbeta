@@ -368,6 +368,12 @@ FBH_CrabHitOutcome UAH_GA_CrabAttackBase::ResolveHitOnActor(AActor* Victim, cons
 	{
 		CueParams.AggregatedSourceTags.AddTag(TAG_Combat_HitResult_Blocked);
 	}
+	// Server-evaluated after the damage GE ran: clients' copy of the victim's Health may not have replicated when the cue fires.
+	if (TargetASC->HasMatchingGameplayTag(TAG_State_Combat_Dead)
+		|| (TargetASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetHealthAttribute()) && TargetASC->GetNumericAttribute(UAH_AttributeSet::GetHealthAttribute()) <= 0.f))
+	{
+		CueParams.AggregatedSourceTags.AddTag(TAG_Combat_HitResult_Fatal);
+	}
 	SourceASC->ExecuteGameplayCue(HitCueTag.IsValid() ? HitCueTag : FGameplayTag(TAG_GameplayCue_Combat_Hit), CueParams);
 
 	Outcome.bConnected = true;

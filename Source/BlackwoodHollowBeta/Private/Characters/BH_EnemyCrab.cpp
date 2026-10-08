@@ -30,7 +30,11 @@ ABH_EnemyCrab::ABH_EnemyCrab()
 	{
 		Movement->bUseControllerDesiredRotation = true;
 		Movement->bOrientRotationToMovement = false;
-		Movement->RotationRate = FRotator(0.f, 360.f, 0.f);
+		Movement->RotationRate = FRotator(0.f, 160.f, 0.f);
+		// Slow introductory brute: the BP is set to the same values (these are the C++ defaults).
+		Movement->MaxWalkSpeed = 145.f;
+		Movement->MaxAcceleration = 700.f;
+		Movement->BrakingDecelerationWalking = 900.f;
 	}
 }
 

@@ -7,6 +7,7 @@
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "BehaviorTree/BehaviorTreeComponent.h"
+#include "Engine/World.h"
 
 // ============================================================================
 // Base
@@ -106,6 +107,14 @@ UBTDecorator_BH_SidestepGate::UBTDecorator_BH_SidestepGate(const FObjectInitiali
 	FlowAbortMode = EBTFlowAbortMode::None;
 }
 
+void UBTDecorator_BH_SidestepGate::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	FBTBHSidestepGateMemory* Memory = CastInstanceNodeMemory<FBTBHSidestepGateMemory>(NodeMemory);
+	Memory->RollTime = -1.0;
+	Memory->bHasRoll = false;
+	Memory->bRollResult = false;
+}
+
 FString UBTDecorator_BH_SidestepGate::GetStaticDescription() const
 {
 	return FString::Printf(TEXT("%.0f%% chance, %.1f s cooldown"), Chance * 100.f, Cooldown);
@@ -132,5 +141,65 @@ bool UBTDecorator_BH_SidestepGate::CalculateRawConditionValue(UBehaviorTreeCompo
 			return false;
 		}
 	}
-	return FMath::FRand() < Chance;
+
+	// Roll once per combo window: while the target's current combo is still inside the window and the last roll was made
+	// during that same combo, reuse its result instead of re-rolling every evaluation.
+	FBTBHSidestepGateMemory* Memory = CastInstanceNodeMemory<FBTBHSidestepGateMemory>(NodeMemory);
+	const double Now = Crab->GetWorld() ? Crab->GetWorld()->GetTimeSeconds() : 0.0;
+	const float SinceCombo = Controller->GetSecondsSinceTargetStartedCombo();
+	const bool bInWindow = SinceCombo < Controller->TargetComboWindow;
+	if (bInWindow && Memory->bHasRoll && (Now - Memory->RollTime) <= static_cast<double>(SinceCombo) + KINDA_SMALL_NUMBER)
+	{
+		return Memory->bRollResult;
+	}
+
+	const bool bRoll = FMath::FRand() < Chance;
+	Memory->RollTime = Now;
+	Memory->bHasRoll = true;
+	Memory->bRollResult = bRoll;
+	return bRoll;
+}
+
+// ============================================================================
+// Target Within
+// ============================================================================
+
+UBTDecorator_BH_TargetWithin::UBTDecorator_BH_TargetWithin(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	NodeName = TEXT("BH Target Within");
+	FlowAbortMode = EBTFlowAbortMode::None;
+}
+
+FString UBTDecorator_BH_TargetWithin::GetStaticDescription() const
+{
+	return FString::Printf(TEXT("Target within %.0f cm"), MaxDistance);
+}
+
+bool UBTDecorator_BH_TargetWithin::CalculateRawConditionValue(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) const
+{
+	const ABH_CrabAIController* Controller = Cast<ABH_CrabAIController>(OwnerComp.GetAIOwner());
+	return Controller && Controller->GetCrabTarget() && Controller->GetDistanceToCrabTarget() <= MaxDistance;
+}
+
+// ============================================================================
+// Has Target
+// ============================================================================
+
+UBTDecorator_BH_HasTarget::UBTDecorator_BH_HasTarget(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	NodeName = TEXT("BH Has Target");
+	FlowAbortMode = EBTFlowAbortMode::None;
+}
+
+FString UBTDecorator_BH_HasTarget::GetStaticDescription() const
+{
+	return TEXT("Controller has a target");
+}
+
+bool UBTDecorator_BH_HasTarget::CalculateRawConditionValue(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) const
+{
+	const ABH_CrabAIController* Controller = Cast<ABH_CrabAIController>(OwnerComp.GetAIOwner());
+	return Controller && Controller->GetCrabTarget();
 }

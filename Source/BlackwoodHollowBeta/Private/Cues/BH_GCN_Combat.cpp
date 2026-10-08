@@ -95,9 +95,13 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 		if (VictimASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetStaminaAttribute()))
 		{
 			bBlockerStaminaZero = VictimASC->GetNumericAttribute(UAH_AttributeSet::GetStaminaAttribute()) <= 0.f;
-			bFatal = !bBlocked && (VictimASC->HasMatchingGameplayTag(TAG_State_Combat_Dead)
-				|| VictimASC->GetNumericAttribute(UAH_AttributeSet::GetHealthAttribute()) <= 0.f);
 		}
+		// The server stamps Combat.HitResult.Fatal on the cue when the victim's Health was zero after the damage; the local
+		// Dead tag / Health check stays as a fallback (older callers, or a cue fired without the tag).
+		bFatal = !bBlocked && (Parameters.AggregatedSourceTags.HasTag(TAG_Combat_HitResult_Fatal)
+			|| VictimASC->HasMatchingGameplayTag(TAG_State_Combat_Dead)
+			|| (VictimASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetHealthAttribute())
+				&& VictimASC->GetNumericAttribute(UAH_AttributeSet::GetHealthAttribute()) <= 0.f));
 	}
 	EBH_ImpactTier Tier = bUseFixedTier ? FixedTier : UBH_CombatFeelLibrary::TierForHit(Parameters.RawMagnitude, Parameters.NormalizedMagnitude, bBlocked, bBlockerStaminaZero);
 	if (bFatal && Tier < EBH_ImpactTier::Heavy)

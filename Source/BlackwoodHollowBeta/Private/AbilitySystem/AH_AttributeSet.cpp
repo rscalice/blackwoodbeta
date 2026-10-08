@@ -325,7 +325,8 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 		if (DamageDone > 0.f && NewHealth <= 0.f && TargetASC && !TargetASC->HasMatchingGameplayTag(Tags.State_Combat_Dead))
 		{
 			OnHealthZero.Broadcast(Instigator);
-			TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead);
+			// Replicated loose tag (TagOnly): UpdateTagMap also bumps the authority's own count, so the server sees it too.
+			TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead, 1, EGameplayTagReplicationState::TagOnly);
 
 			// Death vocal (cosmetic, this machine). Melee kills are also voiced by the hit cue on every machine; PlayVoice's
 			// 2 s per-actor death limit keeps that from doubling here. Covers non-melee deaths (blight, effects) on the host.
@@ -349,7 +350,7 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 			OnHealthZero.Broadcast(Instigator);
 			if (TargetASC)
 			{
-				TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead);
+				TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead, 1, EGameplayTagReplicationState::TagOnly);
 			}
 		}
 	}
@@ -435,7 +436,8 @@ void UAH_AttributeSet::HandlePostureDepleted(UAbilitySystemComponent* TargetASC,
 		return;
 	}
 
-	TargetASC->AddLooseGameplayTag(Tags.State_Combat_PostureBroken);
+	// Replicated loose tag (TagOnly) so every machine sees the broken state; UAH_GA_PostureBreak clears it on the server.
+	TargetASC->AddLooseGameplayTag(Tags.State_Combat_PostureBroken, 1, EGameplayTagReplicationState::TagOnly);
 	OnPostureBroken.Broadcast(Instigator);
 
 	// Cosmetic cue (replicated): shatter VFX/SFX on every machine. Server-side only (this runs from GE execution).

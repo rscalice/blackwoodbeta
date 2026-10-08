@@ -66,6 +66,7 @@ UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_ParrySuccess, "GameplayCue
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_PostureBroken, "GameplayCue.Combat.PostureBroken", "Cosmetic cue: a target's posture broke (shatter VFX/SFX).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_Hit_ShieldBash, "GameplayCue.Combat.Hit.ShieldBash", "Cosmetic cue: a shield bash connected (heavier, metallic variant of the Hit cue).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Combat_HitResult_Blocked, "Combat.HitResult.Blocked", "Flag carried in FGameplayCueParameters::AggregatedSourceTags: the victim blocked this hit.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Combat_HitResult_Fatal, "Combat.HitResult.Fatal", "Flag carried in FGameplayCueParameters::AggregatedSourceTags: the victim's Health was zero after this hit's damage (set on the server, so every machine agrees).");
 
 // Phase 7A
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Combat_Dodging, "State.Combat.Dodging", "A dodge ability is active (granted by UAH_GA_Dodge).");

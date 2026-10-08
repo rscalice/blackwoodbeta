@@ -28,6 +28,16 @@ void UBPC_HeartFragment::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UBPC_HeartFragment, EquippedFragments);
+	DOREPLIFETIME_CONDITION(UBPC_HeartFragment, CurrentBlightShield, COND_OwnerOnly);
+}
+
+void UBPC_HeartFragment::OnRep_CurrentBlightShield(float OldValue)
+{
+	OnBlightShieldChanged.Broadcast(CurrentBlightShield, MaxBlightShield);
+	if (OldValue > 0.f && CurrentBlightShield <= 0.f)
+	{
+		OnBlightShieldDepleted.Broadcast();
+	}
 }
 
 #if WITH_EDITOR
@@ -182,7 +192,8 @@ float UBPC_HeartFragment::AbsorbBlightDamage(float BlightDamage)
 
 		if (EnsureAbilitySystemCached())
 		{
-			CachedASC->RemoveLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded);
+			// Replicated loose tag (TagOnly); also updates the authority's own count.
+			CachedASC->RemoveLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded, 1, EGameplayTagReplicationState::TagOnly);
 
 			FGameplayEventData EventData;
 			EventData.EventTag = FBH_GameplayTags::Get().Event_Combat_BlightShieldDepleted;
@@ -204,7 +215,7 @@ void UBPC_HeartFragment::RechargeBlightShield()
 
 	if (bWasDepleted && EnsureAbilitySystemCached())
 	{
-		CachedASC->AddLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded);
+		CachedASC->AddLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded, 1, EGameplayTagReplicationState::TagOnly);
 	}
 }
 

@@ -68,7 +68,7 @@ void ABP_BlightVolume::OnVolumeBeginOverlap(UPrimitiveComponent* OverlappedCompo
 	{
 		if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(OtherActor))
 		{
-			ASC->AddLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded);
+			ASC->AddLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded, 1, EGameplayTagReplicationState::TagOnly);
 		}
 	}
 }
@@ -87,7 +87,7 @@ void ABP_BlightVolume::OnVolumeEndOverlap(UPrimitiveComponent* OverlappedCompone
 	{
 		if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(OtherActor))
 		{
-			ASC->RemoveLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded);
+			ASC->RemoveLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded, 1, EGameplayTagReplicationState::TagOnly);
 		}
 	}
 }
@@ -238,7 +238,7 @@ void ABP_BlightVolume::HandleOverloadBurstNearby(AActor* BurstInstigator)
 		{
 			if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor))
 			{
-				ASC->RemoveLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded);
+				ASC->RemoveLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded, 1, EGameplayTagReplicationState::TagOnly);
 			}
 		}
 	}
@@ -254,7 +254,7 @@ void ABP_BlightVolume::OnSuppressionExpired()
 		{
 			if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor))
 			{
-				ASC->AddLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded);
+				ASC->AddLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded, 1, EGameplayTagReplicationState::TagOnly);
 			}
 		}
 	}

@@ -10,9 +10,21 @@
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
+#include "AI/BT/BTDecorator_BH_CrabConditions.h"
+#include "AI/BT/BTTask_BH_CrabTasks.h"
+#include "AbilitySystem/Abilities/AH_GA_CrabAbilities.h"
+#include "Abilities/GameplayAbility.h"
 #include "BehaviorTree/BehaviorTree.h"
+#include "BehaviorTree/BehaviorTreeComponent.h"
+#include "BehaviorTree/BTCompositeNode.h"
+#include "BehaviorTree/BTDecorator.h"
+#include "BehaviorTree/BTTaskNode.h"
+#include "BehaviorTree/Composites/BTComposite_Selector.h"
+#include "BehaviorTree/Composites/BTComposite_Sequence.h"
 #include "BrainComponent.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "BehaviorTree/BlackboardData.h"
+#include "HAL/IConsoleManager.h"
 #include "GenericTeamAgentInterface.h"
 #include "GameFramework/Pawn.h"
 #include "EngineUtils.h"
@@ -23,6 +35,7 @@ ABH_CrabAIController::ABH_CrabAIController()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	SetGenericTeamId(BH_CombatTeam::ToGenericTeamId(EBH_CombatTeam::Enemies));
+	CodeTreeBlackboard = TSoftObjectPtr<UBlackboardData>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/Characters/Enemies/Crab/AI/BB_BH_Crab.BB_BH_Crab")));
 }
 
 // ============================================================================
@@ -71,6 +84,22 @@ void ABH_CrabAIController::OnUnPossess()
 
 void ABH_CrabAIController::StartBrain()
 {
+	if (bUseCodeBuiltTree)
+	{
+		// The BT_BH_Crab asset is corrupted and cannot be authored in this build: run the tree assembled in C++ (no asset validation needed).
+		UBehaviorTree* CodeTree = BuildCrabTree();
+		if (!CodeTree)
+		{
+			UE_LOG(LogBHCombat, Error, TEXT("%s: could not build the code-built behavior tree, the crab has no brain"), *GetNameSafe(GetPawn()));
+			return;
+		}
+		if (!RunBehaviorTree(CodeTree))
+		{
+			UE_LOG(LogBHCombat, Warning, TEXT("%s: RunBehaviorTree failed for the code-built tree"), *GetNameSafe(GetPawn()));
+		}
+		return;
+	}
+
 	UBehaviorTree* Tree = nullptr;
 	if (const ABH_EnemyCrab* Crab = Cast<ABH_EnemyCrab>(GetPawn()))
 	{
@@ -86,6 +115,256 @@ void ABH_CrabAIController::StartBrain()
 		return;
 	}
 	RunBehaviorTree(Tree);
+	ValidateBehaviorTree(Tree);
+}
+
+namespace
+{
+	/** Assembles the crab tree's node objects. Every node is outered to the tree (BehaviorTreeManager::LoadTree duplicates them into its template). */
+	struct FCrabTreeBuilder
+	{
+		explicit FCrabTreeBuilder(UBehaviorTree& InTree) : Tree(InTree) {}
+
+		UBehaviorTree& Tree;
+		int32 NodeCount = 0;
+
+		template <class TNode>
+		TNode* Make(const FString& Name)
+		{
+			TNode* Node = NewObject<TNode>(&Tree);
+			Node->NodeName = Name;
+			++NodeCount;
+			return Node;
+		}
+
+		/** Decorators of one child are ANDed: the editor's compiled form is [Test(0)] for one decorator, [And(N), Test(0) ... Test(N-1)] for N. */
+		static void SetDecorators(FBTCompositeChild& Child, const TArray<UBTDecorator*>& Decorators)
+		{
+			for (UBTDecorator* Decorator : Decorators)
+			{
+				Child.Decorators.Add(Decorator);
+			}
+			if (Decorators.Num() > 1)
+			{
+				Child.DecoratorOps.Add(FBTDecoratorLogic(static_cast<uint8>(EBTDecoratorLogic::And), static_cast<uint16>(Decorators.Num())));
+			}
+			for (int32 Index = 0; Index < Decorators.Num(); ++Index)
+			{
+				Child.DecoratorOps.Add(FBTDecoratorLogic(static_cast<uint8>(EBTDecoratorLogic::Test), static_cast<uint16>(Index)));
+			}
+		}
+
+		static void AddTask(UBTCompositeNode* Parent, UBTTaskNode* Task, const TArray<UBTDecorator*>& Decorators = TArray<UBTDecorator*>())
+		{
+			FBTCompositeChild& Child = Parent->Children.AddDefaulted_GetRef();
+			Child.ChildTask = Task;
+			SetDecorators(Child, Decorators);
+		}
+
+		static void AddComposite(UBTCompositeNode* Parent, UBTCompositeNode* Composite, const TArray<UBTDecorator*>& Decorators = TArray<UBTDecorator*>())
+		{
+			FBTCompositeChild& Child = Parent->Children.AddDefaulted_GetRef();
+			Child.ChildComposite = Composite;
+			SetDecorators(Child, Decorators);
+		}
+	};
+}
+
+UBehaviorTree* ABH_CrabAIController::BuildCrabTree()
+{
+	if (CodeBuiltTree)
+	{
+		return CodeBuiltTree;
+	}
+
+	UBlackboardData* CrabBB = CodeTreeBlackboard.LoadSynchronous();
+	if (!CrabBB)
+	{
+		UE_LOG(LogBHCombat, Error, TEXT("%s: cannot load the crab blackboard %s"), *GetNameSafe(GetPawn()), *CodeTreeBlackboard.ToString());
+		return nullptr;
+	}
+
+	// The tree reads the controller directly, but the controller still mirrors these keys: warn about any the asset lacks.
+	const FName RequiredKeys[] = { FName(TEXT("SelfActor")), BH_CrabBB::TargetActor, BH_CrabBB::TargetLocation, BH_CrabBB::DistanceToTarget,
+		BH_CrabBB::bTargetGuarding, BH_CrabBB::bTargetStartedCombo, BH_CrabBB::FlankLocation, BH_CrabBB::bHasToken };
+	for (const FName& KeyName : RequiredKeys)
+	{
+		if (CrabBB->GetKeyID(KeyName) == FBlackboard::InvalidKey)
+		{
+			UE_LOG(LogBHCombat, Warning, TEXT("%s: blackboard %s has no key '%s'"), *GetNameSafe(GetPawn()), *GetNameSafe(CrabBB), *KeyName.ToString());
+		}
+	}
+
+	UBehaviorTree* Tree = NewObject<UBehaviorTree>(this, TEXT("BT_BH_Crab_Code"));
+	Tree->BlackboardAsset = CrabBB;
+	FCrabTreeBuilder B(*Tree);
+
+	// Attack step shared by Jab and Pinch: Selector( Sequence(Activate ability, Release token), Release token ), so the token goes back
+	// whether or not the ability activated.
+	auto AddAttack = [&B](UBTCompositeNode* Parent, const FString& AttackName, TSubclassOf<UGameplayAbility> AbilityClass, float AbilityTimeout)
+	{
+		UBTComposite_Selector* Attack = B.Make<UBTComposite_Selector>(AttackName + TEXT(" (or release)"));
+		FCrabTreeBuilder::AddComposite(Parent, Attack);
+
+		UBTComposite_Sequence* Strike = B.Make<UBTComposite_Sequence>(AttackName);
+		FCrabTreeBuilder::AddComposite(Attack, Strike);
+
+		UBTTask_BH_ActivateAbilityByClass* Activate = B.Make<UBTTask_BH_ActivateAbilityByClass>(AttackName);
+		Activate->AbilityClass = AbilityClass;
+		Activate->bWaitForCompletion = true;
+		Activate->Timeout = AbilityTimeout;
+		FCrabTreeBuilder::AddTask(Strike, Activate);
+		FCrabTreeBuilder::AddTask(Strike, B.Make<UBTTask_BH_ReleaseAttackToken>(TEXT("Release token")));
+
+		FCrabTreeBuilder::AddTask(Attack, B.Make<UBTTask_BH_ReleaseAttackToken>(TEXT("Release (activation failed)")));
+	};
+
+	UBTComposite_Selector* Root = B.Make<UBTComposite_Selector>(TEXT("Crab Root"));
+	Tree->RootNode = Root;
+
+	// [0] Reaction: Sidestep (the target just started an attack; chance + cooldown gated)
+	{
+		UBTDecorator_BH_TargetStartedCombo* Started = B.Make<UBTDecorator_BH_TargetStartedCombo>(TEXT("Target started combo"));
+		Started->Window = TargetComboWindow;
+		UBTDecorator_BH_SidestepGate* Gate = B.Make<UBTDecorator_BH_SidestepGate>(TEXT("Sidestep gate"));
+		Gate->Chance = 0.35f;
+		Gate->Cooldown = 4.f;
+
+		UBTComposite_Sequence* Reaction = B.Make<UBTComposite_Sequence>(TEXT("Reaction: Sidestep"));
+		FCrabTreeBuilder::AddComposite(Root, Reaction, { Started, Gate });
+
+		UBTTask_BH_ActivateAbilityByClass* Sidestep = B.Make<UBTTask_BH_ActivateAbilityByClass>(TEXT("Sidestep"));
+		Sidestep->AbilityClass = UAH_GA_CrabSidestep::StaticClass();
+		Sidestep->bWaitForCompletion = true;
+		Sidestep->Timeout = 2.f;
+		FCrabTreeBuilder::AddTask(Reaction, Sidestep);
+	}
+
+	// [1] Guarding: Flank then Jab (the target blocks / parries and is close)
+	{
+		UBTDecorator_BH_TargetIsGuarding* Guarding = B.Make<UBTDecorator_BH_TargetIsGuarding>(TEXT("Target is guarding"));
+		UBTDecorator_BH_TargetWithin* Within = B.Make<UBTDecorator_BH_TargetWithin>(TEXT("Target within 600"));
+		Within->MaxDistance = 600.f;
+
+		UBTComposite_Sequence* Flank = B.Make<UBTComposite_Sequence>(TEXT("Guarding: Flank then Jab"));
+		FCrabTreeBuilder::AddComposite(Root, Flank, { Guarding, Within });
+
+		UBTTask_BH_FlankMove* FlankMove = B.Make<UBTTask_BH_FlankMove>(TEXT("Flank"));
+		FlankMove->bOrbit = false;
+		FCrabTreeBuilder::AddTask(Flank, FlankMove);
+
+		UBTTask_BH_RequestAttackToken* Request = B.Make<UBTTask_BH_RequestAttackToken>(TEXT("Request token"));
+		Request->MaxWaitTime = 0.75f;
+		FCrabTreeBuilder::AddTask(Flank, Request);
+
+		AddAttack(Flank, TEXT("Jab"), UAH_GA_CrabJab::StaticClass(), 2.f);
+	}
+
+	// [2] Open: Pinch (target in pinch range)
+	{
+		UBTDecorator_BH_TargetWithin* Within = B.Make<UBTDecorator_BH_TargetWithin>(TEXT("Target within 450"));
+		Within->MaxDistance = 450.f;
+
+		UBTComposite_Sequence* Open = B.Make<UBTComposite_Sequence>(TEXT("Open: Pinch"));
+		FCrabTreeBuilder::AddComposite(Root, Open, { Within });
+
+		UBTTask_BH_RequestAttackToken* Request = B.Make<UBTTask_BH_RequestAttackToken>(TEXT("Request token"));
+		Request->MaxWaitTime = 0.75f;
+		FCrabTreeBuilder::AddTask(Open, Request);
+
+		AddAttack(Open, TEXT("Pinch"), UAH_GA_CrabPinch::StaticClass(), 3.f);
+	}
+
+	// [3] Pressure: Orbit (no token: circle the target, then pause)
+	{
+		UBTDecorator_BH_TargetWithin* Within = B.Make<UBTDecorator_BH_TargetWithin>(TEXT("Target within 650"));
+		Within->MaxDistance = 650.f;
+
+		UBTComposite_Sequence* Pressure = B.Make<UBTComposite_Sequence>(TEXT("Pressure: Orbit"));
+		FCrabTreeBuilder::AddComposite(Root, Pressure, { Within });
+
+		UBTTask_BH_FlankMove* Orbit = B.Make<UBTTask_BH_FlankMove>(TEXT("Orbit"));
+		Orbit->bOrbit = true;
+		Orbit->OrbitMinRadius = 250.f;
+		Orbit->OrbitMaxRadius = 400.f;
+		Orbit->OrbitAngleMin = 30.f;
+		Orbit->OrbitAngleMax = 75.f;
+		FCrabTreeBuilder::AddTask(Pressure, Orbit);
+
+		UBTTask_BH_Wait* Pause = B.Make<UBTTask_BH_Wait>(TEXT("Pause"));
+		Pause->WaitTime = 0.4f;
+		Pause->RandomDeviation = 0.2f;
+		FCrabTreeBuilder::AddTask(Pressure, Pause);
+	}
+
+	// [4] Chase (any target farther away)
+	{
+		UBTDecorator_BH_HasTarget* HasTarget = B.Make<UBTDecorator_BH_HasTarget>(TEXT("Has target"));
+
+		UBTComposite_Sequence* Chase = B.Make<UBTComposite_Sequence>(TEXT("Chase"));
+		FCrabTreeBuilder::AddComposite(Root, Chase, { HasTarget });
+
+		UBTTask_BH_ChaseTarget* ChaseMove = B.Make<UBTTask_BH_ChaseTarget>(TEXT("Chase target"));
+		ChaseMove->AcceptanceRadius = 120.f;
+		FCrabTreeBuilder::AddTask(Chase, ChaseMove);
+
+		UBTTask_BH_Wait* Pause = B.Make<UBTTask_BH_Wait>(TEXT("Pause"));
+		Pause->WaitTime = 0.3f;
+		Pause->RandomDeviation = 0.f;
+		FCrabTreeBuilder::AddTask(Chase, Pause);
+	}
+
+	// [5] Idle: nothing applies (no target, or a chase just failed). Without it the looped root would fail and re-search every frame.
+	{
+		UBTTask_BH_Wait* Idle = B.Make<UBTTask_BH_Wait>(TEXT("Idle"));
+		Idle->WaitTime = 0.25f;
+		Idle->RandomDeviation = 0.f;
+		FCrabTreeBuilder::AddTask(Root, Idle);
+	}
+
+	CodeBuiltTree = Tree;
+	UE_LOG(LogBHCombat, Log, TEXT("Crab %s running code-built BT (%d nodes)"), *GetNameSafe(GetPawn()), B.NodeCount);
+	return CodeBuiltTree;
+}
+
+void ABH_CrabAIController::ValidateBehaviorTree(const UBehaviorTree* Tree)
+{
+	if (bLoggedCorruptTree || !Tree)
+	{
+		return;
+	}
+
+	FString Problem;
+	if (!Tree->RootNode)
+	{
+		Problem = TEXT("no root node");
+	}
+	else
+	{
+		for (int32 ChildIndex = 0; ChildIndex < Tree->RootNode->Children.Num() && Problem.IsEmpty(); ++ChildIndex)
+		{
+			const FBTCompositeChild& Child = Tree->RootNode->Children[ChildIndex];
+			if (!Child.ChildComposite && !Child.ChildTask)
+			{
+				Problem = FString::Printf(TEXT("root child %d has neither a ChildComposite nor a ChildTask"), ChildIndex);
+				break;
+			}
+			for (int32 DecoratorIndex = 0; DecoratorIndex < Child.Decorators.Num(); ++DecoratorIndex)
+			{
+				if (!Child.Decorators[DecoratorIndex])
+				{
+					Problem = FString::Printf(TEXT("root child %d has a null decorator (index %d)"), ChildIndex, DecoratorIndex);
+					break;
+				}
+			}
+		}
+	}
+
+	if (!Problem.IsEmpty())
+	{
+		bLoggedCorruptTree = true;
+		UE_LOG(LogBHCombat, Error, TEXT("BT %s is corrupted: %s (crab %s). Rebuild the Behavior Tree asset."), *GetNameSafe(Tree), *Problem, *GetNameSafe(GetPawn()));
+	}
 }
 
 // ============================================================================
@@ -326,3 +605,45 @@ void ABH_CrabAIController::UpdateBlackboard()
 	BB->SetValueAsBool(BH_CrabBB::bTargetStartedCombo, T && GetSecondsSinceTargetStartedCombo() <= TargetComboWindow);
 	BB->SetValueAsBool(BH_CrabBB::bHasToken, T && HasAttackToken());
 }
+
+// ============================================================================
+// Debug
+// ============================================================================
+
+#if !UE_BUILD_SHIPPING
+namespace
+{
+	void DumpCrabBehaviorTrees(UWorld* World)
+	{
+		if (!World)
+		{
+			return;
+		}
+		int32 Count = 0;
+		for (TActorIterator<ABH_CrabAIController> It(World); It; ++It)
+		{
+			const ABH_CrabAIController* Controller = *It;
+			const UBehaviorTreeComponent* BTComp = Cast<UBehaviorTreeComponent>(Controller->GetBrainComponent());
+			const UBlackboardComponent* BB = Controller->GetBlackboardComponent();
+			const AActor* Target = Controller->GetCrabTarget();
+
+			FString Active = BTComp ? BTComp->DescribeActiveTasks() : FString(TEXT("<no behavior tree component>"));
+			FString Info = BTComp ? BTComp->GetDebugInfoString() : FString();
+			Info.ReplaceInline(TEXT("\r"), TEXT(""));
+			Info.ReplaceInline(TEXT("\n"), TEXT(" | "));
+
+			UE_LOG(LogBHCombat, Log, TEXT("bh.Crab.DumpBT: %s (pawn %s) codeTree=%d running=%d active=[%s] target=%s dist=%.0f bHasToken=%d bbHasToken=%d | %s"),
+				*GetNameSafe(Controller), *GetNameSafe(Controller->GetPawn()), Controller->bUseCodeBuiltTree ? 1 : 0, (BTComp && BTComp->IsRunning()) ? 1 : 0,
+				*Active, *GetNameSafe(Target), Target ? Controller->GetDistanceToCrabTarget() : -1.f, Controller->HasAttackToken() ? 1 : 0,
+				(BB && BB->GetValueAsBool(BH_CrabBB::bHasToken)) ? 1 : 0, *Info);
+			++Count;
+		}
+		UE_LOG(LogBHCombat, Log, TEXT("bh.Crab.DumpBT: %d crab controller(s)."), Count);
+	}
+
+	static FAutoConsoleCommandWithWorld CmdDumpCrabBT(
+		TEXT("bh.Crab.DumpBT"),
+		TEXT("Logs every crab AI controller's active behavior tree node, target, distance and attack-token state."),
+		FConsoleCommandWithWorldDelegate::CreateStatic(&DumpCrabBehaviorTrees));
+}
+#endif

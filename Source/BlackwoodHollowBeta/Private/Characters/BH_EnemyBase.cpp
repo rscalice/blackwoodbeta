@@ -7,14 +7,32 @@
 #include "Progression/BH_ProgressionComponent.h"
 #include "Progression/BH_RPGSettings.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
+#include "Combat/BH_CombatIdentityComponent.h"
 #include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
 #include "Abilities/GameplayAbility.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/MeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
-#include "Kismet/GameplayStatics.h"
+#include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
+#include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
+
+namespace BH_EnemyBasePrivate
+{
+	/** Living = no Dead tag and Health above zero (same test as UBH_ProgressionComponent::GrantKillXP). */
+	static bool IsLiving(const AActor* Actor)
+	{
+		const UAbilitySystemComponent* ASC = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(Actor);
+		if (!ASC || ASC->HasMatchingGameplayTag(TAG_State_Combat_Dead))
+		{
+			return false;
+		}
+		return !ASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetHealthAttribute())
+			|| ASC->GetNumericAttribute(UAH_AttributeSet::GetHealthAttribute()) > 0.f;
+	}
+}
 
 ABH_EnemyBase::ABH_EnemyBase()
 {
@@ -38,6 +56,13 @@ ABH_EnemyBase::ABH_EnemyBase()
 		// Attack telegraph decals must not tint the character itself.
 		SkelMesh->SetReceivesDecals(false);
 	}
+}
+
+void ABH_EnemyBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(ABH_EnemyBase, bDead);
+	DOREPLIFETIME(ABH_EnemyBase, CombatTeam);
 }
 
 void ABH_EnemyBase::InitAbilitySystem()
@@ -138,7 +163,7 @@ void ABH_EnemyBase::Tick(float DeltaSeconds)
 		return;
 	}
 
-	const APawn* Target = UGameplayStatics::GetPlayerPawn(this, 0);
+	const AActor* Target = ResolveFaceTarget();
 	if (!Target || Target == this)
 	{
 		return;
@@ -152,6 +177,56 @@ void ABH_EnemyBase::Tick(float DeltaSeconds)
 
 	const FRotator Desired(0.f, ToTarget.Rotation().Yaw, 0.f);
 	SetActorRotation(FMath::RInterpTo(GetActorRotation(), Desired, DeltaSeconds, FaceTargetInterpSpeed));
+}
+
+const AActor* ABH_EnemyBase::ResolveFaceTarget()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	const double Now = World->GetTimeSeconds();
+	if (Now < NextFaceTargetSearchTime)
+	{
+		return CachedFaceTarget.Get();
+	}
+	NextFaceTargetSearchTime = Now + FaceTargetSearchInterval;
+
+	// The AI's current aggro target wins while it is alive.
+	if (const UBH_CombatIdentityComponent* Identity = FindComponentByClass<UBH_CombatIdentityComponent>())
+	{
+		const AActor* Aggro = Identity->GetAggroTarget();
+		if (Aggro && Aggro != this && BH_EnemyBasePrivate::IsLiving(Aggro))
+		{
+			CachedFaceTarget = Aggro;
+			return Aggro;
+		}
+	}
+
+	// Otherwise the nearest living player pawn.
+	const AActor* Best = nullptr;
+	double BestDistSq = TNumericLimits<double>::Max();
+	const FVector Origin = GetActorLocation();
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		const APlayerController* PC = It->Get();
+		const APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+		if (!Pawn || Pawn == this || !BH_EnemyBasePrivate::IsLiving(Pawn))
+		{
+			continue;
+		}
+		const double DistSq = FVector::DistSquared(Pawn->GetActorLocation(), Origin);
+		if (DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			Best = Pawn;
+		}
+	}
+
+	CachedFaceTarget = Best;
+	return Best;
 }
 
 void ABH_EnemyBase::InitializeServerStats()
@@ -278,8 +353,8 @@ void ABH_EnemyBase::ResetAfterDeath()
 
 	AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetHealthAttribute(), AttributeSet->GetMaxHealth());
 	AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetPostureAttribute(), AttributeSet->GetMaxPosture());
-	AbilitySystemComponent->SetLooseGameplayTagCount(TAG_State_Combat_Dead, 0);
-	AbilitySystemComponent->SetLooseGameplayTagCount(TAG_State_Combat_PostureBroken, 0);
+	AbilitySystemComponent->SetLooseGameplayTagCount(TAG_State_Combat_Dead, 0, EGameplayTagReplicationState::TagOnly);
+	AbilitySystemComponent->SetLooseGameplayTagCount(TAG_State_Combat_PostureBroken, 0, EGameplayTagReplicationState::TagOnly);
 	bDead = false;
 
 	UWorld* World = GetWorld();

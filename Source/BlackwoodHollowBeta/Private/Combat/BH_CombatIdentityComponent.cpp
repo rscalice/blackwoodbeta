@@ -327,8 +327,8 @@ void UBH_CombatIdentityComponent::ResetAfterDeath()
 	ASC->SetNumericAttributeBase(UAH_AttributeSet::GetHealthAttribute(), Set->GetMaxHealth());
 	ASC->SetNumericAttributeBase(UAH_AttributeSet::GetPostureAttribute(), Set->GetMaxPosture());
 	ASC->SetNumericAttributeBase(UAH_AttributeSet::GetStaminaAttribute(), Set->GetMaxStamina());
-	ASC->SetLooseGameplayTagCount(TAG_State_Combat_Dead, 0);
-	ASC->SetLooseGameplayTagCount(TAG_State_Combat_PostureBroken, 0);
+	ASC->SetLooseGameplayTagCount(TAG_State_Combat_Dead, 0, EGameplayTagReplicationState::TagOnly);
+	ASC->SetLooseGameplayTagCount(TAG_State_Combat_PostureBroken, 0, EGameplayTagReplicationState::TagOnly);
 	bDead = false;
 
 	OnReset.Broadcast();

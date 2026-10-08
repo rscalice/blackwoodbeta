@@ -7,6 +7,10 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Components/BPC_HeartFragment.h"
 #include "Progression/BH_ProgressionComponent.h"
+#include "AI/BH_EnemyWaveSpawner.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "Net/UnrealNetwork.h"
 #include "Components/ActorComponent.h"
@@ -175,3 +179,104 @@ void ABH_PlayerState::OnRep_FragmentSlots()
 {
 	OnFragmentSlotsChanged.Broadcast(-1);
 }
+
+// ============================================================================
+// Debug RPCs (non-shipping): server side of the bh.* console commands typed in a client window
+// ============================================================================
+
+#if !UE_BUILD_SHIPPING
+
+bool ABH_PlayerState::ServerDebugGrantXP_Validate(int32 Amount)
+{
+	return Amount >= 0 && Amount <= MaxDebugXP;
+}
+
+void ABH_PlayerState::ServerDebugGrantXP_Implementation(int32 Amount)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		if (UBH_ProgressionComponent* PlayerProgression = UBH_ProgressionComponent::FindProgression(It->Get()))
+		{
+			PlayerProgression->AddXP(Amount);
+			UE_LOG(LogBHCombat, Log, TEXT("bh.XP.Grant (remote, from '%s'): +%d XP -> level %d, %d / %d XP."), *GetPlayerName(), Amount,
+				PlayerProgression->GetLevel(), PlayerProgression->GetCurrentXP(), PlayerProgression->GetXPToNextLevel());
+		}
+	}
+}
+
+bool ABH_PlayerState::ServerDebugSetLevel_Validate(int32 NewLevel)
+{
+	return NewLevel >= 1 && NewLevel <= MaxDebugLevel;
+}
+
+void ABH_PlayerState::ServerDebugSetLevel_Implementation(int32 NewLevel)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		if (UBH_ProgressionComponent* PlayerProgression = UBH_ProgressionComponent::FindProgression(It->Get()))
+		{
+			PlayerProgression->SetLevel(NewLevel);
+			UE_LOG(LogBHCombat, Log, TEXT("bh.Level.Set (remote, from '%s'): level %d."), *GetPlayerName(), PlayerProgression->GetLevel());
+		}
+	}
+}
+
+bool ABH_PlayerState::ServerDebugSkipToWave_Validate(int32 WaveNumber)
+{
+	return WaveNumber >= 1 && WaveNumber <= MaxDebugWave;
+}
+
+void ABH_PlayerState::ServerDebugSkipToWave_Implementation(int32 WaveNumber)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	for (TActorIterator<ABH_EnemyWaveSpawner> It(World); It; ++It)
+	{
+		It->DebugSkipToWave(WaveNumber);
+	}
+}
+
+bool ABH_PlayerState::ServerDebugSpawnBoss_Validate()
+{
+	return true;
+}
+
+void ABH_PlayerState::ServerDebugSpawnBoss_Implementation()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	int32 Count = 0;
+	for (TActorIterator<ABH_EnemyWaveSpawner> It(World); It; ++It)
+	{
+		It->DebugSpawnBoss();
+		++Count;
+	}
+	UE_LOG(LogBHCombat, Log, TEXT("bh.Arena.SpawnBoss (remote, from '%s'): %d wave spawner(s)."), *GetPlayerName(), Count);
+}
+
+#else // UE_BUILD_SHIPPING: stubs so the RPCs link; validation rejects every call.
+bool ABH_PlayerState::ServerDebugGrantXP_Validate(int32) { return false; }
+void ABH_PlayerState::ServerDebugGrantXP_Implementation(int32) {}
+bool ABH_PlayerState::ServerDebugSetLevel_Validate(int32) { return false; }
+void ABH_PlayerState::ServerDebugSetLevel_Implementation(int32) {}
+bool ABH_PlayerState::ServerDebugSkipToWave_Validate(int32) { return false; }
+void ABH_PlayerState::ServerDebugSkipToWave_Implementation(int32) {}
+bool ABH_PlayerState::ServerDebugSpawnBoss_Validate() { return false; }
+void ABH_PlayerState::ServerDebugSpawnBoss_Implementation() {}
+#endif // !UE_BUILD_SHIPPING
