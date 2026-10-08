@@ -24,6 +24,7 @@
 #include "Components/ActorComponent.h"
 #include "Engine/TimerHandle.h"
 #include "Combat/BH_CombatTeam.h"
+#include "Loot/BH_LootTypes.h"
 #include "BH_CombatIdentityComponent.generated.h"
 
 class UGameplayAbility;
@@ -138,6 +139,10 @@ public:
 	/** Phase 9: XP granted to every living player within UBH_RPGSettings::XPShareRadius when this character dies (no scaling-table rows here; ABH_EnemyBase uses the enemy curve table). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Stats", meta = (ClampMin = "0"))
 	int32 XPReward = 10;
+
+	/** Phase 11C: per-player drops rolled when this enemy dies (server). Each entry rolls independently for every living player within the XP share radius; items go straight into their inventory. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Stats")
+	FBH_DropTable DropTable;
 
 	// -- Collision ----------------------------------------------------------------------
 

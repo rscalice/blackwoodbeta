@@ -26,6 +26,7 @@
 #include "AbilitySystemInterface.h"
 #include "GenericTeamAgentInterface.h"
 #include "Combat/BH_CombatTeam.h"
+#include "Loot/BH_LootTypes.h"
 #include "BH_EnemyBase.generated.h"
 
 class UAbilitySystemComponent;
@@ -99,6 +100,10 @@ public:
 	/** XP granted on death when the enemy table has no "<Prefix>.XPReward" row. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Enemy|Scaling", meta = (ClampMin = "0"))
 	int32 XPRewardOverride = 10;
+
+	/** Phase 11C: per-player drops rolled when this enemy dies (server). Each entry rolls independently for every living player within the XP share radius; items go straight into their inventory. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Enemy|Loot")
+	FBH_DropTable DropTable;
 
 	/**
 	 * SERVER. Writes EnemyLevel into the Level attribute and, for every row that exists in the enemy scaling table, sets the BASE

@@ -2,6 +2,7 @@
 
 #include "Characters/BH_EnemyCrab.h"
 #include "AI/BH_CrabAIController.h"
+#include "Loot/BH_LootLibrary.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Components/BH_TelegraphComponent.h"
@@ -16,6 +17,17 @@ ABH_EnemyCrab::ABH_EnemyCrab()
 {
 	DisplayName = NSLOCTEXT("BlackwoodHollow", "CrabDefaultName", "Hollow Crab");
 	ScalingRowPrefix = TEXT("Crab");
+
+	// Phase 11C drop table (plan 11C / balance.md): Heartwood Sap 15%, Corrupted Coral Shard 30%, one each, rolled per living player in XP range.
+	{
+		FBH_DropEntry SapDrop;
+		SapDrop.ItemClass = TSoftClassPtr<UNarrativeItem>(FSoftObjectPath(BH_LootPaths::HeartwoodSap));
+		SapDrop.Chance = 0.15f;
+		FBH_DropEntry ShardDrop;
+		ShardDrop.ItemClass = TSoftClassPtr<UNarrativeItem>(FSoftObjectPath(BH_LootPaths::CorruptedCoralShard));
+		ShardDrop.Chance = 0.30f;
+		DropTable.Entries = { SapDrop, ShardDrop };
+	}
 
 	Telegraph = CreateDefaultSubobject<UBH_TelegraphComponent>(TEXT("Telegraph"));
 

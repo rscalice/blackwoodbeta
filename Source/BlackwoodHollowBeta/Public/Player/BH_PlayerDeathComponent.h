@@ -31,10 +31,7 @@
 //      RespawnHealthPercent of MaxHealth), Posture and Stamina refilled; every machine un-ragdolls (ABH_CharacterBase::StopRagdollLocal:
 //      mesh re-attached, collision and CMC restored), snaps to DeathState.ReviveLocation and plays the GASP get-up montage while movement stays locked.
 //
-// Camera while dead: stays on the own body (the capsule follows the pelvis). The live camera is the Gameplay Cameras system
-// (DDCVar.NewGameplayCameraSystem.Enable): CameraRig_CollisionOffset pushes the camera toward a safe point that sits CameraRigSafeOffset
-// (Pawn space) from the capsule, probing ECC_Camera. ComputeCameraAnchor keeps that safe point out of walls / ceilings for the LOCAL pawn
-// (Phase 11A-1; bh.Ragdoll.SafeCameraAnchor 0 turns it off). TODO(spectate): switching to a partner would be a
+// Camera while dead: stays on the own body (the capsule follows the pelvis). TODO(spectate): switching to a partner would be a
 // PlayerController::SetViewTargetWithBlend in EnterDeathLocal / back in ExitDeathLocal.
 //
 // Debug: bh.Player.Kill / bh.Player.Revive (BH_RPGDebugCommands.cpp) go through ServerDebugKill / ServerDebugRevive.
@@ -230,20 +227,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Death|Ragdoll", meta = (ClampMin = "0.0", ForceUnits = "cm"))
 	float GroundTraceDown = 400.f;
 
-	// -- Tunables: dead camera (local player only, never replicated) ---------------------------
-
-	/** The CollisionPush node's SafePositionOffset in CameraRig_CollisionOffset (Pawn space). The camera is pushed toward capsule + this offset, so it must stay out of geometry. Keep in sync with that rig. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Death|Camera")
-	FVector CameraRigSafeOffset = FVector(0.f, 20.f, 150.f);
-
-	/** Radius of the sweep that checks the safe point (the rig's CollisionSphereRadius). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Death|Camera", meta = (ClampMin = "0.0", ForceUnits = "cm"))
-	float CameraProbeRadius = 10.f;
-
-	/** Gap kept between the safe point and the geometry that blocks it. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Death|Camera", meta = (ClampMin = "0.0", ForceUnits = "cm"))
-	float CameraAnchorMargin = 15.f;
-
 	// -- Tunables: get-up ---------------------------------------------------------------------
 
 	/** Get-up played when the body lies face down (GASP's ragdoll get-up from the front). Verify F/B against your lying pose. */
@@ -406,12 +389,6 @@ private:
 	void ExitDeathLocal();
 	void TickRagdoll(float DeltaTime);
 	void ApplyBodyCorrection();
-
-	/**
-	 * Capsule location to use for a body at BodyLocation so the camera rig's safe point (capsule + CameraRigSafeOffset) is not inside a wall,
-	 * floor or ceiling. Only the locally controlled pawn is adjusted (the camera is local); everyone else gets BodyLocation back.
-	 */
-	FVector ComputeCameraAnchor(const FVector& BodyLocation) const;
 	void StartGetUp(bool bFaceUp);
 	void EndGetUp();
 	void RestoreRootMotionMode();

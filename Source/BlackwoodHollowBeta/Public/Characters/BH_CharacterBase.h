@@ -31,6 +31,7 @@ class UAH_AttributeSet;
 class UBH_StanceComponent;
 class UBH_StanceMovementProfile;
 class UBH_PlayerDeathComponent;
+class UBH_InteractorComponent;
 class UGameplayAbility;
 class UInputAction;
 class UInputMappingContext;
@@ -62,6 +63,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "BH|Death")
 	UBH_PlayerDeathComponent* GetDeathComponent() const { return DeathComponent; }
+
+	/** Phase 11C: the player's side of interaction (focus scan, prompt, hold RPCs). Only does anything on a locally controlled player pawn. */
+	UFUNCTION(BlueprintPure, Category = "BH|Interaction")
+	UBH_InteractorComponent* GetInteractorComponent() const { return InteractorComponent; }
 
 	// -- IGenericTeamAgentInterface (replicated so clients resolve teams without a controller) --
 	virtual FGenericTeamId GetGenericTeamId() const override { return BH_CombatTeam::ToGenericTeamId(CombatTeam); }
@@ -243,6 +248,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Death")
 	TObjectPtr<UBH_PlayerDeathComponent> DeathComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Interaction")
+	TObjectPtr<UBH_InteractorComponent> InteractorComponent;
 
 private:
 	/** Idempotent. */

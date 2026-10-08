@@ -6,6 +6,7 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Combat/BH_StanceComponent.h"
 #include "Player/BH_PlayerDeathComponent.h"
+#include "Interaction/BH_InteractorComponent.h"
 #include "Combat/BH_CombatFeel.h"
 #include "Characters/BH_StanceMovementProfile.h"
 #include "AbilitySystemComponent.h"
@@ -39,6 +40,7 @@ ABH_CharacterBase::ABH_CharacterBase(const FObjectInitializer& ObjectInitializer
 	AttributeSet = CreateDefaultSubobject<UAH_AttributeSet>(TEXT("AttributeSet"));
 	StanceComponent = CreateDefaultSubobject<UBH_StanceComponent>(TEXT("StanceComponent"));
 	DeathComponent = CreateDefaultSubobject<UBH_PlayerDeathComponent>(TEXT("DeathComponent"));
+	InteractorComponent = CreateDefaultSubobject<UBH_InteractorComponent>(TEXT("InteractorComponent"));
 
 	// Attack telegraph decals must not tint the character itself.
 	if (USkeletalMeshComponent* SkelMesh = GetMesh())
@@ -96,16 +98,27 @@ void ABH_CharacterBase::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	// Hold-to-revive: bound here (local player only, every possession) so the Blueprint needs no input nodes.
-	if (!ReviveInputAction || !DeathComponent)
+	// IA_Interact (ReviveInputAction): hold-to-revive (death component) and interact / hold-to-harvest (Phase 11C interactor) share the one
+	// action; bound here (local player only, every possession) so the Blueprint needs no input nodes. Each handler ignores the press when the
+	// other one owns it (a downed party member in range = revive, else the focused interactable).
+	if (!ReviveInputAction)
 	{
 		return;
 	}
 	if (UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(PlayerInputComponent))
 	{
-		EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Started, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputPressed);
-		EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Completed, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputReleased);
-		EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Canceled, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputReleased);
+		if (DeathComponent)
+		{
+			EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Started, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputPressed);
+			EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Completed, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputReleased);
+			EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Canceled, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputReleased);
+		}
+		if (InteractorComponent)
+		{
+			EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Started, InteractorComponent.Get(), &UBH_InteractorComponent::OnInteractInputPressed);
+			EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Completed, InteractorComponent.Get(), &UBH_InteractorComponent::OnInteractInputReleased);
+			EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Canceled, InteractorComponent.Get(), &UBH_InteractorComponent::OnInteractInputReleased);
+		}
 	}
 }
 
