@@ -261,6 +261,9 @@ private:
 	void DisableRagdollInterferingCollision();
 	void RestoreRagdollInterferingCollision();
 
+	/** Diagnostics for bh.Ragdoll.DebugCamera: logs the pawn's / attached actors' components that currently respond to the Camera channel (call while the mesh is still on the capsule). */
+	void LogRagdollCameraBlockers() const;
+
 	bool bRagdollActive = false;
 	bool bRagdollMeshDetached = false;
 	bool bRagdollSavedReplicateMovement = true;

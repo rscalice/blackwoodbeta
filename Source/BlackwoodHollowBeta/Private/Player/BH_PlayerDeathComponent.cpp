@@ -20,6 +20,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "CollisionQueryParams.h"
+#include "CollisionShape.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/Character.h"
@@ -27,9 +28,19 @@
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/PlayerState.h"
+#include "HAL/IConsoleManager.h"
 #include "Net/UnrealNetwork.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "TimerManager.h"
+
+namespace BH_PlayerDeath_Private
+{
+	static TAutoConsoleVariable<int32> CVarRagdollSafeCameraAnchor(
+		TEXT("bh.Ragdoll.SafeCameraAnchor"),
+		1,
+		TEXT("1 = while the local player's body is down, keep the camera rig's safe point out of walls / ceilings by lowering the (collision-less) capsule the camera follows. 0 = capsule exactly on the pelvis."),
+		ECVF_Default);
+}
 
 UBH_PlayerDeathComponent::UBH_PlayerDeathComponent()
 {
@@ -359,7 +370,7 @@ void UBH_PlayerDeathComponent::TickRagdoll(float DeltaTime)
 	// capsule (StartRagdollLocal), so this only moves the capsule (and the camera on it), never the simulating bodies.
 	if (!bBodyCorrected && bHaveBody)
 	{
-		Char->SetActorLocation(PelvisLocation, false, nullptr, ETeleportType::TeleportPhysics);
+		Char->SetActorLocation(ComputeCameraAnchor(PelvisLocation), false, nullptr, ETeleportType::TeleportPhysics);
 	}
 
 	if (Char->HasAuthority())
@@ -407,8 +418,48 @@ void UBH_PlayerDeathComponent::ApplyBodyCorrection()
 		}
 	}
 
-	Char->SetActorLocation(FVector(DeathState.BodyRestLocation), false, nullptr, ETeleportType::TeleportPhysics);
+	Char->SetActorLocation(ComputeCameraAnchor(FVector(DeathState.BodyRestLocation)), false, nullptr, ETeleportType::TeleportPhysics);
 	bBodyCorrected = true;
+}
+
+FVector UBH_PlayerDeathComponent::ComputeCameraAnchor(const FVector& BodyLocation) const
+{
+	const ACharacter* Char = GetCharacterOwner();
+	const UWorld* World = GetWorld();
+	if (!Char || !World || !Char->IsLocallyControlled()
+		|| BH_PlayerDeath_Private::CVarRagdollSafeCameraAnchor.GetValueOnGameThread() == 0
+		|| CameraRigSafeOffset.IsNearlyZero())
+	{
+		return BodyLocation;
+	}
+
+	// Where the rig wants its safe point: capsule + offset in Pawn space (yaw only, the capsule is never pitched).
+	const FVector SafeOffsetWorld = Char->GetActorRotation().RotateVector(CameraRigSafeOffset);
+	const FVector Start = BodyLocation;
+	const FVector End = BodyLocation + SafeOffsetWorld;
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(BHRagdollCameraAnchor), false, Char);
+	TArray<AActor*> CarriedActors;
+	Char->GetAttachedActors(CarriedActors, /*bResetArray*/ true, /*bRecursivelyIncludeAttachedActors*/ true);
+	Params.AddIgnoredActors(CarriedActors);
+
+	FVector SafePoint = End;
+	FHitResult Hit;
+	if (World->SweepSingleByChannel(Hit, Start, End, FQuat::Identity, ECC_Camera, FCollisionShape::MakeSphere(FMath::Max(0.f, CameraProbeRadius)), Params))
+	{
+		if (Hit.bStartPenetrating)
+		{
+			// The body itself lies inside (or against) camera-blocking geometry: push the safe point out along the depenetration normal.
+			SafePoint = Start + Hit.Normal * (Hit.PenetrationDepth + CameraAnchorMargin);
+		}
+		else
+		{
+			// Something (a ceiling, an overhang) sits between the body and the safe point: stop short of it.
+			const float SafeDistance = FMath::Max(0.f, Hit.Distance - CameraAnchorMargin);
+			SafePoint = Start + (End - Start).GetSafeNormal() * SafeDistance;
+		}
+	}
+	return SafePoint - SafeOffsetWorld;
 }
 
 // ============================================================================
@@ -622,8 +673,8 @@ void UBH_PlayerDeathComponent::SampleBodyRest()
 	DeathState.GetUpYaw = FacingYaw;
 	DeathState.bBodySettled = true;
 
-	// The server's capsule rests at the body from now on (relevancy, late joiners).
-	Char->SetActorLocation(PelvisLocation, false, nullptr, ETeleportType::TeleportPhysics);
+	// The server's capsule rests at the body from now on (relevancy, late joiners). A host's own pawn is lowered under low ceilings so its camera stays clear.
+	Char->SetActorLocation(ComputeCameraAnchor(PelvisLocation), false, nullptr, ETeleportType::TeleportPhysics);
 	bBodyCorrected = true;
 
 	CommitState();
