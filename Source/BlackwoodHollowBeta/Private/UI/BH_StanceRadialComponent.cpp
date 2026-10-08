@@ -5,6 +5,11 @@
 #include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Consumables/BH_ConsumableLibrary.h"
+#include "Loot/BH_LootLibrary.h"
+#include "Loot/BH_LootTypes.h"
+#include "NarrativeItem.h"
+#include "GameFramework/PlayerState.h"
 #include "RadialSelectorType.h"
 #include "RadialSelectorMenuLayout.h"
 #include "EnhancedInputComponent.h"
@@ -107,6 +112,7 @@ void UBH_StanceRadialComponent::HandleHoldCompleted(const FInputActionValue& Val
 
 void UBH_StanceRadialComponent::OpenWheel()
 {
+	RefreshConsumableSlots(); // fresh stack counts; a rebuild is only allowed while the wheel is closed
 	if (State == ERadialSelectorState::Closed && GetSegmentCount() > 0)
 	{
 		OpenMenu();
@@ -346,10 +352,85 @@ bool UBH_StanceRadialComponent::UseConsumableSlot(int32 RadialSlotIndex)
 		return false; // empty slot: nothing to do
 	}
 
-	UE_LOG(LogBHCombat, Log, TEXT("Radial consumable slot %d chosen (%s): consumables arrive in Phase 11, nothing consumed."),
-		ConsumableIndex + 1, *Slot.ItemReference.ToString());
 	OnConsumableSlotUsed.Broadcast(ConsumableIndex, Slot);
-	return false;
+
+	// Phase 11D: the slot names a Narrative item class; the server validates and runs UBH_GA_UseConsumable on the pawn's ASC.
+	UClass* ItemClass = Cast<UClass>(Slot.ItemReference.LoadSynchronous());
+	if (!ItemClass || !ItemClass->IsChildOf(UNarrativeItem::StaticClass()))
+	{
+		UE_LOG(LogBHCombat, Warning, TEXT("Radial consumable slot %d (%s) is not a Narrative item class."), ConsumableIndex + 1, *Slot.ItemReference.ToString());
+		return false;
+	}
+	const bool bSent = UBH_ConsumableLibrary::RequestUseConsumable(GetControlledPawn(), ItemClass);
+	UE_LOG(LogBHCombat, Log, TEXT("Radial consumable slot %d chosen (%s): request %s."), ConsumableIndex + 1, *GetNameSafe(ItemClass), bSent ? TEXT("sent") : TEXT("not sent"));
+	return bSent;
+}
+
+bool UBH_StanceRadialComponent::RefreshConsumableSlots()
+{
+	if (!bEightSlotRadial || State == ERadialSelectorState::Open)
+	{
+		return false;
+	}
+	const APlayerController* PC = Cast<APlayerController>(GetOwner());
+	if (!PC || !PC->IsLocalController())
+	{
+		return false;
+	}
+	ConsumableSlots.SetNum(NumConsumableSlots);
+
+	// First refresh: fill the default slots, but only when nobody configured any.
+	if (bAutoPopulateConsumables && !bDefaultConsumablesApplied)
+	{
+		bool bAllEmpty = true;
+		for (const FBH_RadialConsumableSlot& Candidate : ConsumableSlots)
+		{
+			bAllEmpty = bAllEmpty && Candidate.IsEmpty();
+		}
+		if (bAllEmpty)
+		{
+			ConsumableSlots[0].ItemReference = TSoftObjectPtr<UObject>(FSoftObjectPath(BH_LootPaths::HeartwoodSap));
+			ConsumableSlots[1].ItemReference = TSoftObjectPtr<UObject>(FSoftObjectPath(BH_LootPaths::WardensIncense));
+		}
+	}
+	bDefaultConsumablesApplied = true;
+
+	const APlayerState* LocalPlayerState = PC->GetPlayerState<APlayerState>();
+	bool bChanged = false;
+	for (FBH_RadialConsumableSlot& Slot : ConsumableSlots)
+	{
+		if (Slot.IsEmpty())
+		{
+			continue;
+		}
+		UClass* ItemClass = Cast<UClass>(Slot.ItemReference.LoadSynchronous());
+		if (!ItemClass || !ItemClass->IsChildOf(UNarrativeItem::StaticClass()))
+		{
+			continue;
+		}
+		const int32 Count = UBH_LootLibrary::GetItemCount(LocalPlayerState, ItemClass);
+		const FText Label = FText::Format(NSLOCTEXT("BHStance", "ConsumableLabel", "{0} x{1}"), UBH_LootLibrary::GetItemDisplayName(ItemClass), FText::AsNumber(Count));
+		if (Slot.Quantity != Count || !Slot.DisplayName.EqualTo(Label))
+		{
+			Slot.Quantity = Count;
+			Slot.DisplayName = Label;
+			bChanged = true;
+		}
+		if (Slot.Icon.IsNull())
+		{
+			if (const UNarrativeItem* ItemDefaults = ItemClass->GetDefaultObject<UNarrativeItem>())
+			{
+				Slot.Icon = ItemDefaults->Thumbnail;
+				bChanged = bChanged || !Slot.Icon.IsNull();
+			}
+		}
+	}
+
+	if (bChanged)
+	{
+		RebuildFromStances(BoundLoadout ? BoundLoadout->AvailableStances : TArray<FName>());
+	}
+	return bChanged;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +556,8 @@ void UBH_StanceRadialComponent::PollPawn()
 	{
 		return;
 	}
+
+	RefreshConsumableSlots(); // Phase 11D: stack counts follow the inventory while the wheel is closed
 
 	UBH_LoadoutComponent* Loadout = UBH_LoadoutComponent::FindLoadoutComponent(PC->GetPawn());
 	if (Loadout == BoundLoadout)

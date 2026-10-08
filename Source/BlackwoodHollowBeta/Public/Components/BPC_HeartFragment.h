@@ -30,6 +30,7 @@
 #include "Components/ActorComponent.h"
 #include "GameplayAbilitySpecHandle.h"
 #include "TimerManager.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 #include "BPC_HeartFragment.generated.h"
 
 class UAbilitySystemComponent;
@@ -103,6 +104,21 @@ public:
 	float GetAegisReduction() const;
 	virtual float GetAegisReduction_Implementation() const { return 0.f; }
 
+	/**
+	 * Phase 11D: "other" Blight reductions that are not the permanent shielding (Warden's Incense sanctuary, later gear / buffs).
+	 * Every active source registers a fraction (0.5 = 50%) under its own key; the sources MULTIPLY: reduction = 1 - product(1 - fraction).
+	 * ComputeMitigatedBuildup multiplies the build-up by (1 - GetOtherBlightReduction()). Server-side state only (the meter is mitigated on
+	 * the server), not replicated. Registering the same Source twice replaces its fraction; a destroyed Source stops counting by itself.
+	 */
+	void AddBlightReductionSource(const UObject* Source, float Fraction);
+
+	/** Phase 11D: removes the reduction registered by Source (no-op if it has none). */
+	void RemoveBlightReductionSource(const UObject* Source);
+
+	/** Phase 11D: combined "other" reduction 0..1 of every live source (0 = none). */
+	UFUNCTION(BlueprintPure, Category = "HeartFragment|Shielding")
+	float GetOtherBlightReduction() const;
+
 	// -- Blight meter tunables (Phase 10B; locked balance values) ------------------
 
 	/** Seconds without any build-up received before the meter starts to decay. */
@@ -161,6 +177,18 @@ public:
 	/** HUD stack count: floor(meter / 10), 0..10. */
 	UFUNCTION(BlueprintPure, Category = "HeartFragment|BlightMeter")
 	int32 GetBlightStacks() const;
+
+	/**
+	 * SERVER (Phase 11D). Lowers the meter by Amount (clamped at 0) without touching the decay delay. Used by the Warden sanctuary
+	 * (-50 per second). Ignored while the owner is dead or mid-saturation.
+	 * @return the amount actually removed.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "HeartFragment|BlightMeter")
+	float ReduceBlightBuildup(float Amount);
+
+	/** SERVER, debug (bh.Blight.Set; does nothing in Shipping). Sets the meter to Value (0..100) unmitigated; 100 saturates it like a real fill. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "HeartFragment|BlightMeter")
+	void DebugSetBlightBuildup(float Value);
 
 	/** SERVER. Meter to 0 and Blight Rot removed (death / revive flow). Safe to call any time. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "HeartFragment|BlightMeter")
@@ -243,6 +271,9 @@ private:
 	void SaturateBlightMeter(AActor* InstigatorActor);
 
 	FTimerHandle BlightDecayTimer;
+
+	/** Phase 11D: source -> Blight reduction fraction (see AddBlightReductionSource). Server only. */
+	TMap<TWeakObjectPtr<const UObject>, float> OtherBlightReductions;
 	double LastBlightGainTime = -1.0e9;
 	double LastBlightDecayTime = -1.0e9;
 	bool bSaturating = false;

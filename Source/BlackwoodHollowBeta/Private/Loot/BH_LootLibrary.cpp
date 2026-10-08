@@ -96,6 +96,54 @@ void UBH_LootLibrary::GrantEnemyDrops(const AActor* Source, const FBH_DropTable&
 	}
 }
 
+int32 UBH_LootLibrary::GetItemCount(const APlayerState* PlayerState, TSubclassOf<UNarrativeItem> ItemClass)
+{
+	const ABH_PlayerState* BHPlayerState = Cast<ABH_PlayerState>(PlayerState);
+	const UNarrativeInventoryComponent* Inventory = (BHPlayerState && ItemClass) ? BHPlayerState->GetInventory() : nullptr;
+	if (!Inventory)
+	{
+		return 0;
+	}
+	int32 Total = 0;
+	for (const UNarrativeItem* Item : Inventory->GetItems())
+	{
+		if (Item && Item->GetClass() == ItemClass.Get())
+		{
+			Total += FMath::Max(Item->GetQuantity(), 0);
+		}
+	}
+	return Total;
+}
+
+int32 UBH_LootLibrary::RemoveItemFromPlayer(APlayerState* PlayerState, TSubclassOf<UNarrativeItem> ItemClass, int32 Quantity)
+{
+	if (!PlayerState || !PlayerState->HasAuthority() || !ItemClass || Quantity <= 0)
+	{
+		return 0;
+	}
+	const ABH_PlayerState* BHPlayerState = Cast<ABH_PlayerState>(PlayerState);
+	UNarrativeInventoryComponent* Inventory = BHPlayerState ? BHPlayerState->GetInventory() : nullptr;
+	if (!Inventory)
+	{
+		return 0;
+	}
+
+	int32 Removed = 0;
+	// GetItems() returns a copy: safe to consume (and so remove) entries while walking it. Exact class match, like GetItemCount.
+	for (UNarrativeItem* Item : Inventory->GetItems())
+	{
+		if (Removed >= Quantity)
+		{
+			break;
+		}
+		if (Item && Item->GetClass() == ItemClass.Get())
+		{
+			Removed += Inventory->ConsumeItem(Item, Quantity - Removed);
+		}
+	}
+	return Removed;
+}
+
 FString UBH_LootLibrary::GetPlayerKey(const APlayerState* PlayerState)
 {
 	if (!PlayerState)

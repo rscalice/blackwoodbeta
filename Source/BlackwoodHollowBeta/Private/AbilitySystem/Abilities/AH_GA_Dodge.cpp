@@ -39,6 +39,7 @@ UAH_GA_Dodge::UAH_GA_Dodge()
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Staggered);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_PostureBroken);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Dead);
+	ActivationBlockedTags.AddTag(TAG_State_Action_Consuming); // Phase 11D: cannot start while drinking / placing a consumable
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Dodging); // tiny re-dodge lockout: no spamming mid-roll
 
 	// Souls-style: a dodge interrupts swings, guard and parry, and none of them can start mid-roll.

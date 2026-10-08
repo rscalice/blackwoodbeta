@@ -8,6 +8,7 @@
 #include "Player/BH_PlayerDeathComponent.h"
 #include "Interaction/BH_InteractorComponent.h"
 #include "Combat/BH_CombatFeel.h"
+#include "Consumables/BH_GA_UseConsumable.h"
 #include "Characters/BH_StanceMovementProfile.h"
 #include "AbilitySystemComponent.h"
 #include "AIController.h"
@@ -137,6 +138,12 @@ void ABH_CharacterBase::GrantDefaultAbilities()
 		return;
 	}
 	UBH_CombatFunctionLibrary::GrantCombatAbilities(this, DefaultAbilities);
+
+	// Phase 11D: every pawn can use consumables. The native ability needs no Blueprint (skipped when a child is already in DefaultAbilities).
+	if (AbilitySystemComponent && !AbilitySystemComponent->FindAbilitySpecFromClass(UBH_GA_UseConsumable::StaticClass()))
+	{
+		AbilitySystemComponent->GiveAbility(FGameplayAbilitySpec(UBH_GA_UseConsumable::StaticClass(), 1, INDEX_NONE, this));
+	}
 	bAbilitiesGranted = true;
 }
 

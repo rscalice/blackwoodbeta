@@ -37,6 +37,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BH|Loot")
 	static void GrantEnemyDrops(const AActor* Source, const FBH_DropTable& DropTable);
 
+	/**
+	 * Phase 11D. Total quantity of exactly ItemClass in PlayerState's inventory (0 = none / no inventory). Valid on the server and on the
+	 * owning client (the inventory replicates to its owner).
+	 */
+	UFUNCTION(BlueprintPure, Category = "BH|Loot")
+	static int32 GetItemCount(const APlayerState* PlayerState, TSubclassOf<UNarrativeItem> ItemClass);
+
+	/** Phase 11D. SERVER. Removes up to Quantity of exactly ItemClass from PlayerState's inventory. Returns how many were removed. */
+	UFUNCTION(BlueprintCallable, Category = "BH|Loot")
+	static int32 RemoveItemFromPlayer(APlayerState* PlayerState, TSubclassOf<UNarrativeItem> ItemClass, int32 Quantity = 1);
+
 	/** A stable per-player key for "has this player already looted X" bookkeeping (unique net id, else name, else player id). */
 	UFUNCTION(BlueprintPure, Category = "BH|Loot")
 	static FString GetPlayerKey(const APlayerState* PlayerState);

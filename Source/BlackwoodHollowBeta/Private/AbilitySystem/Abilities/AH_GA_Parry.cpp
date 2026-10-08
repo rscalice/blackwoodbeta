@@ -27,6 +27,7 @@ UAH_GA_Parry::UAH_GA_Parry()
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Staggered);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_PostureBroken);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Dead);
+	ActivationBlockedTags.AddTag(TAG_State_Action_Consuming); // Phase 11D: cannot start while drinking / placing a consumable
 
 	// Parry interrupts your own swing, and you can't swing mid-parry.
 	CancelAbilitiesWithTag.AddTag(TAG_Ability_Combat_MeleeAttack);

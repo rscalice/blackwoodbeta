@@ -150,13 +150,25 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|StanceRadial")
 	bool bIncludePlaceholderStancesInWheel = false;
 
+	/**
+	 * Phase 11D: when true (default) and ALL consumable slots are empty the first time the wheel refreshes, slot 1 is filled with Heartwood Sap and
+	 * slot 2 with Warden's Incense. Slots filled in the Blueprint (or by SetConsumableSlot) are never touched. Counts / labels of every filled
+	 * slot are refreshed from the local player's inventory whenever the wheel is closed and just before it opens.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|StanceRadial|EightSlot")
+	bool bAutoPopulateConsumables = true;
+
 	/** Fires after the wheel content was rebuilt or a consumable slot changed. */
 	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
 	FBH_OnRadialSlotsChanged OnRadialSlotsChanged;
 
-	/** Fires when a consumable wedge is chosen (Phase 11 consumes this; for now it only logs). */
+	/** Fires when a consumable wedge is chosen (before the use request is sent to the server). */
 	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
 	FBH_OnConsumableSlotUsed OnConsumableSlotUsed;
+
+	/** Phase 11D: applies the default Sap / Incense slots (see bAutoPopulateConsumables) and refreshes labels, icons and counts from the local inventory. Rebuilds the wheel when something changed (never while it is open). @return true if the wheel was rebuilt. */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
+	bool RefreshConsumableSlots();
 
 	/** The 8 slots as data (valid in 8-slot mode; also usable in classic mode, where it still describes sets A/B and the consumables). */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
@@ -169,7 +181,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
 	bool ClearConsumableSlot(int32 ConsumableIndex);
 
-	/** Radial slot 2-7 chosen on the wheel. Phase 11 stub: logs, broadcasts OnConsumableSlotUsed, returns false (nothing consumed yet). */
+	/** Radial slot 2-7 chosen on the wheel (Phase 11D): broadcasts OnConsumableSlotUsed and asks the server to use the slot's item through UBH_ConsumableLibrary::RequestUseConsumable. @return true when a request was sent. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
 	bool UseConsumableSlot(int32 RadialSlotIndex);
 
@@ -233,6 +245,9 @@ private:
 
 	/** Stance legacy name per weapon slot (index 0 = set A, 1 = set B) as of the last eight-slot rebuild. */
 	TArray<FName> WeaponSlotStances;
+
+	/** The default consumable slots were already considered (applied or skipped because the Blueprint filled them). */
+	bool bDefaultConsumablesApplied = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UBH_LoadoutComponent> BoundLoadout;

@@ -4,6 +4,8 @@
 #include "Interaction/BH_InteractableComponent.h"
 #include "Interaction/BH_InteractionSubsystem.h"
 #include "Interaction/BH_InteractPromptWidget.h"
+#include "Consumables/BH_ConsumableLibrary.h"
+#include "Components/BPC_HeartFragment.h"
 #include "Loot/BH_LootLibrary.h"
 #include "Player/BH_PlayerDeathComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
@@ -636,6 +638,46 @@ void UBH_InteractorComponent::ServerDebugGiveItem_Implementation(const FString& 
 	}
 	const int32 Given = UBH_LootLibrary::GrantItem(PawnOwner->GetPlayerState(), ItemClass, Count);
 	UE_LOG(LogBHInteractor, Log, TEXT("bh.Loot.Give: %s x%d -> %d granted to %s."), *ItemName, Count, Given, *GetNameSafe(PawnOwner->GetPlayerState()));
+#endif
+}
+
+bool UBH_InteractorComponent::ServerUseConsumable_Validate(TSubclassOf<UNarrativeItem> ItemClass)
+{
+	return ItemClass.Get() != nullptr;
+}
+
+void UBH_InteractorComponent::ServerUseConsumable_Implementation(TSubclassOf<UNarrativeItem> ItemClass)
+{
+	APawn* PawnOwner = Cast<APawn>(GetOwner());
+	if (!UBH_ConsumableLibrary::ActivateOnServer(PawnOwner, ItemClass))
+	{
+		UE_LOG(LogBHInteractor, Log, TEXT("ServerUseConsumable: %s could not use %s right now."), *GetNameSafe(PawnOwner), *GetNameSafe(ItemClass));
+	}
+}
+
+bool UBH_InteractorComponent::ServerDebugSetBlight_Validate(float Value)
+{
+#if UE_BUILD_SHIPPING
+	return false;
+#else
+	return Value >= 0.f && Value <= 100.f;
+#endif
+}
+
+void UBH_InteractorComponent::ServerDebugSetBlight_Implementation(float Value)
+{
+#if !UE_BUILD_SHIPPING
+	const APawn* PawnOwner = Cast<APawn>(GetOwner());
+	UBPC_HeartFragment* Heart = PawnOwner ? PawnOwner->FindComponentByClass<UBPC_HeartFragment>() : nullptr;
+	if (!Heart)
+	{
+		UE_LOG(LogBHInteractor, Warning, TEXT("bh.Blight.Set: %s has no Heart-Fragment component."), *GetNameSafe(PawnOwner));
+		return;
+	}
+	Heart->DebugSetBlightBuildup(Value);
+	UE_LOG(LogBHInteractor, Log, TEXT("bh.Blight.Set: %s Blight meter -> %.1f."), *GetNameSafe(PawnOwner), Value);
+#else
+	(void)Value;
 #endif
 }
 

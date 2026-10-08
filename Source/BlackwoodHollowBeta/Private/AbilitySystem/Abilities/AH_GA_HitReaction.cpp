@@ -29,6 +29,7 @@ UAH_GA_HitReaction::UAH_GA_HitReaction()
 	// Posture break / death own the character's animation; blocked hits use Event.Combat.BlockImpact instead.
 	ActivationBlockedTags.AddTag(TAG_State_Combat_PostureBroken);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Dead);
+	ActivationBlockedTags.AddTag(TAG_State_Action_Consuming); // Phase 11D: cannot start while drinking / placing a consumable
 	// Hyper armor (e.g. greatsword swing): damage still lands, but the attacker is not staggered / interrupted.
 	ActivationBlockedTags.AddTag(TAG_State_Combat_HyperArmor);
 

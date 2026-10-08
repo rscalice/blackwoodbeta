@@ -24,6 +24,7 @@
 #include "BH_InteractorComponent.generated.h"
 
 class APawn;
+class UNarrativeItem;
 class APlayerController;
 class UBH_InteractableComponent;
 class UBH_InteractPromptWidget;
@@ -142,6 +143,17 @@ public:
 	/** bh.Loot.ResetContainers: server resets every interactable in the world (containers, harvest nodes, pickups). Compiled out in Shipping. */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerDebugResetLoot();
+
+	/**
+	 * Phase 11D: the local player asks the server to use one ItemClass (radial wheel, bh.Consumable.Use). The server fires Event.Consumable.Use
+	 * at this pawn's ASC and UBH_GA_UseConsumable validates everything (>= 1 item in the server-side inventory, no attack / dodge / stagger).
+	 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerUseConsumable(TSubclassOf<UNarrativeItem> ItemClass);
+
+	/** bh.Blight.Set: server sets this pawn's Blight meter (0..100; 100 saturates). Compiled out in Shipping. */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugSetBlight(float Value);
 
 protected:
 	virtual void BeginPlay() override;
