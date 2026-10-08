@@ -2,7 +2,7 @@
 // Target: Unreal Engine 5.8 (C++)
 //
 // Native data source for ABP_BH_Crab. The game-thread pass (NativeUpdateAnimation) copies what only the game thread may read
-// (velocity, actor rotation, the replicated action phase, the Blighted tag); the thread-safe pass
+// (velocity, actor rotation, the replicated action phase); the thread-safe pass
 // (NativeThreadSafeUpdateAnimation) derives the values the AnimGraph reads:
 //
 //   Speed                 horizontal speed, cm/s
@@ -12,7 +12,6 @@
 //   PlayRateForScuttle    Speed / ReferenceScuttleSpeed, clamped: the play rate of the scuttle loop (Crabix_Anim)
 //   ActionPhase           EBH_CrabActionPhase from ABH_EnemyCrab (Idle, JabWindup, JabStrike, PinchWindup, PinchSnap,
 //                         Sidestep, HitReact, Stagger, Dead)
-//   bIsBlighted           State.Status.Blighted is on the crab
 //
 // Wire these in the AnimGraph with Property Access or by reading the variables in a state machine transition.
 
@@ -63,9 +62,6 @@ public:
 
 	UPROPERTY(BlueprintReadOnly, Category = "Crab|State")
 	EBH_CrabActionPhase ActionPhase = EBH_CrabActionPhase::Idle;
-
-	UPROPERTY(BlueprintReadOnly, Category = "Crab|State")
-	bool bIsBlighted = false;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Crab|State")
 	bool bIsDead = false;

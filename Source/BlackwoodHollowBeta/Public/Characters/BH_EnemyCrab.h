@@ -57,10 +57,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Crab")
 	bool IsCrabDead() const { return ActionPhase == EBH_CrabActionPhase::Dead; }
 
-	/** True while State.Status.Blighted is on this crab (the tag replicates through the GE's minimal replication). */
-	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Crab")
-	bool IsBlighted() const;
-
 	// -- Sidestep bookkeeping (server) --------------------------------------------------------
 
 	/** Seconds since the last sidestep started (a huge number if it never sidestepped). */

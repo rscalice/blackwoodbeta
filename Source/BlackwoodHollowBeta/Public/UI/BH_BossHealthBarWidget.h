@@ -1,4 +1,4 @@
-// Blackwood Hollow - boss health bar (bottom-centre, Souls-style)
+// Blackwood Hollow - boss health bar (top-centre, Souls-style)
 // Target: Unreal Engine 5.8 (C++), UMG, GAS
 //
 // WBP_BossHealthBar's parent. Widget Blueprints bind by widget NAME (BindWidgetOptional), same convention as BH_HUDElements.h:
@@ -9,6 +9,9 @@
 //
 // SLANT: the bars are the M_UI_SlantedBar parallelogram. Its ShearDegrees scalar is the slant; this widget writes SlantDegrees
 // (default -20) into every bar's material instance, so the -20 degree look does not depend on how the MI was authored.
+//
+// PLACEMENT: UBH_HUDSubsystem adds the bar to the main HUD's BossBarSlot (top of the TopCentreStack, above the lock-on target panel).
+// Only when WBP_HUD_Main has no BossBarSlot does it fall back to the viewport, top-centre.
 //
 // LIFETIME: UBH_HUDSubsystem owns one instance per local player and decides when it is shown (a living boss that is aggroed on the
 // local pawn). PresentBoss binds it to that boss's ASC and fades in; DismissBar fades out and unbinds. The widget never polls the world.
@@ -88,10 +91,10 @@ public:
 	float TrailCatchUpSpeed = 0.7f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|HUD|Boss", meta = (ClampMin = "0.01"))
-	float FadeInTime = 0.3f;
+	float FadeInTime = 0.25f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|HUD|Boss", meta = (ClampMin = "0.01"))
-	float FadeOutTime = 0.4f;
+	float FadeOutTime = 0.25f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|HUD|Boss")
 	FName PercentParameterName = TEXT("Percent");

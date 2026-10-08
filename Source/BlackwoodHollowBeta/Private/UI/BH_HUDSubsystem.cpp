@@ -29,6 +29,9 @@ namespace
 	/** A boss the local player is already presented stays shown this far (cm) beyond its aggro radius, so standing on the edge does not flicker the bar. */
 	constexpr double BossBarRangeHysteresis = 100.0;
 
+	/** Fallback only (no BossBarSlot on the main HUD): pixels from the top edge of the screen to the boss bar. */
+	constexpr double BossBarFallbackTopOffset = 40.0;
+
 	/**
 	 * The distance inside which the boss engages: the AggroRange of its own AI brain. The brain only exists on the server, so a
 	 * client reads the same value from the pawn's AIControllerClass defaults (the radius is a class default, never set per instance).
@@ -133,7 +136,8 @@ void UBH_HUDSubsystem::ApplyVisibility()
 		DebugHUD->SetVisibility(bShowDebug ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
 	}
 	// The boss bar follows the production HUD: hidden while the debug HUD is up, back when it is not.
-	if (BossBar && BossBar->IsBarShown())
+	// (Only the viewport fallback needs this: in BossBarSlot the bar is a child of the main HUD and collapses with it.)
+	if (BossBar && BossBar->IsInViewport() && BossBar->IsBarShown())
 	{
 		BossBar->SetVisibility(bShowDebug ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
 	}
@@ -193,6 +197,10 @@ void UBH_HUDSubsystem::StopBossWatch()
 		World->GetTimerManager().ClearTimer(BossHideTimer);
 	}
 	UnbindBossHealth();
+	if (MainHUD)
+	{
+		MainHUD->SetPresentedBoss(nullptr);
+	}
 	PresentedBoss.Reset();
 }
 
@@ -254,7 +262,7 @@ void UBH_HUDSubsystem::EvaluateBoss()
 	{
 		if (Presented && IsBossDead(Presented))
 		{
-			// Death: let the bar drain, then fade out (BossBarHideDelay, set to about 1 s on WBP_HUD_Main).
+			// Death: let the bar drain, then fade out (BossBarHideDelay, 1 s by default).
 			if (!Timers.IsTimerActive(BossHideTimer))
 			{
 				Timers.SetTimer(BossHideTimer, this, &UBH_HUDSubsystem::HideBossBar, FMath::Max(MainHUD->BossBarHideDelay, 0.01f), false);
@@ -286,16 +294,29 @@ void UBH_HUDSubsystem::ShowBossBar(AActor* Boss)
 		{
 			return;
 		}
-		BossBar->AddToViewport(0);
 	}
 
-	// Top-centre. BossBarBottomOffset (a misnomer kept so no header changes) is now the distance in pixels from the TOP edge of the screen.
-	BossBar->SetAnchorsInViewport(FAnchors(0.5f, 0.f));
-	BossBar->SetAlignmentInViewport(FVector2D(0.5, 0.0));
-	BossBar->SetPositionInViewport(FVector2D(0.0, MainHUD->BossBarBottomOffset), /*bRemoveDPIScale*/ false);
+	// Normal path: the main HUD's BossBarSlot (top of the TopCentreStack, above the lock-on target panel).
+	if (!MainHUD->AttachBossBar(BossBar))
+	{
+		// Fallback: no BossBarSlot bound on WBP_HUD_Main, so the bar goes to the viewport, top-centre (anchors 0.5,0).
+		if (!bWarnedNoBossSlot)
+		{
+			bWarnedNoBossSlot = true;
+			UE_LOG(LogBHCombat, Warning, TEXT("BH_HUDSubsystem: the main HUD has no BossBarSlot bound - boss bar falls back to the viewport. Add the TopCentreStack / BossBarSlot widgets to WBP_HUD_Main."));
+		}
+		if (!BossBar->IsInViewport())
+		{
+			BossBar->AddToViewport(0);
+		}
+		BossBar->SetAnchorsInViewport(FAnchors(0.5f, 0.f));
+		BossBar->SetAlignmentInViewport(FVector2D(0.5, 0.0));
+		BossBar->SetPositionInViewport(FVector2D(0.0, BossBarFallbackTopOffset), /*bRemoveDPIScale*/ false);
+	}
 
 	BossBar->PresentBoss(Boss);
 	PresentedBoss = Boss;
+	MainHUD->SetPresentedBoss(Boss);
 	BindBossHealth(Boss);
 	ApplyVisibility();
 }
@@ -307,6 +328,10 @@ void UBH_HUDSubsystem::HideBossBar()
 		BossBar->DismissBar();
 	}
 	UnbindBossHealth();
+	if (MainHUD)
+	{
+		MainHUD->SetPresentedBoss(nullptr);
+	}
 	PresentedBoss.Reset();
 }
 

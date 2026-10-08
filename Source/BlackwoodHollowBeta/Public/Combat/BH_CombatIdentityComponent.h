@@ -9,6 +9,11 @@
 // optional overlay material. The team is replicated here, so GetCombatTeamId resolves on clients where AI pawns
 // have no controller.
 //
+// DEATH: on an ABH_CharacterBase owner (motion-matching enemies) the death ragdolls on EVERY machine: bDead replicates, its OnRep (and
+// the server / listen-server host directly, and BeginPlay for an actor that arrives already dead) calls ABH_CharacterBase::StartRagdollLocal
+// with the character's velocity (capped). The server then despawns the body (bDespawnOnDeath / DespawnDelay) and stops its AI, unless
+// bResetOnDeath is explicitly on (the body then stands back up after ResetDelay: StopRagdollLocal on every machine).
+//
 // The character needs an AbilitySystemComponent (added in its Blueprint) and, for weapon meshes on every machine,
 // a UBH_StanceWatcherComponent (its FallbackLoadouts is filled from WeaponLoadouts below).
 
@@ -82,8 +87,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Setup", meta = (ClampMin = "0.0"))
 	float StartingStanceDelay = 0.3f;
 
+	/** Refill and stand the body back up ResetDelay seconds after dying (test dummies). Off by default: a dead enemy ragdolls and despawns. When on, bDespawnOnDeath is ignored. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Death")
-	bool bResetOnDeath = true;
+	bool bResetOnDeath = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Death", meta = (EditCondition = "bResetOnDeath", ClampMin = "0.1"))
 	float ResetDelay = 4.f;
@@ -166,6 +172,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|Death")
 	bool IsDead() const { return bDead; }
 
+	/** Destroy the (ragdolling) body DespawnDelay seconds after death and stop its AI (server). Ignored while bResetOnDeath is on. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Death")
+	bool bDespawnOnDeath = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Death", meta = (EditCondition = "bDespawnOnDeath", ClampMin = "0.1", ForceUnits = "s"))
+	float DespawnDelay = 6.f;
+
 	/** Convenience setter (the wave spawner turns the auto-reset off for its enemies). */
 	UFUNCTION(BlueprintCallable, Category = "BH|Death")
 	void SetResetOnDeath(bool bInResetOnDeath) { bResetOnDeath = bInResetOnDeath; }
@@ -213,6 +226,12 @@ private:
 	UFUNCTION()
 	void OnRep_AggroTarget();
 
+	UFUNCTION()
+	void OnRep_Dead();
+
+	/** Every machine: starts / stops the owner's ragdoll to match bDead (ABH_CharacterBase owners only). Idempotent. */
+	void SyncRagdollToDeadState(const FVector& InheritVelocity);
+
 	void ApplyCosmetics();
 	void ApplyCollision();
 	void ApplyLateSetup();
@@ -227,5 +246,8 @@ private:
 	FTimerHandle ResetTimer;
 	FTimerHandle CosmeticsTimer;
 	FDelegateHandle HealthZeroHandle;
+
+	/** Replicated: every machine ragdolls (or stands back up after a reset) from it. */
+	UPROPERTY(ReplicatedUsing = OnRep_Dead)
 	bool bDead = false;
 };

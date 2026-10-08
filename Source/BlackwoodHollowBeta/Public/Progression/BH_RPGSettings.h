@@ -18,6 +18,8 @@
 #include "Items/BH_EquipmentTypes.h"
 #include "BH_RPGSettings.generated.h"
 
+class UBH_FootstepSet;
+
 /** Curve table row names (plain constexpr literals: no static-init-order globals). */
 namespace BH_ScalingRows
 {
@@ -110,4 +112,13 @@ public:
 
 	/** XP needed to go from Level to Level + 1 (player table row XPToNextLevel, else FallbackXPPerLevel * Level). 0 at or above the cap. */
 	int32 GetXPToNextLevel(int32 Level) const;
+
+	// -- Audio (Phase 10A) ----------------------------------------------------------------------
+
+	/** Footstep sounds used by UBH_AN_Footstep when the notify has no FootstepSet override (e.g. /Game/BlackwoodHollow/Audio/Footsteps/DA_FootstepSet). */
+	UPROPERTY(Config, EditAnywhere, Category = "Audio")
+	TSoftObjectPtr<UBH_FootstepSet> DefaultFootstepSet;
+
+	/** DefaultFootstepSet, loaded synchronously on first use (null if unset or not loadable). */
+	UBH_FootstepSet* GetDefaultFootstepSet() const;
 };

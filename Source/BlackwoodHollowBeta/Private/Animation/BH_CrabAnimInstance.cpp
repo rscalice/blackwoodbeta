@@ -27,7 +27,6 @@ void UBH_CrabAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	SampledVelocity = CrabPtr->GetVelocity();
 	SampledActorYaw = CrabPtr->GetActorRotation().Yaw;
 	ActionPhase = CrabPtr->GetActionPhase();
-	bIsBlighted = CrabPtr->IsBlighted();
 	bIsDead = (ActionPhase == EBH_CrabActionPhase::Dead);
 }
 

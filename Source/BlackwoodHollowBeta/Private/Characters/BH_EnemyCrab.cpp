@@ -115,11 +115,6 @@ void ABH_EnemyCrab::ApplyInitialStats_Implementation()
 // Action phase
 // ============================================================================
 
-bool ABH_EnemyCrab::IsBlighted() const
-{
-	return AbilitySystemComponent && AbilitySystemComponent->HasMatchingGameplayTag(TAG_State_Status_Blighted);
-}
-
 void ABH_EnemyCrab::SetAbilityPhase(EBH_CrabActionPhase NewPhase)
 {
 	if (!HasAuthority())

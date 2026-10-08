@@ -14,6 +14,8 @@
 #include "Abilities/GameplayAbility.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/Pawn.h"
 #include "Materials/MaterialInterface.h"
 #include "GameFramework/Actor.h"
 #include "Net/UnrealNetwork.h"
@@ -33,6 +35,7 @@ void UBH_CombatIdentityComponent::GetLifetimeReplicatedProps(TArray<FLifetimePro
 	DOREPLIFETIME(UBH_CombatIdentityComponent, DisplayName);
 	DOREPLIFETIME(UBH_CombatIdentityComponent, CombatTeam);
 	DOREPLIFETIME(UBH_CombatIdentityComponent, AggroTarget);
+	DOREPLIFETIME(UBH_CombatIdentityComponent, bDead);
 }
 
 FBH_OnAnyAggroTargetChanged& UBH_CombatIdentityComponent::OnAnyAggroTargetChanged()
@@ -135,6 +138,12 @@ void UBH_CombatIdentityComponent::BeginPlay()
 	if (Owner->HasAuthority())
 	{
 		InitServer();
+	}
+
+	// An actor that arrives already dead (late join, relevancy) ragdolls right away; the OnRep waits for BeginPlay.
+	if (bDead)
+	{
+		SyncRagdollToDeadState(Owner->GetVelocity());
 	}
 }
 
@@ -288,11 +297,49 @@ void UBH_CombatIdentityComponent::ApplyStartingStance()
 	}
 }
 
+void UBH_CombatIdentityComponent::OnRep_Dead()
+{
+	if (!HasBegunPlay())
+	{
+		return; // BeginPlay applies the initial state
+	}
+	const AActor* OwnerActor = GetOwner();
+	SyncRagdollToDeadState(OwnerActor ? OwnerActor->GetVelocity() : FVector::ZeroVector);
+}
+
+void UBH_CombatIdentityComponent::SyncRagdollToDeadState(const FVector& InheritVelocity)
+{
+	ABH_CharacterBase* BaseCharacter = Cast<ABH_CharacterBase>(GetOwner());
+	if (!BaseCharacter)
+	{
+		return;
+	}
+	if (bDead && !BaseCharacter->IsRagdollActive())
+	{
+		BaseCharacter->StartRagdollLocal(InheritVelocity);
+	}
+	else if (!bDead && BaseCharacter->IsRagdollActive())
+	{
+		BaseCharacter->StopRagdollLocal();
+		if (UCharacterMovementComponent* MoveComp = BaseCharacter->GetCharacterMovement())
+		{
+			MoveComp->Velocity = FVector::ZeroVector;
+			MoveComp->SetMovementMode(MOVE_Falling); // lands on the floor next tick
+		}
+	}
+}
+
 void UBH_CombatIdentityComponent::HandleHealthZero(AActor* Killer)
 {
 	// The attribute set adds the loose State.Combat.Dead tag right after this broadcast.
+	AActor* OwnerActor = GetOwner();
 	const bool bWasDead = bDead;
+	const FVector DeathVelocity = OwnerActor ? OwnerActor->GetVelocity() : FVector::ZeroVector; // before the ragdoll stops the CMC
 	bDead = true;
+	if (OwnerActor && !bWasDead)
+	{
+		OwnerActor->ForceNetUpdate();
+	}
 
 	if (UAbilitySystemComponent* ASC = ResolveASC())
 	{
@@ -309,7 +356,19 @@ void UBH_CombatIdentityComponent::HandleHealthZero(AActor* Killer)
 
 	if (!bWasDead)
 	{
-		UBH_ProgressionComponent::GrantKillXP(GetOwner(), XPReward);
+		UBH_ProgressionComponent::GrantKillXP(OwnerActor, XPReward); // positions are read now, before the body ragdolls / despawns
+
+		// The server (and a listen-server host) gets no RepNotify: ragdoll here; clients do it in OnRep_Dead.
+		SyncRagdollToDeadState(DeathVelocity);
+
+		if (bDespawnOnDeath && !bResetOnDeath && OwnerActor)
+		{
+			if (APawn* PawnOwner = Cast<APawn>(OwnerActor))
+			{
+				PawnOwner->DetachFromControllerPendingDestroy(); // stop the AI
+			}
+			OwnerActor->SetLifeSpan(FMath::Max(0.1f, DespawnDelay));
+		}
 	}
 	OnDeath.Broadcast(Killer);
 }
@@ -330,6 +389,11 @@ void UBH_CombatIdentityComponent::ResetAfterDeath()
 	ASC->SetLooseGameplayTagCount(TAG_State_Combat_Dead, 0, EGameplayTagReplicationState::TagOnly);
 	ASC->SetLooseGameplayTagCount(TAG_State_Combat_PostureBroken, 0, EGameplayTagReplicationState::TagOnly);
 	bDead = false;
+	if (AActor* OwnerActor = GetOwner())
+	{
+		OwnerActor->ForceNetUpdate();
+	}
+	SyncRagdollToDeadState(FVector::ZeroVector); // stand the body back up here; clients do the same in OnRep_Dead
 
 	OnReset.Broadcast();
 }

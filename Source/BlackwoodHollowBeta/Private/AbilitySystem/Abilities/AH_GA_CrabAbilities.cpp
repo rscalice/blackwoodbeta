@@ -2,7 +2,7 @@
 
 #include "AbilitySystem/Abilities/AH_GA_CrabAbilities.h"
 #include "AbilitySystem/BH_GameplayTags.h"
-#include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
+#include "Components/BPC_HeartFragment.h"
 #include "Characters/BH_EnemyCrab.h"
 #include "Components/BH_TelegraphComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -161,11 +161,14 @@ void UAH_GA_CrabPinch::OnVictimResolved(AActor* Victim, const FBH_CrabHitOutcome
 		return;
 	}
 
-	UAbilitySystemComponent* SourceASC = GetAbilitySystemComponentFromActorInfo();
-	UAbilitySystemComponent* TargetASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Victim);
-	if (SourceASC && TargetASC)
+	// Phase 10B: build-up on the victim's Blight meter (server only; the meter mitigates and saturates itself).
+	if (!Victim || !Victim->HasAuthority())
 	{
-		UAH_GE_BlightDoT::ApplyBlightDoT(SourceASC, TargetASC, BlightDPS, BlightDuration);
+		return;
+	}
+	if (UBPC_HeartFragment* Heart = Victim->FindComponentByClass<UBPC_HeartFragment>())
+	{
+		Heart->AddBlightBuildup(BlightBuildupPerHit, GetAvatarActorFromActorInfo());
 	}
 }
 

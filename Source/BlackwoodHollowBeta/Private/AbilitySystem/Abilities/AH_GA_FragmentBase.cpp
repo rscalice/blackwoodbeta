@@ -13,6 +13,8 @@ UAH_GA_FragmentBase::UAH_GA_FragmentBase()
 	// and replicates the cooldown effect back (so the cooldown tag is also visible on the client).
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerInitiated;
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
+	// A downed player cannot fire fragments (the melee / dodge / block / parry abilities already refuse while Dead).
+	ActivationBlockedTags.AddTag(TAG_State_Combat_Dead);
 }
 
 const FGameplayTagContainer* UAH_GA_FragmentBase::GetCooldownTags() const

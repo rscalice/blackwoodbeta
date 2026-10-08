@@ -3,17 +3,17 @@
 #include "Actors/BP_BlightVolume.h"
 #include "Components/BoxComponent.h"
 #include "Components/BPC_HeartFragment.h"
-#include "AbilitySystem/AH_AttributeSet.h"
-#include "AbilitySystem/BH_GameplayTags.h"
+#include "Components/CapsuleComponent.h"
+#include "GameFramework/Character.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
-#include "Kismet/GameplayStatics.h"
-#include "Engine/OverlapResult.h"
-#include "CollisionQueryParams.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
+#include "Net/UnrealNetwork.h"
 
 ABP_BlightVolume::ABP_BlightVolume()
 {
-	PrimaryActorTick.bCanEverTick = false; // damage is timer-driven, not per-frame
+	PrimaryActorTick.bCanEverTick = false; // build-up is timer-driven, not per-frame
 	bReplicates = true;
 
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
@@ -26,236 +26,164 @@ ABP_BlightVolume::ABP_BlightVolume()
 	OverlapVolume->SetGenerateOverlapEvents(true);
 }
 
+void ABP_BlightVolume::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(ABP_BlightVolume, bCleared);
+}
+
 void ABP_BlightVolume::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Build-up is server-side only: clients never track overlaps (they only see bCleared).
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	OverlapVolume->OnComponentBeginOverlap.AddDynamic(this, &ABP_BlightVolume::OnVolumeBeginOverlap);
 	OverlapVolume->OnComponentEndOverlap.AddDynamic(this, &ABP_BlightVolume::OnVolumeEndOverlap);
 
-	if (HasAuthority())
+	// Characters that were already standing in the volume when it began play have no begin-overlap event for our delegate.
+	TSet<UPrimitiveComponent*> Existing;
+	OverlapVolume->GetOverlappingComponents(Existing);
+	for (UPrimitiveComponent* Comp : Existing)
 	{
-		GetWorldTimerManager().SetTimer(DamageTickTimerHandle, this, &ABP_BlightVolume::DamageTick, TickInterval, true);
-		SubscribeToOverloadEvents();
+		AActor* OverlapOwner = Comp ? Comp->GetOwner() : nullptr;
+		if (OverlapOwner && OverlapOwner != this && IsCharacterCapsule(OverlapOwner, Comp))
+		{
+			OverlappingActors.Add(OverlapOwner);
+		}
 	}
+
+	GetWorldTimerManager().SetTimer(BuildupTickTimerHandle, this, &ABP_BlightVolume::BuildupTick, FMath::Max(TickInterval, 0.05f), true);
 }
 
 void ABP_BlightVolume::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	GetWorldTimerManager().ClearTimer(DamageTickTimerHandle);
-	GetWorldTimerManager().ClearTimer(SuppressionTimerHandle);
-	UnsubscribeFromOverloadEvents();
+	GetWorldTimerManager().ClearTimer(BuildupTickTimerHandle);
+	GetWorldTimerManager().ClearTimer(RegrowTimerHandle);
 
 	Super::EndPlay(EndPlayReason);
 }
 
-void ABP_BlightVolume::Tick(float DeltaTime)
+bool ABP_BlightVolume::IsCharacterCapsule(const AActor* Actor, const UPrimitiveComponent* Comp)
 {
-	Super::Tick(DeltaTime);
+	const ACharacter* Character = Cast<ACharacter>(Actor);
+	return Character && Comp && Comp == Character->GetCapsuleComponent();
 }
 
 void ABP_BlightVolume::OnVolumeBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp,
 	int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
-	if (!OtherActor || OtherActor == this)
+	if (!OtherActor || OtherActor == this || !IsCharacterCapsule(OtherActor, OtherComp))
 	{
 		return;
 	}
-
-	OverlappingActors.Add(OtherActor);
-
-	if (HasAuthority())
-	{
-		if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(OtherActor))
-		{
-			ASC->AddLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded, 1, EGameplayTagReplicationState::TagOnly);
-		}
-	}
+	OverlappingActors.Add(OtherActor); // a set: harmless even if the capsule re-enters
 }
 
 void ABP_BlightVolume::OnVolumeEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp,
 	int32 OtherBodyIndex)
 {
-	if (!OtherActor)
+	if (!OtherActor || !IsCharacterCapsule(OtherActor, OtherComp))
 	{
 		return;
 	}
-
 	OverlappingActors.Remove(OtherActor);
-
-	if (HasAuthority())
-	{
-		if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(OtherActor))
-		{
-			ASC->RemoveLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded, 1, EGameplayTagReplicationState::TagOnly);
-		}
-	}
 }
 
-void ABP_BlightVolume::DamageTick()
+void ABP_BlightVolume::BuildupTick()
 {
-	if (bSuppressed)
+	if (bCleared || BuildupPerSecond <= 0.f)
 	{
 		return;
 	}
 
-	// Copy first: ApplyBlightTickToActor can indirectly trigger gameplay
-	// events whose handlers may cause an actor to leave OverlappingActors.
-	TArray<TWeakObjectPtr<AActor>> ActorsToTick = OverlappingActors.Array();
+	const float Amount = BuildupPerSecond * FMath::Max(TickInterval, 0.05f);
+
+	// Copy first: AddBlightBuildup can saturate the meter, which fires gameplay events whose handlers may change the overlap set.
+	const TArray<TWeakObjectPtr<AActor>> ActorsToTick = OverlappingActors.Array();
 	for (const TWeakObjectPtr<AActor>& WeakActor : ActorsToTick)
 	{
-		if (AActor* TargetActor = WeakActor.Get())
+		AActor* TargetActor = WeakActor.Get();
+		if (!TargetActor)
 		{
-			ApplyBlightTickToActor(TargetActor);
+			OverlappingActors.Remove(WeakActor);
+			continue;
 		}
-	}
-}
-
-void ABP_BlightVolume::ApplyBlightTickToActor(AActor* TargetActor)
-{
-	if (!TargetActor || DamagePerTick <= 0.f)
-	{
-		return;
-	}
-
-	UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor);
-	const UAH_AttributeSet* AttributeSet = ASC ? ASC->GetSet<UAH_AttributeSet>() : nullptr;
-
-	float RemainingDamage = DamagePerTick;
-
-	// BlightResistance mitigates first, at the attribute-set level.
-	if (AttributeSet)
-	{
-		RemainingDamage *= (1.f - AttributeSet->GetBlightResistance());
-	}
-
-	// The Heart-Fragment's Blight shield absorbs next, if the owner has one.
-	if (UBPC_HeartFragment* HeartFragment = TargetActor->FindComponentByClass<UBPC_HeartFragment>())
-	{
-		RemainingDamage = HeartFragment->AbsorbBlightDamage(RemainingDamage);
-	}
-
-	if (RemainingDamage <= 0.f)
-	{
-		return;
-	}
-
-	if (ASC)
-	{
-		FGameplayEventData EventData;
-		EventData.EventTag = FBH_GameplayTags::Get().Event_Combat_BlightDamage;
-		EventData.Instigator = this;
-		EventData.Target = TargetActor;
-		EventData.EventMagnitude = RemainingDamage;
-		ASC->HandleGameplayEvent(FBH_GameplayTags::Get().Event_Combat_BlightDamage, &EventData);
-	}
-
-	// Fallback direct application for actors with an AttributeSet but no
-	// GameplayEffect wired to Event.Combat.BlightDamage yet: nudge Health
-	// down directly via the ASC's numeric attribute API so the volume is
-	// functional out of the box. Once GE_BlightDamageOverTime exists, prefer
-	// driving damage entirely off the event above and remove this fallback.
-	if (ASC && AttributeSet)
-	{
-		const float NewHealth = FMath::Clamp(AttributeSet->GetHealth() - RemainingDamage, 0.f, AttributeSet->GetMaxHealth());
-		ASC->ApplyModToAttribute(UAH_AttributeSet::GetHealthAttribute(), EGameplayModOp::Override, NewHealth);
-	}
-}
-
-void ABP_BlightVolume::SubscribeToOverloadEvents()
-{
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	TArray<FOverlapResult> Overlaps;
-	FCollisionShape Sphere = FCollisionShape::MakeSphere(OverloadResponseRadius);
-	World->OverlapMultiByObjectType(Overlaps, GetActorLocation(), FQuat::Identity,
-		FCollisionObjectQueryParams(FCollisionObjectQueryParams::AllDynamicObjects), Sphere);
-
-	TSet<UAbilitySystemComponent*> SeenASCs;
-	for (const FOverlapResult& Overlap : Overlaps)
-	{
-		AActor* Actor = Overlap.GetActor();
-		if (!Actor)
+		if (!UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor))
 		{
 			continue;
 		}
-
-		UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Actor);
-		if (!ASC || SeenASCs.Contains(ASC))
+		// Only characters with a Heart-Fragment can build up Blight (enemies do not).
+		if (UBPC_HeartFragment* HeartFragment = TargetActor->FindComponentByClass<UBPC_HeartFragment>())
 		{
-			continue;
+			HeartFragment->AddBlightBuildup(Amount, this);
 		}
-		SeenASCs.Add(ASC);
-
-		FGameplayTagContainer Filter;
-		Filter.AddTag(FBH_GameplayTags::Get().Event_Combat_OverloadBurst);
-
-		FDelegateHandle Handle = ASC->AddGameplayEventTagContainerDelegate(
-			Filter,
-			FGameplayEventTagMulticastDelegate::FDelegate::CreateLambda(
-				[this](FGameplayTag EventTag, const FGameplayEventData* Payload)
-				{
-					HandleOverloadBurstNearby(Payload ? const_cast<AActor*>(Payload->Instigator.Get()) : nullptr);
-				}));
-
-		OverloadEventSubscriptions.Add(TPair<TWeakObjectPtr<UAbilitySystemComponent>, FDelegateHandle>(ASC, Handle));
 	}
 }
 
-void ABP_BlightVolume::UnsubscribeFromOverloadEvents()
-{
-	FGameplayTagContainer Filter;
-	Filter.AddTag(FBH_GameplayTags::Get().Event_Combat_OverloadBurst);
+// ============================================================================
+// Clearing
+// ============================================================================
 
-	for (const TPair<TWeakObjectPtr<UAbilitySystemComponent>, FDelegateHandle>& Sub : OverloadEventSubscriptions)
-	{
-		if (UAbilitySystemComponent* ASC = Sub.Key.Get())
-		{
-			ASC->RemoveGameplayEventTagContainerDelegate(Filter, Sub.Value);
-		}
-	}
-	OverloadEventSubscriptions.Reset();
-}
-
-void ABP_BlightVolume::HandleOverloadBurstNearby(AActor* BurstInstigator)
+void ABP_BlightVolume::ClearFog()
 {
 	if (!HasAuthority())
 	{
 		return;
 	}
 
-	bSuppressed = true;
-	GetWorldTimerManager().SetTimer(SuppressionTimerHandle, this, &ABP_BlightVolume::OnSuppressionExpired, OverloadSuppressionDuration, false);
-
-	// Also immediately relieve anyone already standing in the fog.
-	for (const TWeakObjectPtr<AActor>& WeakActor : OverlappingActors)
+	if (!bCleared)
 	{
-		if (AActor* TargetActor = WeakActor.Get())
-		{
-			if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor))
-			{
-				ASC->RemoveLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded, 1, EGameplayTagReplicationState::TagOnly);
-			}
-		}
+		bCleared = true;
+		OnRep_Cleared(); // the server / listen-server host does not get the RepNotify
+		ForceNetUpdate();
+	}
+
+	if (bClearPermanently)
+	{
+		GetWorldTimerManager().ClearTimer(RegrowTimerHandle);
+	}
+	else
+	{
+		// Clearing again while already clear pushes the regrow back.
+		GetWorldTimerManager().SetTimer(RegrowTimerHandle, this, &ABP_BlightVolume::RegrowFog, FMath::Max(RegrowSeconds, 0.1f), false);
 	}
 }
 
-void ABP_BlightVolume::OnSuppressionExpired()
+void ABP_BlightVolume::RegrowFog()
 {
-	bSuppressed = false;
-
-	for (const TWeakObjectPtr<AActor>& WeakActor : OverlappingActors)
+	if (!HasAuthority() || bClearPermanently || !bCleared)
 	{
-		if (AActor* TargetActor = WeakActor.Get())
-		{
-			if (UAbilitySystemComponent* ASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor))
-			{
-				ASC->AddLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded, 1, EGameplayTagReplicationState::TagOnly);
-			}
-		}
+		return;
 	}
+	bCleared = false;
+	OnRep_Cleared();
+	ForceNetUpdate();
+}
+
+void ABP_BlightVolume::OnRep_Cleared()
+{
+	OnFogClearedChanged(bCleared);
+}
+
+bool ABP_BlightVolume::IntersectsSphere(const FVector& Center, float Radius) const
+{
+	if (!OverlapVolume)
+	{
+		return false;
+	}
+
+	// Closest point of the (rotated, scaled) box to the sphere centre, computed in the box's local space.
+	const FTransform BoxTransform(OverlapVolume->GetComponentRotation(), OverlapVolume->GetComponentLocation());
+	const FVector LocalCenter = BoxTransform.InverseTransformPosition(Center);
+	const FVector Extent = OverlapVolume->GetScaledBoxExtent();
+	const FVector Closest(
+		FMath::Clamp(LocalCenter.X, -Extent.X, Extent.X),
+		FMath::Clamp(LocalCenter.Y, -Extent.Y, Extent.Y),
+		FMath::Clamp(LocalCenter.Z, -Extent.Z, Extent.Z));
+	return FVector::DistSquared(LocalCenter, Closest) <= FMath::Square(Radius);
 }

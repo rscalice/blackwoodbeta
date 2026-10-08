@@ -2,8 +2,8 @@
 // Target: Unreal Engine 5.8 (C++), GAS
 //
 //   UAH_GA_CrabJab       fast, low damage, high posture damage: short wind-up, lunge, timed sweep.
-//   UAH_GA_CrabPinch     telegraphed at the target's position (UBH_TelegraphComponent), then lunge, then an area hit that applies the
-//                        Blight DoT (UAH_GE_BlightDoT) to a victim that neither blocked nor parried it.
+//   UAH_GA_CrabPinch     telegraphed at the target's position (UBH_TelegraphComponent), then lunge, then an area hit that adds Blight
+//                        build-up (UBPC_HeartFragment::AddBlightBuildup, Phase 10B) to a victim that neither blocked nor parried it.
 //   UAH_GA_CrabSidestep  lateral dash away from the target's line (random side, wall-checked); not while attacking / posture-broken.
 //
 // Poses are NOT played here: each step reports an EBH_CrabActionPhase (JabWindup, JabStrike, PinchWindup, PinchSnap, Sidestep)
@@ -55,7 +55,7 @@ private:
 	void OnWindupFinished();
 };
 
-/** Telegraphed pincer slam that leaves Blight on the victim. */
+/** Telegraphed pincer slam that builds Blight on the victim (meter build-up, no DoT). */
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API UAH_GA_CrabPinch : public UAH_GA_CrabAttackBase
 {
@@ -87,14 +87,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Pinch", meta = (ClampMin = "0.01"))
 	float SnapHitDelay = 0.2f;
 
-	/** Blight damage per second BEFORE the victim's BlightResistance, and how long it lasts. */
+	/** Blight build-up (0-100 meter) added per connected hit, BEFORE BlightResistance / Heart-Fragment shielding. Replaces the old Blight DoT. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Pinch|Blight", meta = (ClampMin = "0.0"))
-	float BlightDPS = 6.f;
+	float BlightBuildupPerHit = 35.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Pinch|Blight", meta = (ClampMin = "0.1"))
-	float BlightDuration = 4.f;
-
-	/** false (default): a blocked hit leaves no Blight; a parried hit never does. */
+	/** false (default): a blocked hit adds no build-up; a parried hit never does. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Pinch|Blight")
 	bool bApplyBlightWhenBlocked = false;
 

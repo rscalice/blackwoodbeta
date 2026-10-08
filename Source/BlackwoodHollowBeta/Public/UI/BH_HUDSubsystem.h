@@ -10,7 +10,9 @@
 //
 // Boss bar: once SetupHUD has run, this subsystem also decides when the boss health bar (MainHUD->BossBarClass, one instance
 // per local player) is shown. A boss is a pawn whose UBH_CombatIdentityComponent has bIsBoss; the bar shows for the NEAREST living
-// boss whose replicated AggroTarget is the local pawn, fades in, and goes 1.5 s after that boss dies or drops aggro.
+// boss whose replicated AggroTarget is the local pawn, fades in, and goes 1 s (BossBarHideDelay) after that boss dies or drops aggro.
+// The bar is added to the main HUD's BossBarSlot (top of its TopCentreStack); the viewport is only a fallback when that slot is not
+// bound. The main HUD is told which boss is presented (UBH_HUDWidget::SetPresentedBoss) and lays out the lock-on target panel itself.
 // Event driven (UBH_CombatIdentityComponent::OnAnyAggroTargetChanged) with a cheap 0.5 s fallback scan.
 
 #pragma once
@@ -108,6 +110,9 @@ private:
 	FTimerHandle BossHideTimer;
 	FDelegateHandle AggroHandle;
 	TWeakObjectPtr<UWorld> WatchWorld;
+
+	/** The "no BossBarSlot" warning is logged once. */
+	bool bWarnedNoBossSlot = false;
 
 	/** Health watch on the presented boss so its death hides the bar on time without waiting for the next scan. */
 	void BindBossHealth(AActor* Boss);

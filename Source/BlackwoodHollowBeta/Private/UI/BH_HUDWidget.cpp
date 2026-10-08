@@ -5,6 +5,11 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "UI/BH_LevelUpBannerWidget.h"
+#include "UI/BH_BossHealthBarWidget.h"
+#include "UI/BH_HUDElements.h"
+#include "Components/PanelWidget.h"
+#include "Components/OverlaySlot.h"
+#include "Components/VerticalBoxSlot.h"
 #include "AbilitySystemComponent.h"
 #include "Blueprint/WidgetTree.h"
 #include "UObject/UObjectIterator.h"
@@ -232,6 +237,73 @@ void UBH_HUDWidget::BroadcastStanceChanged(const AActor* Character, const FStrin
 		{
 			Widget->NotifyStanceChanged(StanceName);
 		}
+	}
+}
+
+void UBH_HUDWidget::HandleLockedTargetChanged(AActor* Target)
+{
+	LockedTarget = Target;
+	RefreshTopCentreLayout();
+}
+
+void UBH_HUDWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+	RefreshTopCentreLayout(); // overwrites any render scale / padding saved on the asset with the no-boss state
+}
+
+bool UBH_HUDWidget::AttachBossBar(UBH_BossHealthBarWidget* Bar)
+{
+	if (!Bar || !BossBarSlot)
+	{
+		return false;
+	}
+	if (Bar->GetParent() == BossBarSlot)
+	{
+		return true;
+	}
+	Bar->RemoveFromParent(); // e.g. it was added to the viewport by the fallback path earlier
+	UPanelSlot* PanelSlot = BossBarSlot->AddChild(Bar);
+	if (!PanelSlot)
+	{
+		return false;
+	}
+	if (UOverlaySlot* OverlaySlot = Cast<UOverlaySlot>(PanelSlot))
+	{
+		OverlaySlot->SetHorizontalAlignment(HAlign_Center);
+		OverlaySlot->SetVerticalAlignment(VAlign_Top);
+	}
+	return true;
+}
+
+void UBH_HUDWidget::SetPresentedBoss(AActor* Boss)
+{
+	if (PresentedBoss.Get() == Boss)
+	{
+		return;
+	}
+	PresentedBoss = Boss;
+	RefreshTopCentreLayout();
+}
+
+void UBH_HUDWidget::RefreshTopCentreLayout()
+{
+	if (!TargetVitals)
+	{
+		return;
+	}
+	const AActor* Boss = PresentedBoss.Get();
+	const bool bBossShown = Boss != nullptr;
+
+	// Boss shown and the lock is on that boss: the bar already shows it, so the target panel hides.
+	TargetVitals->SetSuppressedByBoss(bBossShown && LockedTarget.Get() == Boss);
+
+	// Normal size alone; scaled around its top-centre under the bar (it stays centred and tight under the bar).
+	TargetVitals->SetRenderTransformPivot(FVector2D(0.5, 0.0));
+	TargetVitals->SetRenderScale(FVector2D(bBossShown ? TargetScaleUnderBoss : 1.f));
+	if (UVerticalBoxSlot* StackSlot = Cast<UVerticalBoxSlot>(TargetVitals->Slot))
+	{
+		StackSlot->SetPadding(FMargin(0.f, bBossShown ? TargetGapUnderBoss : 0.f, 0.f, 0.f));
 	}
 }
 

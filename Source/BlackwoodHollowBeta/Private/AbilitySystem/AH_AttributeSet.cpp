@@ -28,13 +28,9 @@ static TAutoConsoleVariable<float> CVarBHStaminaRegenDelay(
 
 namespace BH_AttributeSetBlightPrivate
 {
-	/** Phase 8C: true for Blight DoT ticks (UAH_GE_BlightDoT or anything tagged Damage.Type.Blight). They bypass block mitigation and the DamageReceived reaction event. */
+	/** Phase 8C: true for Blight damage (Blight Rot, meter saturation: anything tagged Damage.Type.Blight). It bypasses block mitigation and the DamageReceived reaction event. */
 	static bool IsBlightSpec(const FGameplayEffectSpec& Spec)
 	{
-		if (Spec.Def && Spec.Def->IsA(UAH_GE_BlightDoT::StaticClass()))
-		{
-			return true;
-		}
 		FGameplayTagContainer SpecAssetTags;
 		Spec.GetAllAssetTags(SpecAssetTags);
 		return SpecAssetTags.HasTag(TAG_Damage_Type_Blight);
@@ -55,6 +51,7 @@ UAH_AttributeSet::UAH_AttributeSet()
 	InitDefense(5.f);
 	InitAttackSpeed(1.f);
 	InitBlightResistance(0.f);
+	InitBlightBuildup(0.f);
 	InitLevel(1.f);
 	InitIncomingDamage(0.f);
 }
@@ -75,6 +72,8 @@ void UAH_AttributeSet::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Defense, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, AttackSpeed, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, BlightResistance, COND_None, REPNOTIFY_Always);
+	// The meter only matters to its owner (HUD); other machines never read it.
+	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, BlightBuildup, COND_OwnerOnly, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UAH_AttributeSet, Level, COND_None, REPNOTIFY_Always);
 }
 
@@ -103,8 +102,12 @@ void UAH_AttributeSet::ClampAttribute(const FGameplayAttribute& Attribute, float
 	}
 	else if (Attribute == GetBlightResistanceAttribute())
 	{
-		// Percentage-style mitigation, clamp to [0, 0.9] so Blight damage is never fully negated.
-		NewValue = FMath::Clamp(NewValue, 0.f, 0.9f);
+		// Defense-style divisor (source * 100 / (100 + BlightResistance)): any value >= 0 is valid and never fully negates Blight.
+		NewValue = FMath::Max(NewValue, 0.f);
+	}
+	else if (Attribute == GetBlightBuildupAttribute())
+	{
+		NewValue = FMath::Clamp(NewValue, 0.f, MaxBlightBuildup);
 	}
 	else if (Attribute == GetAttackSpeedAttribute())
 	{
@@ -520,6 +523,11 @@ void UAH_AttributeSet::OnRep_AttackSpeed(const FGameplayAttributeData& OldValue)
 void UAH_AttributeSet::OnRep_BlightResistance(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, BlightResistance, OldValue);
+}
+
+void UAH_AttributeSet::OnRep_BlightBuildup(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UAH_AttributeSet, BlightBuildup, OldValue);
 }
 
 void UAH_AttributeSet::OnRep_Level(const FGameplayAttributeData& OldValue)

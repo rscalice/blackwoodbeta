@@ -25,8 +25,9 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FAH_OnAttributeZero, AActor* /*EffectInstiga
  *
  * Core combat attribute set for Blackwood Hollow characters (player Vanguards
  * and enemies alike). Covers vitality (Health/Posture), offense/defense
- * (AttackPower/Defense), and the world's signature resistance stat
- * (BlightResistance) used to mitigate Blight fog / Blight Volume damage.
+ * (AttackPower/Defense), and the world's signature Blight stats: BlightResistance
+ * (a Defense-style divisor on every Blight build-up) and BlightBuildup (the 0..100
+ * Blight meter; Phase 10B -- see UBPC_HeartFragment::AddBlightBuildup).
  *
  * Posture follows a Sekiro/FromSoft-style stance-break model: it depletes on
  * blocked or grazing hits and, at zero, applies State.Combat.PostureBroken
@@ -112,10 +113,25 @@ public:
 	FGameplayAttributeData Level;
 	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, Level)
 
-	// -- Blight resistance (mitigates BP_BlightVolume / Blight fog damage) -
+	// -- Blight (Phase 10B) --------------------------------------------------
+	/**
+	 * Mitigates every Blight build-up like Defense does damage: source * 100 / (100 + BlightResistance). 0 = no mitigation,
+	 * 100 = half, 300 = a quarter. Clamped to >= 0 (it used to be a 0..0.9 fraction; that reading is gone).
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Blight", ReplicatedUsing = OnRep_BlightResistance)
 	FGameplayAttributeData BlightResistance;
 	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, BlightResistance)
+
+	/** Upper bound of BlightBuildup; reaching it saturates the meter. */
+	static constexpr float MaxBlightBuildup = 100.f;
+
+	/**
+	 * The Blight meter, 0..MaxBlightBuildup (HUD stack count = floor(BlightBuildup / 10)). Written ONLY by the authority
+	 * (UBPC_HeartFragment: build-up, decay, saturation reset). Replicated to the owning client only.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "AttributeSet|Blight", ReplicatedUsing = OnRep_BlightBuildup)
+	FGameplayAttributeData BlightBuildup;
+	ATTRIBUTE_ACCESSORS(UAH_AttributeSet, BlightBuildup)
 
 	// -- Meta attribute: incoming damage is routed through this and never
 	// replicated directly; PostGameplayEffectExecute consumes it and applies
@@ -166,6 +182,9 @@ protected:
 
 	UFUNCTION()
 	virtual void OnRep_BlightResistance(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	virtual void OnRep_BlightBuildup(const FGameplayAttributeData& OldValue);
 
 	UFUNCTION()
 	virtual void OnRep_Level(const FGameplayAttributeData& OldValue);

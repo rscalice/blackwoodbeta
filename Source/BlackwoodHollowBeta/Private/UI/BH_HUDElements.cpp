@@ -637,9 +637,7 @@ void UBH_TargetVitalsWidget::HandleLockedTargetChanged(AActor* Target)
 {
 	Presenter.Reset(); // a new lock starts from the idle look; InitializeHUD below pushes the new target's values
 
-	// A boss shows the top boss bar (UBH_BossHealthBarWidget) instead: hard-locking it must not also raise this panel.
-	const UBH_CombatIdentityComponent* LockedIdentity = Target ? UBH_CombatIdentityComponent::Find(Target) : nullptr;
-	if (!Target || (LockedIdentity && LockedIdentity->bIsBoss))
+	if (!Target)
 	{
 		bHasTarget = false;
 		InitializeHUD(nullptr);
@@ -667,7 +665,27 @@ void UBH_TargetVitalsWidget::HandleLockedTargetChanged(AActor* Target)
 		SetRenderOpacity(0.f);
 	}
 	bHasTarget = true;
-	SetVisibility(ESlateVisibility::HitTestInvisible);
+	ApplyShown(); // stays collapsed while the root HUD has it suppressed (lock is on the presented boss)
+}
+
+void UBH_TargetVitalsWidget::ApplyShown()
+{
+	SetVisibility(bHasTarget && !bSuppressedByBoss ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+}
+
+void UBH_TargetVitalsWidget::SetSuppressedByBoss(bool bSuppressed)
+{
+	if (bSuppressed == bSuppressedByBoss)
+	{
+		return;
+	}
+	bSuppressedByBoss = bSuppressed;
+	if (bHasTarget)
+	{
+		CurrentOpacity = 0.f; // fades in again when un-suppressed
+		SetRenderOpacity(0.f);
+	}
+	ApplyShown();
 }
 
 void UBH_TargetVitalsWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)

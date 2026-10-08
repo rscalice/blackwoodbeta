@@ -2,6 +2,7 @@
 
 #include "Progression/BH_RPGSettings.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Audio/BH_FootstepSet.h"
 
 namespace BH_RPGSettings_Private
 {
@@ -105,4 +106,9 @@ int32 UBH_RPGSettings::GetXPToNextLevel(int32 Level) const
 		return FMath::Max(FMath::RoundToInt(Value), 1);
 	}
 	return FMath::Max(FallbackXPPerLevel, 1) * FMath::Max(Level, 1);
+}
+
+UBH_FootstepSet* UBH_RPGSettings::GetDefaultFootstepSet() const
+{
+	return DefaultFootstepSet.IsNull() ? nullptr : DefaultFootstepSet.LoadSynchronous();
 }
