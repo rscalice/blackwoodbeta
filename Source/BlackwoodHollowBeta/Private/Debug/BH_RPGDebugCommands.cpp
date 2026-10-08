@@ -7,9 +7,12 @@
 //   bh.Arena.SkipToWave N     abandon the current wave and start wave N (1 = first) on every wave spawner
 //   bh.XP.Grant N             give N XP to every player in the world
 //   bh.Level.Set N            set every player's level to N (XP resets, stats and Health/Posture/Stamina are re-applied)
+//   bh.Player.Kill           (Phase 10B part 2) kill the LOCAL player's pawn: starts the death / ragdoll / revive-window flow
+//   bh.Player.Revive         revive the LOCAL player's downed pawn in place right now (UBH_PlayerDeathComponent debug RPCs, so they work from a client window too)
 
 #include "AI/BH_EnemyWaveSpawner.h"
 #include "Player/BH_PlayerState.h"
+#include "Player/BH_PlayerDeathComponent.h"
 #include "Progression/BH_ProgressionComponent.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Engine/Engine.h"
@@ -197,6 +200,41 @@ namespace BH_RPGDebugCommands_Private
 				Progression.SetLevel(NewLevel);
 				UE_LOG(LogBHCombat, Log, TEXT("bh.Level.Set: level %d."), Progression.GetLevel());
 			});
+		}));
+
+	/** The local player's death component (first local controller's pawn), or null with a logged / on-screen reason. */
+	static UBH_PlayerDeathComponent* ResolveLocalDeathComponent(const UWorld* World, const TCHAR* CommandName)
+	{
+		const APlayerController* LocalPC = World ? World->GetFirstPlayerController() : nullptr;
+		UBH_PlayerDeathComponent* Comp = UBH_PlayerDeathComponent::Find(LocalPC ? LocalPC->GetPawn() : nullptr);
+		if (!Comp)
+		{
+			Notify(World, CommandName, TEXT("refused, the local player has no pawn yet."));
+		}
+		return Comp;
+	}
+
+	// The commands call the component's Server RPC: on the host / standalone it runs directly, from a client window it is sent to the server.
+	static FAutoConsoleCommandWithWorld CmdKillPlayer(
+		TEXT("bh.Player.Kill"),
+		TEXT("Kills the local player's pawn through lethal damage (starts the death / ragdoll / revive flow). Works from a client window (server RPC)."),
+		FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+		{
+			if (UBH_PlayerDeathComponent* Comp = ResolveLocalDeathComponent(World, TEXT("bh.Player.Kill")))
+			{
+				Comp->ServerDebugKill();
+			}
+		}));
+
+	static FAutoConsoleCommandWithWorld CmdRevivePlayer(
+		TEXT("bh.Player.Revive"),
+		TEXT("Instantly revives the local player's downed pawn in place at the revive health percent (skips the hold and the combat check). Works from a client window (server RPC)."),
+		FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+		{
+			if (UBH_PlayerDeathComponent* Comp = ResolveLocalDeathComponent(World, TEXT("bh.Player.Revive")))
+			{
+				Comp->ServerDebugRevive();
+			}
 		}));
 }
 

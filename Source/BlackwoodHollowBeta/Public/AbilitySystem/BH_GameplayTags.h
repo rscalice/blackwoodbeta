@@ -28,7 +28,6 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Blocking
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Parrying);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Staggered);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_PostureBroken);
-BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_BlightShielded);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Overloading);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Dead);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Combat_Attacking);
@@ -44,7 +43,6 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Event_Combat_Hit);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Event_Combat_PostureBreak);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Event_Combat_Death);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Event_Combat_BlightDamage);
-BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Event_Combat_BlightShieldDepleted);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Event_Combat_OverloadBurst);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Event_Combat_OverloadBurst_Ready);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Event_Combat_DamageReceived);
@@ -135,11 +133,22 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Fragment_Category_Off
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Fragment_Category_BlightResist);
 
 // ---------------------------------------------------------------------------
-// Phase 8C: Blight damage-over-time
+// Phase 8C: Blight damage type
 // ---------------------------------------------------------------------------
-BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Status_Blighted);
-BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Blight_DPS);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Damage_Type_Blight);
+
+// ---------------------------------------------------------------------------
+// Phase 10B: Blight build-up meter / status-effect framework
+//   State.Status.*  -- every status effect (UBH_GE_StatusEffect) grants one; UBH_StatusEffectLibrary lists them.
+//   Data.Blight.*   -- SetByCaller keys of the Blight Rot / saturation effects (StatusEffects/BH_BlightEffects.h)
+//   Event.Combat.BlightSaturated -- the meter filled up (server), sent to the victim after the saturation damage.
+// ---------------------------------------------------------------------------
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Status);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Status_BlightRot);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Blight_RotDamagePercent);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Blight_RotStaminaRegenMult);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Blight_SaturationPercent);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Event_Combat_BlightSaturated);
 
 // Weapon drawn / sheathed (UBH_StanceComponent::bWeaponDrawn, replicated; mirrored as loose tags on every machine, exactly one present)
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Weapon_Drawn);
@@ -194,7 +203,6 @@ public:
 	FGameplayTag State_Combat_Parrying;
 	FGameplayTag State_Combat_Staggered;
 	FGameplayTag State_Combat_PostureBroken;
-	FGameplayTag State_Combat_BlightShielded;
 	FGameplayTag State_Combat_Overloading;
 	FGameplayTag State_Combat_Dead;
 	FGameplayTag State_Combat_Attacking;
@@ -206,7 +214,6 @@ public:
 	FGameplayTag Event_Combat_PostureBreak;
 	FGameplayTag Event_Combat_Death;
 	FGameplayTag Event_Combat_BlightDamage;
-	FGameplayTag Event_Combat_BlightShieldDepleted;
 	FGameplayTag Event_Combat_OverloadBurst;
 	FGameplayTag Event_Combat_OverloadBurst_Ready;
 	FGameplayTag Event_Combat_DamageReceived;

@@ -15,6 +15,11 @@
 // BroadcastStanceChanged. The root widget also polls the replicated GASP
 // OverlayPose a few times a second so changes that only arrive by replication
 // (remote clients) still reach the HUD.
+//
+// Top-centre stack (Phase 10A-2): the root HUD owns the layout of the boss bar and the lock-on target panel. WBP_HUD_Main holds a
+// vertical box "TopCentreStack": BossBarSlot (UBH_HUDSubsystem puts the boss bar there) on top, TargetVitals below it. No boss shown:
+// TargetVitals is normal size. Boss shown and the lock is on another target: TargetVitals sits under the bar at TargetScaleUnderBoss,
+// TargetGapUnderBoss below it. Boss shown and the lock is on the boss itself: TargetVitals is hidden (the bar already shows it).
 
 #pragma once
 
@@ -27,7 +32,9 @@
 
 class UAbilitySystemComponent;
 class APlayerController;
+class UPanelWidget;
 class UBH_BossHealthBarWidget;
+class UBH_TargetVitalsWidget;
 class UBH_XPBarWidget;
 class UBH_LevelUpBannerWidget;
 
@@ -110,17 +117,30 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Boss")
 	TSubclassOf<UBH_BossHealthBarWidget> BossBarClass;
 
-	/** Distance in pixels from the bottom edge of the screen to the bottom of the boss bar (clears the vitals cluster). */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Boss", meta = (ClampMin = "0.0"))
-	float BossBarBottomOffset = 150.f;
-
 	/** Seconds the bar stays after the boss dies or drops aggro on the local pawn. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Boss", meta = (ClampMin = "0.0"))
-	float BossBarHideDelay = 1.5f;
+	float BossBarHideDelay = 1.0f;
 
 	/** Seconds between fallback boss scans (the primary trigger is the aggro-changed event). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Boss", meta = (ClampMin = "0.1"))
 	float BossScanInterval = 0.5f;
+
+	/** Pixels between the bottom of the boss bar and the top of the target panel while a boss is shown. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Boss", meta = (ClampMin = "0.0"))
+	float TargetGapUnderBoss = 8.f;
+
+	/** Render scale of the target panel while it sits under the boss bar (scaled around its top-centre so it stays centred and tight under the bar). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Boss", meta = (ClampMin = "0.1", ClampMax = "1.0"))
+	float TargetScaleUnderBoss = 0.75f;
+
+	/**
+	 * Puts Bar into BossBarSlot (centred). Returns false when no BossBarSlot is bound or it cannot take the widget, so the caller can
+	 * fall back to the viewport. Safe to call again for a bar that is already attached.
+	 */
+	bool AttachBossBar(UBH_BossHealthBarWidget* Bar);
+
+	/** Called by UBH_HUDSubsystem when the boss the bar presents changes (null = none). Re-evaluates the target panel's size, gap and visibility. */
+	void SetPresentedBoss(AActor* Boss);
 
 protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
@@ -132,7 +152,9 @@ protected:
 	virtual void HandlePostureChanged(float Posture, float MaxPosture) {}
 	virtual void HandlePostureBrokenChanged(bool bBroken) {}
 	virtual void HandleStanceChanged(const FString& StanceName) {}
-	virtual void HandleLockedTargetChanged(AActor* Target) {}
+	/** The base remembers the target and re-evaluates the top-centre stack; overrides (UBH_TargetVitalsWidget) need not call it. */
+	virtual void HandleLockedTargetChanged(AActor* Target);
+	virtual void NativeConstruct() override;
 	virtual void HandleLevelUp(int32 NewLevel) {}
 
 	/**
@@ -176,6 +198,17 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Level", meta = (BindWidgetOptional))
 	TObjectPtr<UBH_LevelUpBannerWidget> LevelUpBanner;
 
+	/**
+	 * Container for the boss bar, top of the TopCentreStack (an Overlay named "BossBarSlot"; a SizeBox with no overrides also works).
+	 * UBH_HUDSubsystem adds the boss bar here, so the stack grows only while the bar has size (the bar collapses when faded out).
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Boss", meta = (BindWidgetOptional))
+	TObjectPtr<UPanelWidget> BossBarSlot;
+
+	/** Lock-on target panel (WBP_TargetVitals), below BossBarSlot in the same vertical box. Scaled / hidden by the rules in the header. */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Boss", meta = (BindWidgetOptional))
+	TObjectPtr<UBH_TargetVitalsWidget> TargetVitals;
+
 	/** When true a parent HUD widget's InitializeHUD skips this widget (it binds to some other ASC, e.g. the lock-on target). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|HUD")
 	bool bExcludeFromParentInit = false;
@@ -193,6 +226,10 @@ private:
 	void PushPosture();
 	void RefreshPostureBroken();
 	void PollStance();
+	void RefreshTopCentreLayout();
+
+	TWeakObjectPtr<AActor> PresentedBoss;
+	TWeakObjectPtr<AActor> LockedTarget;
 
 	TWeakObjectPtr<UAbilitySystemComponent> BoundASC;
 	FDelegateHandle HealthHandle;

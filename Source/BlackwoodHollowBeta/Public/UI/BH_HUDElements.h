@@ -399,6 +399,7 @@ private:
  * same danger / break behaviour as UBH_ContextualPostureWidget).
  * Excluded from its parent's InitializeHUD; it binds itself to the locked target's ASC when the lock-on
  * component broadcasts (UBH_HUDWidget::BroadcastLockedTargetChanged) and collapses when the lock is released.
+ * The root HUD (UBH_HUDWidget) scales it under the boss bar and hides it while the lock is on the presented boss (SetSuppressedByBoss).
  */
 UCLASS(Abstract, Blueprintable)
 class BLACKWOODHOLLOWBETA_API UBH_TargetVitalsWidget : public UBH_HUDWidget
@@ -434,6 +435,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
 	bool IsPostureInDanger() const { return Presenter.IsInDanger(); }
+
+	/** True hides the panel while a target is locked (the lock is on the boss the top boss bar presents). False shows it again, fading in. */
+	void SetSuppressedByBoss(bool bSuppressed);
 
 protected:
 	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
@@ -475,6 +479,7 @@ protected:
 private:
 	void ApplyHealthPercent();
 	void RefreshHealthSplit();
+	void ApplyShown();
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> HealthBarMID;
@@ -487,4 +492,5 @@ private:
 	bool bHealthSeeded = false;
 	float CurrentOpacity = 0.f;
 	bool bHasTarget = false;
+	bool bSuppressedByBoss = false;
 };

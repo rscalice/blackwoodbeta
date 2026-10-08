@@ -21,7 +21,6 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Blocking, "State.Combat.Blocking");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Parrying, "State.Combat.Parrying");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Staggered, "State.Combat.Staggered");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_PostureBroken, "State.Combat.PostureBroken");
-UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_BlightShielded, "State.Combat.BlightShielded");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Overloading, "State.Combat.Overloading");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Dead, "State.Combat.Dead");
 UE_DEFINE_GAMEPLAY_TAG(TAG_State_Combat_Attacking, "State.Combat.Attacking");
@@ -35,7 +34,6 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Combat_Hit, "Event.Combat.Hit");
 UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Combat_PostureBreak, "Event.Combat.PostureBreak");
 UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Combat_Death, "Event.Combat.Death");
 UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Combat_BlightDamage, "Event.Combat.BlightDamage");
-UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Combat_BlightShieldDepleted, "Event.Combat.BlightShieldDepleted");
 UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Combat_OverloadBurst, "Event.Combat.OverloadBurst");
 UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Combat_OverloadBurst_Ready, "Event.Combat.OverloadBurst.Ready");
 UE_DEFINE_GAMEPLAY_TAG(TAG_Event_Combat_DamageReceived, "Event.Combat.DamageReceived");
@@ -110,9 +108,15 @@ UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Fragment_Category_Offensive, "Fragment.Catego
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Fragment_Category_BlightResist, "Fragment.Category.BlightResist", "Heart-Fragment category: Blight protection.");
 
 // Phase 8C: Blight DoT
-UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Status_Blighted, "State.Status.Blighted", "Blight damage-over-time is ticking on this actor (UAH_GE_BlightDoT).");
-UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Blight_DPS, "Data.Blight.DPS", "SetByCaller key: Blight damage per second, read by UAH_MMC_BlightDoT.");
-UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Damage_Type_Blight, "Damage.Type.Blight", "Damage spec came from Blight DoT: not blockable, no hit reaction / posture / hit-stop.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Damage_Type_Blight, "Damage.Type.Blight", "Damage spec came from Blight (DoT / Blight Rot / meter saturation): not blockable, no automatic hit reaction / posture / hit-stop.");
+
+// Phase 10B: Blight build-up meter / status effects
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Status, "State.Status", "Parent of every status effect tag (UBH_GE_StatusEffect grants one child while active).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Status_BlightRot, "State.Status.BlightRot", "Blight Rot is active: periodic % MaxHealth damage and reduced passive stamina regen (UAH_GE_BlightRot).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Blight_RotDamagePercent, "Data.Blight.RotDamagePercent", "SetByCaller key: Blight Rot damage per tick as a fraction of the target's MaxHealth (0.025 = 2.5%), read by UAH_MMC_BlightRotTick.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Blight_RotStaminaRegenMult, "Data.Blight.RotStaminaRegenMult", "SetByCaller key: multiplier on StaminaRegenRate while Blight Rot is active (0.75 = -25%), read by UAH_GE_BlightRotStaminaPenalty.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Blight_SaturationPercent, "Data.Blight.SaturationPercent", "SetByCaller key: saturation damage as a fraction of the target's MaxHealth (0.15 = 15%), read by UAH_MMC_BlightSaturation.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Event_Combat_BlightSaturated, "Event.Combat.BlightSaturated", "Sent (server) to a victim whose Blight meter just saturated, after the saturation damage and before Blight Rot is applied. EventMagnitude = saturation damage dealt.");
 
 // Weapon drawn / sheathed
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Weapon_Drawn, "State.Weapon.Drawn", "Weapon is drawn: combat locomotion / hold pose (UBH_StanceComponent).");
@@ -190,7 +194,6 @@ void FBH_GameplayTags::AddAllTags()
 	AddTag(State_Combat_Parrying, "State.Combat.Parrying", "Actor is within an active parry window.");
 	AddTag(State_Combat_Staggered, "State.Combat.Staggered", "Actor is staggered and cannot act.");
 	AddTag(State_Combat_PostureBroken, "State.Combat.PostureBroken", "Actor's Posture has been broken, opening a punish window.");
-	AddTag(State_Combat_BlightShielded, "State.Combat.BlightShielded", "Heart-Fragment Blight shield is currently absorbing damage.");
 	AddTag(State_Combat_Overloading, "State.Combat.Overloading", "Heart-Fragment Overload Burst ability is mid-activation.");
 	AddTag(State_Combat_Dead, "State.Combat.Dead", "Actor has died.");
 	AddTag(State_Combat_Attacking, "State.Combat.Attacking", "A melee attack ability is active.");
@@ -202,8 +205,7 @@ void FBH_GameplayTags::AddAllTags()
 	AddTag(Event_Combat_PostureBreak, "Event.Combat.PostureBreak", "Sent the instant Posture is broken.");
 	AddTag(Event_Combat_Death, "Event.Combat.Death", "Sent when Health reaches zero.");
 	AddTag(Event_Combat_BlightDamage, "Event.Combat.BlightDamage", "Sent when Blight damage is applied to an actor.");
-	AddTag(Event_Combat_BlightShieldDepleted, "Event.Combat.BlightShieldDepleted", "Sent when the Heart-Fragment's Blight shield hits zero.");
-	AddTag(Event_Combat_OverloadBurst, "Event.Combat.OverloadBurst", "Sent by UAH_GA_OverloadBurst when it activates (BP_BlightVolume listens). Does NOT activate the ability.");
+	AddTag(Event_Combat_OverloadBurst, "Event.Combat.OverloadBurst", "Sent by UAH_GA_OverloadBurst when it activates (server). Informational: BP_BlightVolume no longer listens (the ability calls ClearFog directly). Does NOT activate the ability.");
 	AddTag(Event_Combat_OverloadBurst_Ready, "Event.Combat.OverloadBurst.Ready", "Sent when the Overload Burst comes off cooldown / refills.");
 	AddTag(Event_Combat_DamageReceived, "Event.Combat.DamageReceived", "Sent to the victim after IncomingDamage has been applied to Health.");
 	AddTag(Event_Combat_HitDealt, "Event.Combat.HitDealt", "Sent to the attacker by UANS_MeleeHitbox when its sweep connects.");

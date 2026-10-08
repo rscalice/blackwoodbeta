@@ -31,6 +31,7 @@ public class BlackwoodHollowBeta : ModuleRules
 			"RadialSelector",     // Phase 8C: stance radial menu (UBH_StanceRadialComponent)
 			"ProceduralMeshComponent", // weapon swing trails (UBH_WeaponTrailComponent)
 			"DeveloperSettings", // Phase 9: UBH_RPGSettings (Project Settings > Game > Blackwood Hollow RPG)
+			"PhysicsCore",       // Phase 10A: EPhysicalSurface / UPhysicalMaterial::DetermineSurfaceType (footstep surfaces)
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]

@@ -5,6 +5,7 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Abilities/AH_GA_FragmentBase.h"
 #include "AbilitySystem/Abilities/AH_GA_OverloadBurst.h"
+#include "AbilitySystem/StatusEffects/BH_BlightEffects.h"
 #include "Player/BH_PlayerState.h"
 #include "GameFramework/Pawn.h"
 #include "AbilitySystemComponent.h"
@@ -16,8 +17,8 @@
 
 UBPC_HeartFragment::UBPC_HeartFragment()
 {
-	PrimaryComponentTick.bCanEverTick = true;
-	PrimaryComponentTick.TickInterval = 0.f; // tick every frame; cheap float math only
+	// Phase 10B: nothing ticks. The Blight meter decays on a timer that only exists while the meter is above zero.
+	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
 
 	// Default loadout: slot 1 = Overload Burst.
@@ -28,16 +29,7 @@ void UBPC_HeartFragment::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UBPC_HeartFragment, EquippedFragments);
-	DOREPLIFETIME_CONDITION(UBPC_HeartFragment, CurrentBlightShield, COND_OwnerOnly);
-}
-
-void UBPC_HeartFragment::OnRep_CurrentBlightShield(float OldValue)
-{
-	OnBlightShieldChanged.Broadcast(CurrentBlightShield, MaxBlightShield);
-	if (OldValue > 0.f && CurrentBlightShield <= 0.f)
-	{
-		OnBlightShieldDepleted.Broadcast();
-	}
+	DOREPLIFETIME_CONDITION(UBPC_HeartFragment, ShieldingLevel, COND_OwnerOnly);
 }
 
 #if WITH_EDITOR
@@ -58,7 +50,6 @@ void UBPC_HeartFragment::BeginPlay()
 	Super::BeginPlay();
 
 	EnsureAbilitySystemCached();
-	CurrentBlightShield = MaxBlightShield;
 
 	TrimFragmentsToMax();
 
@@ -92,6 +83,7 @@ void UBPC_HeartFragment::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		World->GetTimerManager().ClearTimer(GrantRetryTimer);
 		World->GetTimerManager().ClearTimer(PlayerStateSyncTimer);
+		World->GetTimerManager().ClearTimer(BlightDecayTimer);
 	}
 	Super::EndPlay(EndPlayReason);
 }
@@ -139,83 +131,250 @@ bool UBPC_HeartFragment::EnsureAbilitySystemCached()
 	return CachedASC != nullptr && CachedAttributeSet != nullptr;
 }
 
-void UBPC_HeartFragment::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
-{
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+// ============================================================================
+// Blight shielding
+// ============================================================================
 
-	// Only the authority drives shield state.
-	AActor* Owner = GetOwner();
+float UBPC_HeartFragment::GetShieldingFraction() const
+{
+	if (ShieldingByLevel.Num() == 0)
+	{
+		return 0.f;
+	}
+	const int32 Index = FMath::Clamp(ShieldingLevel, 0, ShieldingByLevel.Num() - 1);
+	return FMath::Clamp(ShieldingByLevel[Index], 0.f, 1.f);
+}
+
+void UBPC_HeartFragment::SetShieldingLevel(int32 NewLevel)
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority())
+	{
+		return;
+	}
+	NewLevel = FMath::Max(NewLevel, 0);
+	if (NewLevel == ShieldingLevel)
+	{
+		return;
+	}
+	ShieldingLevel = NewLevel;
+	OnShieldingLevelChanged.Broadcast(ShieldingLevel, GetShieldingFraction()); // the server / listen-server host does not get the RepNotify
+}
+
+void UBPC_HeartFragment::OnRep_ShieldingLevel(int32 OldLevel)
+{
+	OnShieldingLevelChanged.Broadcast(ShieldingLevel, GetShieldingFraction());
+}
+
+// ============================================================================
+// Blight build-up meter
+// ============================================================================
+
+float UBPC_HeartFragment::ComputeMitigatedBuildup(float RawAmount) const
+{
+	if (RawAmount <= 0.f)
+	{
+		return 0.f;
+	}
+
+	// Defense-style resistance: 0 -> x1, 100 -> x0.5, 300 -> x0.25.
+	const UAH_AttributeSet* AttributeSet = ResolveAttributeSet();
+	const float Resistance = AttributeSet ? FMath::Max(AttributeSet->GetBlightResistance(), 0.f) : 0.f;
+	const float Shielding = FMath::Clamp(GetShieldingFraction(), 0.f, 1.f);
+	const float Aegis = FMath::Clamp(GetAegisReduction(), 0.f, 1.f);
+	return RawAmount * 100.f / (100.f + Resistance) * (1.f - Shielding) * (1.f - Aegis);
+}
+
+float UBPC_HeartFragment::GetBlightBuildup() const
+{
+	const UAH_AttributeSet* AttributeSet = ResolveAttributeSet();
+	return AttributeSet ? AttributeSet->GetBlightBuildup() : 0.f;
+}
+
+const UAH_AttributeSet* UBPC_HeartFragment::ResolveAttributeSet() const
+{
+	if (CachedAttributeSet)
+	{
+		return CachedAttributeSet;
+	}
+	const UAbilitySystemComponent* ASC = GetOwnerASC();
+	return ASC ? ASC->GetSet<UAH_AttributeSet>() : nullptr;
+}
+
+int32 UBPC_HeartFragment::GetBlightStacks() const
+{
+	return FMath::Clamp(FMath::FloorToInt(GetBlightBuildup() / 10.f), 0, 10);
+}
+
+void UBPC_HeartFragment::SetBlightBuildupValue(float NewValue)
+{
+	if (CachedASC)
+	{
+		// The attribute set clamps to 0..MaxBlightBuildup (PreAttributeBaseChange) and replicates it to the owner.
+		CachedASC->SetNumericAttributeBase(UAH_AttributeSet::GetBlightBuildupAttribute(), NewValue);
+	}
+}
+
+float UBPC_HeartFragment::AddBlightBuildup(float RawAmount, AActor* InstigatorActor)
+{
+	const AActor* Owner = GetOwner();
+	if (!Owner || !Owner->HasAuthority() || RawAmount <= 0.f || bSaturating)
+	{
+		return 0.f;
+	}
+	if (!EnsureAbilitySystemCached() || CachedASC->HasMatchingGameplayTag(TAG_State_Combat_Dead))
+	{
+		return 0.f;
+	}
+
+	const float Applied = ComputeMitigatedBuildup(RawAmount);
+	if (Applied <= 0.f)
+	{
+		return 0.f;
+	}
+
+	if (const UWorld* World = GetWorld())
+	{
+		LastBlightGainTime = World->GetTimeSeconds(); // restarts the decay delay
+	}
+
+	const float NewValue = CachedAttributeSet->GetBlightBuildup() + Applied;
+	if (NewValue >= UAH_AttributeSet::MaxBlightBuildup - KINDA_SMALL_NUMBER)
+	{
+		SaturateBlightMeter(InstigatorActor);
+		return Applied;
+	}
+
+	SetBlightBuildupValue(NewValue);
+	EnsureBlightDecayTimer();
+	return Applied;
+}
+
+void UBPC_HeartFragment::EnsureBlightDecayTimer()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	FTimerManager& Timers = World->GetTimerManager();
+	if (!Timers.IsTimerActive(BlightDecayTimer))
+	{
+		Timers.SetTimer(BlightDecayTimer, this, &UBPC_HeartFragment::BlightDecayTick, FMath::Max(BlightDecayTickInterval, 0.05f), true);
+	}
+}
+
+void UBPC_HeartFragment::StopBlightDecayTimer()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(BlightDecayTimer);
+	}
+}
+
+void UBPC_HeartFragment::BlightDecayTick()
+{
+	const UWorld* World = GetWorld();
+	if (!World || !EnsureAbilitySystemCached())
+	{
+		StopBlightDecayTimer();
+		return;
+	}
+
+	const float Current = CachedAttributeSet->GetBlightBuildup();
+	if (Current <= 0.f || CachedASC->HasMatchingGameplayTag(TAG_State_Combat_Dead))
+	{
+		StopBlightDecayTimer(); // idle (or dead: ResetBlight zeroes it)
+		return;
+	}
+
+	// Decay starts BlightDecayDelay after the last gain; the elapsed time is measured from the later of that moment and the previous decay tick.
+	const double Now = World->GetTimeSeconds();
+	const double DecayFrom = FMath::Max(LastBlightDecayTime, LastBlightGainTime + BlightDecayDelay);
+	const double Elapsed = Now - DecayFrom;
+	if (Elapsed <= 0.0)
+	{
+		return; // still inside the delay
+	}
+	LastBlightDecayTime = Now;
+
+	const float NewValue = FMath::Max(Current - BlightDecayPerSecond * static_cast<float>(Elapsed), 0.f);
+	SetBlightBuildupValue(NewValue);
+	if (NewValue <= 0.f)
+	{
+		StopBlightDecayTimer();
+	}
+}
+
+void UBPC_HeartFragment::SaturateBlightMeter(AActor* InstigatorActor)
+{
+	if (bSaturating || !EnsureAbilitySystemCached())
+	{
+		return;
+	}
+	bSaturating = true;
+
+	AActor* const Owner = GetOwner();
+	UAbilitySystemComponent* const InstigatorASC = (InstigatorActor && InstigatorActor != Owner)
+		? UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(InstigatorActor) : nullptr;
+
+	// 1) Saturation damage THROUGH a GameplayEffect: IncomingDamage -> Health -> OnHealthZero / Dead tag / death event, like any hit.
+	const float Damage = UAH_GE_BlightSaturationDamage::ApplySaturationDamage(InstigatorASC, CachedASC, InstigatorActor, BlightSaturationDamagePercent);
+	const bool bSurvived = !CachedASC->HasMatchingGameplayTag(TAG_State_Combat_Dead);
+
+	if (bSurvived)
+	{
+		FGameplayEventData SaturatedEvent;
+		SaturatedEvent.EventTag = TAG_Event_Combat_BlightSaturated;
+		SaturatedEvent.Instigator = InstigatorActor ? InstigatorActor : Owner;
+		SaturatedEvent.Target = Owner;
+		SaturatedEvent.EventMagnitude = Damage;
+		CachedASC->HandleGameplayEvent(TAG_Event_Combat_BlightSaturated, &SaturatedEvent);
+
+		// 2) Brief stagger: the existing hit-reaction path (UAH_GA_HitReaction triggers on Event.Combat.DamageReceived; Blight damage
+		//    skips that event on purpose, so it is sent here). Hyper armor / posture break / death still suppress it.
+		if (bStaggerOnSaturation && Damage > 0.f)
+		{
+			FGameplayEventData StaggerEvent;
+			StaggerEvent.EventTag = TAG_Event_Combat_DamageReceived;
+			StaggerEvent.Instigator = InstigatorActor ? InstigatorActor : Owner;
+			StaggerEvent.Target = Owner;
+			StaggerEvent.EventMagnitude = Damage;
+			CachedASC->HandleGameplayEvent(TAG_Event_Combat_DamageReceived, &StaggerEvent);
+		}
+
+		// 3) Blight Rot (own source: the Rot is not credited to the instigator).
+		if (CachedASC->HasMatchingGameplayTag(TAG_State_Combat_Dead) == false)
+		{
+			UAH_GE_BlightRot::ApplyBlightRot(nullptr, CachedASC, BlightRotDuration, BlightRotTickPercent, BlightRotStaminaRegenPenalty);
+		}
+	}
+
+	// 4) Reset. (A death during step 1 leaves the meter at 0 as well; ResetBlight clears the Rot on revive.)
+	StopBlightDecayTimer();
+	SetBlightBuildupValue(0.f);
+	OnBlightSaturated.Broadcast(Damage, bSurvived);
+
+	bSaturating = false;
+}
+
+void UBPC_HeartFragment::ResetBlight()
+{
+	const AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority())
 	{
 		return;
 	}
 
-	// -- Blight shield regen --------------------------------------------
-	if (CurrentBlightShield < MaxBlightShield)
+	StopBlightDecayTimer();
+	bSaturating = false;
+	LastBlightGainTime = -1.0e9;
+	LastBlightDecayTime = -1.0e9;
+
+	if (EnsureAbilitySystemCached())
 	{
-		TimeSinceLastShieldHit += DeltaTime;
-		if (TimeSinceLastShieldHit >= BlightShieldRegenDelay)
-		{
-			const float Old = CurrentBlightShield;
-			CurrentBlightShield = FMath::Min(MaxBlightShield, CurrentBlightShield + BlightShieldRegenPerSecond * DeltaTime);
-			if (!FMath::IsNearlyEqual(Old, CurrentBlightShield))
-			{
-				OnBlightShieldChanged.Broadcast(CurrentBlightShield, MaxBlightShield);
-			}
-		}
-	}
-}
-
-float UBPC_HeartFragment::AbsorbBlightDamage(float BlightDamage)
-{
-	if (BlightDamage <= 0.f)
-	{
-		return 0.f;
-	}
-
-	TimeSinceLastShieldHit = 0.f;
-
-	if (CurrentBlightShield <= 0.f)
-	{
-		return BlightDamage;
-	}
-
-	const float Absorbed = FMath::Min(CurrentBlightShield, BlightDamage);
-	CurrentBlightShield -= Absorbed;
-	OnBlightShieldChanged.Broadcast(CurrentBlightShield, MaxBlightShield);
-
-	const float Overflow = BlightDamage - Absorbed;
-
-	if (CurrentBlightShield <= 0.f)
-	{
-		OnBlightShieldDepleted.Broadcast();
-
-		if (EnsureAbilitySystemCached())
-		{
-			// Replicated loose tag (TagOnly); also updates the authority's own count.
-			CachedASC->RemoveLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded, 1, EGameplayTagReplicationState::TagOnly);
-
-			FGameplayEventData EventData;
-			EventData.EventTag = FBH_GameplayTags::Get().Event_Combat_BlightShieldDepleted;
-			EventData.Instigator = GetOwner();
-			EventData.Target = GetOwner();
-			CachedASC->HandleGameplayEvent(FBH_GameplayTags::Get().Event_Combat_BlightShieldDepleted, &EventData);
-		}
-	}
-
-	return Overflow;
-}
-
-void UBPC_HeartFragment::RechargeBlightShield()
-{
-	const bool bWasDepleted = CurrentBlightShield <= 0.f;
-	CurrentBlightShield = MaxBlightShield;
-	TimeSinceLastShieldHit = 0.f;
-	OnBlightShieldChanged.Broadcast(CurrentBlightShield, MaxBlightShield);
-
-	if (bWasDepleted && EnsureAbilitySystemCached())
-	{
-		CachedASC->AddLooseGameplayTag(FBH_GameplayTags::Get().State_Combat_BlightShielded, 1, EGameplayTagReplicationState::TagOnly);
+		SetBlightBuildupValue(0.f);
+		UAH_GE_BlightRot::RemoveBlightRot(CachedASC);
 	}
 }
 

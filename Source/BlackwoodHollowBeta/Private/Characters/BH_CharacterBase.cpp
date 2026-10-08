@@ -5,11 +5,17 @@
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Combat/BH_StanceComponent.h"
+#include "Player/BH_PlayerDeathComponent.h"
 #include "Combat/BH_CombatFeel.h"
 #include "Characters/BH_StanceMovementProfile.h"
 #include "AbilitySystemComponent.h"
 #include "AIController.h"
+#include "EnhancedInputComponent.h"
+#include "InputAction.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/CollisionProfile.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Net/UnrealNetwork.h"
 
@@ -22,6 +28,7 @@ ABH_CharacterBase::ABH_CharacterBase(const FObjectInitializer& ObjectInitializer
 
 	AttributeSet = CreateDefaultSubobject<UAH_AttributeSet>(TEXT("AttributeSet"));
 	StanceComponent = CreateDefaultSubobject<UBH_StanceComponent>(TEXT("StanceComponent"));
+	DeathComponent = CreateDefaultSubobject<UBH_PlayerDeathComponent>(TEXT("DeathComponent"));
 
 	// Attack telegraph decals must not tint the character itself.
 	if (USkeletalMeshComponent* SkelMesh = GetMesh())
@@ -72,6 +79,23 @@ void ABH_CharacterBase::BeginPlay()
 	{
 		GrantDefaultAbilities();
 		UBH_CombatFunctionLibrary::ApplyPassiveRegenEffects(this);
+	}
+}
+
+void ABH_CharacterBase::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+{
+	Super::SetupPlayerInputComponent(PlayerInputComponent);
+
+	// Hold-to-revive: bound here (local player only, every possession) so the Blueprint needs no input nodes.
+	if (!ReviveInputAction || !DeathComponent)
+	{
+		return;
+	}
+	if (UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(PlayerInputComponent))
+	{
+		EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Started, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputPressed);
+		EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Completed, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputReleased);
+		EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Canceled, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputReleased);
 	}
 }
 
@@ -155,7 +179,14 @@ void ABH_CharacterBase::SetAIDesiredGait(EBH_Gait NewGait)
 
 bool ABH_CharacterBase::IsCombatMovementLocked() const
 {
-	return AbilitySystemComponent && AbilitySystemComponent->HasMatchingGameplayTag(TAG_State_Combat_MovementLocked);
+	// Down (ragdoll / waiting for revive) or getting up: no movement, whatever the tags say.
+	if (DeathComponent && DeathComponent->IsMovementBlocked())
+	{
+		return true;
+	}
+	return AbilitySystemComponent
+		&& (AbilitySystemComponent->HasMatchingGameplayTag(TAG_State_Combat_MovementLocked)
+			|| AbilitySystemComponent->HasMatchingGameplayTag(TAG_State_Combat_Dead));
 }
 
 void ABH_CharacterBase::AddMovementInput(FVector WorldDirection, float ScaleValue, bool bForce)
@@ -253,4 +284,184 @@ float ABH_CharacterBase::GetBrakingDeceleration(bool bHasMovementInput) const
 	}
 	const EBH_Gait Band = BrakingBand.IsSet() ? *BrakingBand : Profile->GetBrakingBandForSpeed(GetVelocity().Size2D());
 	return Profile->GetGaitSettings(Band).BrakingDecelerationNoInput;
+}
+
+// ============================================================================
+// Ragdoll (any machine; physics bodies are not replicated, each machine simulates its own copy)
+// ============================================================================
+
+void ABH_CharacterBase::StartRagdollLocal(const FVector& InheritVelocity)
+{
+	if (bRagdollActive)
+	{
+		return;
+	}
+	bRagdollActive = true;
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	UCapsuleComponent* Capsule = GetCapsuleComponent();
+	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
+
+	// Weapons, shields and every other collider first: attached actors can only be found while the mesh is still on the capsule.
+	DisableRagdollInterferingCollision();
+
+	// The CMC no longer drives the body; the authority stops replicating movement (each machine simulates its own ragdoll).
+	if (MoveComp)
+	{
+		MoveComp->StopMovementImmediately();
+		MoveComp->DisableMovement();
+		MoveComp->SetComponentTickEnabled(false);
+	}
+	if (HasAuthority())
+	{
+		bRagdollSavedReplicateMovement = IsReplicatingMovement();
+		SetReplicateMovement(false);
+	}
+
+	if (Capsule)
+	{
+		RagdollSavedCapsuleCollision = Capsule->GetCollisionEnabled();
+		Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+
+	if (!SkelMesh)
+	{
+		return;
+	}
+	if (!SkelMesh->GetPhysicsAsset())
+	{
+		UE_LOG(LogBHCombat, Warning, TEXT("%s: no physics asset on the mesh, the body cannot ragdoll (it just stops)."), *GetNameSafe(this));
+		return;
+	}
+
+	RagdollSavedMeshProfile = SkelMesh->GetCollisionProfileName();
+	RagdollSavedMeshObjectType = SkelMesh->GetCollisionObjectType();
+	RagdollSavedMeshCollision = SkelMesh->GetCollisionEnabled();
+	RagdollSavedMeshResponses = SkelMesh->GetCollisionResponseToChannels();
+	RagdollSavedMeshScale = SkelMesh->GetRelativeScale3D();
+
+	// Detach BEFORE the simulation starts: a simulating child of the capsule is dragged along by every capsule teleport.
+	SkelMesh->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+	bRagdollMeshDetached = true;
+
+	SkelMesh->SetCollisionProfileName(RagdollCollisionProfile);
+	SkelMesh->SetAllBodiesSimulatePhysics(true);
+	SkelMesh->SetSimulatePhysics(true);
+	SkelMesh->SetAllBodiesPhysicsBlendWeight(1.f);
+	SkelMesh->WakeAllRigidBodies();
+	SkelMesh->SetAllPhysicsLinearVelocity(InheritVelocity.GetClampedToMaxSize(FMath::Max(0.f, RagdollMaxInheritSpeed))); // keep the momentum of the fall / run
+}
+
+void ABH_CharacterBase::StopRagdollLocal(const FTransform* ActorTransformAfterStop)
+{
+	if (!bRagdollActive)
+	{
+		return;
+	}
+	bRagdollActive = false;
+
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	UCapsuleComponent* Capsule = GetCapsuleComponent();
+	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
+
+	// Stop the simulation, restore the mesh collision and hang the mesh back on the capsule with its authored offset.
+	if (SkelMesh && bRagdollMeshDetached)
+	{
+		SkelMesh->SetAllBodiesSimulatePhysics(false);
+		SkelMesh->SetSimulatePhysics(false);
+
+		if (!RagdollSavedMeshProfile.IsNone() && RagdollSavedMeshProfile != UCollisionProfile::CustomCollisionProfileName)
+		{
+			SkelMesh->SetCollisionProfileName(RagdollSavedMeshProfile);
+		}
+		else
+		{
+			SkelMesh->SetCollisionObjectType(RagdollSavedMeshObjectType);
+			SkelMesh->SetCollisionResponseToChannels(RagdollSavedMeshResponses);
+		}
+		SkelMesh->SetCollisionEnabled(RagdollSavedMeshCollision);
+
+		if (Capsule)
+		{
+			SkelMesh->AttachToComponent(Capsule, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+			SkelMesh->SetRelativeLocationAndRotation(GetBaseTranslationOffset(), GetBaseRotationOffset());
+			SkelMesh->SetRelativeScale3D(RagdollSavedMeshScale);
+		}
+	}
+	bRagdollMeshDetached = false;
+
+	// Capsule still off here: the move to the return point cannot pop out of the floor.
+	if (ActorTransformAfterStop)
+	{
+		SetActorLocationAndRotation(ActorTransformAfterStop->GetLocation(), ActorTransformAfterStop->Rotator(), false, nullptr, ETeleportType::TeleportPhysics);
+	}
+	if (Capsule)
+	{
+		Capsule->SetCollisionEnabled(RagdollSavedCapsuleCollision);
+	}
+	RestoreRagdollInterferingCollision();
+
+	if (MoveComp)
+	{
+		MoveComp->SetComponentTickEnabled(true); // the movement mode is the caller's job
+	}
+	if (HasAuthority())
+	{
+		SetReplicateMovement(bRagdollSavedReplicateMovement);
+	}
+}
+
+void ABH_CharacterBase::DisableRagdollInterferingCollision()
+{
+	RagdollSavedPrimitives.Reset();
+
+	auto SaveAndDisable = [this](UPrimitiveComponent* CollisionComp)
+	{
+		if (CollisionComp && CollisionComp->GetCollisionEnabled() != ECollisionEnabled::NoCollision)
+		{
+			FBH_RagdollSavedPrimitive& Saved = RagdollSavedPrimitives.AddDefaulted_GetRef();
+			Saved.Component = CollisionComp;
+			Saved.Collision = CollisionComp->GetCollisionEnabled();
+			CollisionComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		}
+	};
+
+	// Weapons, shields, ... attached to the character (recursively). Their colliders fight the ragdoll bodies (explosive depenetration).
+	TArray<AActor*> CarriedActors;
+	GetAttachedActors(CarriedActors, /*bResetArray*/ true, /*bRecursivelyIncludeAttachedActors*/ true);
+	TArray<UPrimitiveComponent*> CollisionComps;
+	for (AActor* CarriedActor : CarriedActors)
+	{
+		if (!CarriedActor)
+		{
+			continue;
+		}
+		CarriedActor->GetComponents<UPrimitiveComponent>(CollisionComps);
+		for (UPrimitiveComponent* CollisionComp : CollisionComps)
+		{
+			SaveAndDisable(CollisionComp);
+		}
+	}
+
+	// The character's own non-mesh primitives (weapon meshes, hit boxes, ...); the capsule is handled by the caller.
+	GetComponents<UPrimitiveComponent>(CollisionComps);
+	for (UPrimitiveComponent* CollisionComp : CollisionComps)
+	{
+		if (CollisionComp != GetMesh() && CollisionComp != GetCapsuleComponent())
+		{
+			SaveAndDisable(CollisionComp);
+		}
+	}
+}
+
+void ABH_CharacterBase::RestoreRagdollInterferingCollision()
+{
+	for (const FBH_RagdollSavedPrimitive& Saved : RagdollSavedPrimitives)
+	{
+		if (UPrimitiveComponent* SavedComp = Saved.Component.Get())
+		{
+			SavedComp->SetCollisionEnabled(Saved.Collision);
+		}
+	}
+	RagdollSavedPrimitives.Reset();
 }

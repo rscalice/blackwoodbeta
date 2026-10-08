@@ -4,32 +4,50 @@
 // Every exiled Vanguard survivor carries a crystalline Heart-Fragment
 // embedded in their chest. This component is the gameplay-facing home for
 // everything that artifact does:
-//   1) it shields its owner against Blight damage (the Blight shield), and
-//   2) it is the Heart-Fragment LOADOUT MANAGER: up to 5 equipped fragment
+//   1) Blight SHIELDING: a percentage cut of every Blight build-up (ShieldingLevel -> ShieldingByLevel), and
+//   2) the Blight BUILD-UP METER (Phase 10B), server-authoritative, and
+//   3) the Heart-Fragment LOADOUT MANAGER: up to 5 equipped fragment
 //      abilities (UAH_GA_FragmentBase), granted to the owner's ASC and fired by
 //      slot (keys 1-3). Phase 8B: the slot model lives on ABH_PlayerState; this component mirrors it. Fragments have no resource cost; each owns a GAS cooldown.
+//
+// BLIGHT METER (why it lives here): the Heart-Fragment is already on every Vanguard pawn, it owns the shielding level and the
+// Aegis hook the mitigation formula needs, and no new component has to be added to the player Blueprint. Actors without a
+// Heart-Fragment (enemies) simply cannot build up Blight. The value itself is the replicated UAH_AttributeSet::BlightBuildup
+// attribute (0..100, owner-only), written only here, on the authority.
+//   * Every source calls AddBlightBuildup(Raw, Instigator): BP_BlightVolume (per second while inside), the crab's heavy pinch
+//     (+35 per hit), future hazards. Mitigation: Raw * 100 / (100 + BlightResistance) * (1 - shielding) * (1 - Aegis).
+//   * Decay: BlightDecayPerSecond after BlightDecayDelay seconds without build-up. It runs on a looping timer that exists only
+//     while the meter is above zero (nothing ticks while idle; this component no longer ticks at all).
+//   * Saturation (meter >= 100): saturation damage (15% MaxHealth) through UAH_GE_BlightSaturationDamage (the normal
+//     IncomingDamage -> Health -> death path), a brief stagger (Event.Combat.DamageReceived -> UAH_GA_HitReaction), then Blight Rot
+//     (UAH_GE_BlightRot: 10 s, 2.5% MaxHealth per second, -25% passive stamina regen, tag State.Status.BlightRot), then the meter
+//     resets to 0.
+//   * ResetBlight() (server) zeroes the meter and removes Blight Rot: for the death / revive flow.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "GameplayAbilitySpecHandle.h"
+#include "TimerManager.h"
 #include "BPC_HeartFragment.generated.h"
 
 class UAbilitySystemComponent;
 class UAH_AttributeSet;
 class UAH_GA_FragmentBase;
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnBlightShieldChanged, float, NewShieldValue, float, MaxShieldValue);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBlightShieldDepleted);
+/** Owning client: the shielding level changed (also fires on the server when SetShieldingLevel runs). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnShieldingLevelChanged, int32, NewLevel, float, NewFraction);
+
+/** Server: the Blight meter saturated. SaturationDamage = health removed, bSurvived = the owner was still alive (Blight Rot was applied). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnBlightSaturated, float, SaturationDamage, bool, bSurvived);
 
 /**
  * UBPC_HeartFragment
  *
  * Attach to any Vanguard-lineage Pawn/Character that also has an
- * AbilitySystemComponent + UAH_AttributeSet. Ticks its own Blight shield
- * regen, exposes the entry points BP_BlightVolume hooks into, and manages the
- * Heart-Fragment ability loadout.
+ * AbilitySystemComponent + UAH_AttributeSet. Owns the Blight shielding level and
+ * the Blight build-up meter logic, and manages the Heart-Fragment ability loadout.
  */
 UCLASS(ClassGroup = (BlackwoodHollow), meta = (BlueprintSpawnableComponent))
 class BLACKWOODHOLLOWBETA_API UBPC_HeartFragment : public UActorComponent
@@ -42,7 +60,6 @@ public:
 	/** Maximum number of equipped fragments (keys 1-3; Phase 8B: three category-restricted slots). */
 	static constexpr int32 MaxFragmentSlots = 3;
 
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 #if WITH_EDITOR
@@ -54,44 +71,104 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 public:
-	// -- Blight shielding ---------------------------------------------------
-
-	/** Maximum Blight shield the Heart-Fragment can hold, before BlightResistance scaling. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|BlightShield")
-	float MaxBlightShield = 50.f;
-
-	/** Shield regenerated per second once RegenDelay has elapsed since last absorbing damage. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|BlightShield")
-	float BlightShieldRegenPerSecond = 4.f;
-
-	/** Seconds after the last absorbed hit before shield regen resumes. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|BlightShield")
-	float BlightShieldRegenDelay = 3.f;
-
-	/** Current Blight shield value; absorbs BP_BlightVolume / Blight fog damage before it reaches Health. Replicated to the owning client only (OnRep fires the shield events there). */
-	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_CurrentBlightShield, Category = "HeartFragment|BlightShield")
-	float CurrentBlightShield = 0.f;
+	// -- Blight shielding (Phase 10B) ----------------------------------------
 
 	/**
-	 * Applies incoming Blight damage to the shield first, letting overflow
-	 * through. Called by BP_BlightVolume's overlap/tick logic.
-	 * @return the portion of BlightDamage NOT absorbed by the shield (i.e. what should still hit Health).
+	 * Index into ShieldingByLevel. Level 0 is the base shielding every Vanguard has; upgrades raise it (server:
+	 * SetShieldingLevel). Replicated to the owning client.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "HeartFragment|BlightShield")
-	float AbsorbBlightDamage(float BlightDamage);
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_ShieldingLevel, Category = "HeartFragment|Shielding")
+	int32 ShieldingLevel = 0;
 
-	/** Instantly restores the Blight shield to MaxBlightShield (e.g. on Overload Burst, or a pickup). */
-	UFUNCTION(BlueprintCallable, Category = "HeartFragment|BlightShield")
-	void RechargeBlightShield();
+	/** Fraction of every Blight build-up removed per shielding level (0.15 = 15%). Index = ShieldingLevel; the last entry applies beyond the end. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|Shielding")
+	TArray<float> ShieldingByLevel = { 0.15f };
 
-	UFUNCTION(BlueprintPure, Category = "HeartFragment|BlightShield")
-	float GetBlightShieldPercent() const { return MaxBlightShield > 0.f ? CurrentBlightShield / MaxBlightShield : 0.f; }
+	/** Fraction (0..1) of Blight build-up currently shielded: ShieldingByLevel[ShieldingLevel]. */
+	UFUNCTION(BlueprintPure, Category = "HeartFragment|Shielding")
+	float GetShieldingFraction() const;
 
-	UPROPERTY(BlueprintAssignable, Category = "HeartFragment|BlightShield")
-	FOnBlightShieldChanged OnBlightShieldChanged;
+	/** Server only: sets the shielding level (clamped to >= 0) and fires OnShieldingLevelChanged. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "HeartFragment|Shielding")
+	void SetShieldingLevel(int32 NewLevel);
 
-	UPROPERTY(BlueprintAssignable, Category = "HeartFragment|BlightShield")
-	FOnBlightShieldDepleted OnBlightShieldDepleted;
+	UPROPERTY(BlueprintAssignable, Category = "HeartFragment|Shielding")
+	FOnShieldingLevelChanged OnShieldingLevelChanged;
+
+	/**
+	 * Aegis hook (Phase 10B placeholder): fraction (0..1) of Blight build-up the Aegis blocks. Returns 0 until Aegis exists; override
+	 * it in Blueprint or C++ (read a status tag / attribute there). Multiplies in as (1 - Aegis) after the shielding.
+	 */
+	UFUNCTION(BlueprintNativeEvent, BlueprintPure, Category = "HeartFragment|Shielding")
+	float GetAegisReduction() const;
+	virtual float GetAegisReduction_Implementation() const { return 0.f; }
+
+	// -- Blight meter tunables (Phase 10B; locked balance values) ------------------
+
+	/** Seconds without any build-up received before the meter starts to decay. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|BlightMeter", meta = (ClampMin = "0.0", ForceUnits = "s"))
+	float BlightDecayDelay = 2.f;
+
+	/** Meter points lost per second while decaying. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|BlightMeter", meta = (ClampMin = "0.0"))
+	float BlightDecayPerSecond = 12.f;
+
+	/** Seconds between decay updates (the timer only runs while the meter is above zero). Also the replication rate of the decaying value. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|BlightMeter", meta = (ClampMin = "0.05", ForceUnits = "s"))
+	float BlightDecayTickInterval = 0.2f;
+
+	/** Saturation damage as a fraction of MaxHealth (0.15 = 15%), dealt through UAH_GE_BlightSaturationDamage. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|BlightMeter", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float BlightSaturationDamagePercent = 0.15f;
+
+	/** Stagger the owner (Event.Combat.DamageReceived -> UAH_GA_HitReaction) when the meter saturates. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|BlightMeter")
+	bool bStaggerOnSaturation = true;
+
+	/** Blight Rot duration in seconds. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|BlightMeter|Rot", meta = (ClampMin = "0.1", ForceUnits = "s"))
+	float BlightRotDuration = 10.f;
+
+	/** Blight Rot damage per 1 s tick as a fraction of MaxHealth (0.025 = 2.5%). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|BlightMeter|Rot", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float BlightRotTickPercent = 0.025f;
+
+	/** Fraction of passive stamina regen lost while Blight Rot is active (0.25 = -25%). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|BlightMeter|Rot", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float BlightRotStaminaRegenPenalty = 0.25f;
+
+	// -- Blight meter API ---------------------------------------------------------
+
+	/**
+	 * SERVER. Adds Blight build-up from any source. RawAmount is mitigated here: Raw * 100 / (100 + BlightResistance) * (1 - shielding)
+	 * * (1 - Aegis). Restarts the decay delay, starts the decay timer, and saturates the meter at 100 (see the file header).
+	 * Ignored while the owner is dead or already mid-saturation.
+	 * @param RawAmount       build-up before mitigation (volumes pass BuildupPerSecond * interval, the crab pinch 35).
+	 * @param InstigatorActor the source actor (volume, attacker); used for kill credit / stagger direction. May be null.
+	 * @return the mitigated amount actually added (0 if ignored or fully shielded).
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "HeartFragment|BlightMeter")
+	float AddBlightBuildup(float RawAmount, AActor* InstigatorActor);
+
+	/** The mitigation formula alone (no state change): Raw * 100 / (100 + BlightResistance) * (1 - shielding) * (1 - Aegis). */
+	UFUNCTION(BlueprintPure, Category = "HeartFragment|BlightMeter")
+	float ComputeMitigatedBuildup(float RawAmount) const;
+
+	/** Current meter value 0..100 (valid on the server and the owning client). */
+	UFUNCTION(BlueprintPure, Category = "HeartFragment|BlightMeter")
+	float GetBlightBuildup() const;
+
+	/** HUD stack count: floor(meter / 10), 0..10. */
+	UFUNCTION(BlueprintPure, Category = "HeartFragment|BlightMeter")
+	int32 GetBlightStacks() const;
+
+	/** SERVER. Meter to 0 and Blight Rot removed (death / revive flow). Safe to call any time. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "HeartFragment|BlightMeter")
+	void ResetBlight();
+
+	/** Server: the meter saturated (after the damage, stagger and Rot, before the reset is visible). Cosmetic cues / sound hook in here. */
+	UPROPERTY(BlueprintAssignable, Category = "HeartFragment|BlightMeter")
+	FOnBlightSaturated OnBlightSaturated;
 
 	// -- Fragment loadout --------------------------------------------------------
 
@@ -146,16 +223,29 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<const UAH_AttributeSet> CachedAttributeSet;
 
-	/** Seconds since the shield last absorbed damage; drives the regen delay gate. */
-	float TimeSinceLastShieldHit = 0.f;
-
 	/** Resolves and caches the owner's AbilitySystemComponent + UAH_AttributeSet. Safe to call repeatedly. */
 	bool EnsureAbilitySystemCached();
 
 private:
-	/** Owning client: broadcasts OnBlightShieldChanged, and OnBlightShieldDepleted when the value crossed to zero. */
+	/** Owning client: broadcasts OnShieldingLevelChanged. */
 	UFUNCTION()
-	void OnRep_CurrentBlightShield(float OldValue);
+	void OnRep_ShieldingLevel(int32 OldLevel);
+
+	// -- Blight meter internals (server) --
+	/** Writes the BlightBuildup attribute base (clamped 0..100 by the attribute set). */
+	void SetBlightBuildupValue(float NewValue);
+	/** The owner's UAH_AttributeSet: the cache if filled, else looked up (const-safe; the cache is filled by EnsureAbilitySystemCached). */
+	const UAH_AttributeSet* ResolveAttributeSet() const;
+	void EnsureBlightDecayTimer();
+	void StopBlightDecayTimer();
+	void BlightDecayTick();
+	/** Meter reached 100: damage, stagger, Blight Rot, reset (in that order). */
+	void SaturateBlightMeter(AActor* InstigatorActor);
+
+	FTimerHandle BlightDecayTimer;
+	double LastBlightGainTime = -1.0e9;
+	double LastBlightDecayTime = -1.0e9;
+	bool bSaturating = false;
 
 	/** Spec handles parallel to EquippedFragments (server only; clients resolve by class). */
 	TArray<FGameplayAbilitySpecHandle> FragmentHandles;
