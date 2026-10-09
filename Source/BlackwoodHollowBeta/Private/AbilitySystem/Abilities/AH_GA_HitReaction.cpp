@@ -11,6 +11,8 @@
 #include "TimerManager.h"
 #include "GameFramework/Actor.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogBHHitReaction, Log, All);
+
 UAH_GA_HitReaction::UAH_GA_HitReaction()
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
@@ -120,10 +122,31 @@ UAnimMontage* UAH_GA_HitReaction::GetMontageForDirection(EBH_HitDirection Direct
 void UAH_GA_HitReaction::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
 	const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
+	// PreActivate already added ActivationOwnedTags (one reference each). If the previous activation never reached EndAbility (the owning
+	// client's copy can be activated again by a second server-sent hit while the first reaction still plays), that previous reference would
+	// never be removed: give it back now so exactly one reference is outstanding.
+	++OutstandingActivations;
+	if (OutstandingActivations > 1)
+	{
+		if (UAbilitySystemComponent* ReactionASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr)
+		{
+			ReactionASC->RemoveLooseGameplayTags(ActivationOwnedTags);
+		}
+		UE_LOG(LogBHHitReaction, Verbose, TEXT("HitReaction on %s re-activated without an end (%d outstanding): gave back the surplus tag references."),
+			*GetNameSafe(GetAvatarActorFromActorInfo()), OutstandingActivations);
+		OutstandingActivations = 1;
+	}
+
 	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
+	}
+
+	// Hard cap: whatever happens to the montage / fallback timer, the stagger and the movement lock end after MaxReactionSeconds.
+	if (UWorld* CapWorld = GetWorld())
+	{
+		CapWorld->GetTimerManager().SetTimer(SafetyTimerHandle, this, &UAH_GA_HitReaction::OnSafetyTimeout, FMath::Max(MaxReactionSeconds, 0.5f), false);
 	}
 
 	// A combat ability draws the weapon (authority only; replicates through the stance component).
@@ -170,10 +193,44 @@ void UAH_GA_HitReaction::EndAbility(const FGameplayAbilitySpecHandle Handle, con
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(FallbackTimerHandle);
+		World->GetTimerManager().ClearTimer(SafetyTimerHandle);
 	}
 	MontageTask = nullptr;
+	OutstandingActivations = 0;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+
+	ScrubLeakedTags(ActorInfo);
+}
+
+void UAH_GA_HitReaction::ScrubLeakedTags(const FGameplayAbilityActorInfo* ActorInfo)
+{
+	// The server's tag bookkeeping is balanced by construction; the leak seen so far lives in the owning client's local copy.
+	if (!ActorInfo || ActorInfo->IsNetAuthority() || !ActorInfo->IsLocallyControlled())
+	{
+		return;
+	}
+	UAbilitySystemComponent* ASC = ActorInfo->AbilitySystemComponent.Get();
+	if (!ASC)
+	{
+		return;
+	}
+	// This ability has just ended and is the only source of Staggered, so any reference still held is a leak.
+	const int32 Leaked = ASC->GetTagCount(TAG_State_Combat_Staggered.GetTag());
+	if (Leaked > 0)
+	{
+		ASC->RemoveLooseGameplayTag(TAG_State_Combat_Staggered.GetTag(), Leaked);
+		ASC->RemoveLooseGameplayTag(TAG_State_Combat_MovementLocked.GetTag(), Leaked);
+		UE_LOG(LogBHHitReaction, Warning, TEXT("HitReaction on %s: scrubbed %d leaked Staggered / MovementLocked reference(s) after the reaction ended."),
+			*GetNameSafe(ActorInfo->AvatarActor.Get()), Leaked);
+	}
+}
+
+void UAH_GA_HitReaction::OnSafetyTimeout()
+{
+	UE_LOG(LogBHHitReaction, Warning, TEXT("HitReaction on %s hit the %.1f s safety cap (the montage / fallback timer never finished): ending it."),
+		*GetNameSafe(GetAvatarActorFromActorInfo()), MaxReactionSeconds);
+	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }
 
 void UAH_GA_HitReaction::FinishReaction()

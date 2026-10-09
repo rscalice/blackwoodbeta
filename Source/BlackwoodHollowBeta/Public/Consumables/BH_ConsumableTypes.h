@@ -34,6 +34,9 @@ namespace BH_ConsumableDefaults
 	inline constexpr float IncenseRadius = 600.f;     // 6 m
 	inline constexpr float IncenseSeconds = 8.0f;
 
+	/** A refuse-at-full-health consumable is refused when Health >= MaxHealth - this (absorbs float noise from regen / replication). */
+	inline constexpr float FullHealthTolerance = 0.5f;
+
 	inline constexpr const TCHAR* DrinkMontagePath = TEXT("/Game/BlackwoodHollow/Animation/Consumables/AM_BH_Consume_Drink.AM_BH_Consume_Drink");
 	inline constexpr const TCHAR* CenserMontagePath = TEXT("/Game/BlackwoodHollow/Animation/Consumables/AM_BH_Consume_PlaceCenser.AM_BH_Consume_PlaceCenser");
 }
@@ -46,6 +49,17 @@ enum class EBH_ConsumableEffectKind : uint8
 
 	/** Drops a Warden sanctuary (ABH_WardenSanctuary) in front of the user. */
 	DeploySanctuary
+};
+
+/** Why a use request was refused before anything was consumed. Delivered through ABH_PlayerState::OnConsumableUseRefused. */
+UENUM(BlueprintType)
+enum class EBH_ConsumableRefusal : uint8
+{
+	None,
+	NoneOwned,
+	AtFullHealth,
+	Busy,
+	Unavailable
 };
 
 /** Everything UBH_GA_UseConsumable needs to know about one consumable. */
@@ -68,6 +82,11 @@ struct BLACKWOODHOLLOWBETA_API FBH_ConsumableDefinition
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Consumable")
 	EBH_ConsumableEffectKind EffectKind = EBH_ConsumableEffectKind::HealOverTime;
+
+	/** True = the use is refused (nothing consumed, no ability) while the user is at full health. Heartwood Sap: true. Checked on the client
+	 *  (cheap early-out) and again on the server (authoritative) before anything is spent. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Consumable")
+	bool bRefuseAtFullHealth = false;
 
 	// -- HealOverTime -----------------------------------------------------------------------------
 

@@ -19,6 +19,9 @@
 //   MenuData, so no custom radial widget is required; UIs that want more can read GetRadialSlots().
 // Phase 8D: the placeholder stances (OneHandedSword / Bow / Crossbow) can be listed (bIncludePlaceholderStancesInWheel)
 //   but selecting one only logs "Stance not yet implemented" and keeps the current stance.
+// Phase 11E: a consumable slot whose stack is 0 stays in its place (the other wedges keep their angles) but is UNAVAILABLE:
+//   FBH_RadialSlotData::bAvailable = false, its label drops the "x0", its wedge is dimmed, and choosing it does nothing (no request,
+//   no RPC). A custom wedge widget should grey the icon from bAvailable (GetRadialSlots / IsConsumableSlotAvailable).
 
 #pragma once
 
@@ -98,6 +101,13 @@ struct BLACKWOODHOLLOWBETA_API FBH_RadialSlotData
 
 	UPROPERTY(BlueprintReadOnly, Category = "Radial")
 	int32 Quantity = 0;
+
+	/**
+	 * True when choosing this slot does something: a weapon set that holds a stance, or a consumable slot with at least one item.
+	 * False for empty slots and for a consumable at count 0 (shown greyed, no "x0", selecting it is a no-op). Widgets: disable / desaturate on false.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Radial")
+	bool bAvailable = false;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnRadialSlotsChanged);
@@ -162,7 +172,7 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
 	FBH_OnRadialSlotsChanged OnRadialSlotsChanged;
 
-	/** Fires when a consumable wedge is chosen (before the use request is sent to the server). */
+	/** Fires when a consumable wedge is chosen (before the use request is sent to the server). Not fired for an unavailable (count 0) slot. */
 	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
 	FBH_OnConsumableSlotUsed OnConsumableSlotUsed;
 
@@ -174,6 +184,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
 	TArray<FBH_RadialSlotData> GetRadialSlots() const;
 
+	/** Phase 11E: true when radial slot RadialSlotIndex (2-7) holds an item the local player currently owns (count >= 1). Reads the live inventory. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|StanceRadial|EightSlot")
+	bool IsConsumableSlotAvailable(int32 RadialSlotIndex) const;
+
 	/** ConsumableIndex 0-5. Rebuilds the wheel. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
 	bool SetConsumableSlot(int32 ConsumableIndex, const FBH_RadialConsumableSlot& NewSlot);
@@ -181,7 +195,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
 	bool ClearConsumableSlot(int32 ConsumableIndex);
 
-	/** Radial slot 2-7 chosen on the wheel (Phase 11D): broadcasts OnConsumableSlotUsed and asks the server to use the slot's item through UBH_ConsumableLibrary::RequestUseConsumable. @return true when a request was sent. */
+	/** Radial slot 2-7 chosen on the wheel (Phase 11D): broadcasts OnConsumableSlotUsed and asks the server to use the slot's item through UBH_ConsumableLibrary::RequestUseConsumable. A slot at count 0 does nothing. @return true when a request was sent. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|StanceRadial|EightSlot")
 	bool UseConsumableSlot(int32 RadialSlotIndex);
 
@@ -242,6 +256,9 @@ private:
 	void PollPawn();
 	APawn* GetControlledPawn() const;
 	void RebuildEightSlot();
+
+	/** Live stack count of consumable slot ConsumableIndex (0-5) in the local player's inventory; 0 for an empty / invalid slot. */
+	int32 GetLiveConsumableCount(int32 ConsumableIndex) const;
 
 	/** Stance legacy name per weapon slot (index 0 = set A, 1 = set B) as of the last eight-slot rebuild. */
 	TArray<FName> WeaponSlotStances;

@@ -238,6 +238,7 @@ TArray<FBH_RadialSlotData> UBH_StanceRadialComponent::GetRadialSlots() const
 		Slot.Kind = EBH_RadialSlotKind::WeaponSet;
 		Slot.StanceName = Loadout ? Loadout->GetStanceForSet(SetIndex == 0 ? EBH_LoadoutSet::A : EBH_LoadoutSet::B) : NAME_None;
 		Slot.bEmpty = Slot.StanceName.IsNone();
+		Slot.bAvailable = !Slot.bEmpty;
 		Slot.Identifier = BH_StanceRadialPrivate::WeaponSlotIdentifier(SetIndex, Slot.bEmpty);
 		if (Slot.bEmpty)
 		{
@@ -270,6 +271,8 @@ TArray<FBH_RadialSlotData> UBH_StanceRadialComponent::GetRadialSlots() const
 			Slot.DisplayName = Source.DisplayName;
 			Slot.Icon = Source.Icon;
 			Slot.Quantity = Source.Quantity;
+			// A filled slot at count 0 keeps its place but is not usable (refreshed from the inventory every time the wheel opens).
+			Slot.bAvailable = Source.Quantity >= 1;
 		}
 		else
 		{
@@ -278,6 +281,26 @@ TArray<FBH_RadialSlotData> UBH_StanceRadialComponent::GetRadialSlots() const
 		Slots.Add(Slot);
 	}
 	return Slots;
+}
+
+int32 UBH_StanceRadialComponent::GetLiveConsumableCount(int32 ConsumableIndex) const
+{
+	if (!ConsumableSlots.IsValidIndex(ConsumableIndex) || ConsumableSlots[ConsumableIndex].IsEmpty())
+	{
+		return 0;
+	}
+	const APlayerController* PC = Cast<APlayerController>(GetOwner());
+	const UClass* ItemClass = Cast<UClass>(ConsumableSlots[ConsumableIndex].ItemReference.LoadSynchronous());
+	if (!PC || !ItemClass || !ItemClass->IsChildOf(UNarrativeItem::StaticClass()))
+	{
+		return 0;
+	}
+	return UBH_LootLibrary::GetItemCount(PC->GetPlayerState<APlayerState>(), const_cast<UClass*>(ItemClass));
+}
+
+bool UBH_StanceRadialComponent::IsConsumableSlotAvailable(int32 RadialSlotIndex) const
+{
+	return GetLiveConsumableCount(RadialSlotIndex - 2) >= 1;
 }
 
 void UBH_StanceRadialComponent::RebuildEightSlot()
@@ -296,6 +319,12 @@ void UBH_StanceRadialComponent::RebuildEightSlot()
 			// Dim empty wedges; they stay in the ring so the other slots keep their angular positions.
 			Segment.bOverrideWedgeColor = true;
 			Segment.WedgeColorOverride = FLinearColor(0.25f, 0.25f, 0.25f, 0.6f);
+		}
+		else if (!Slot.bAvailable)
+		{
+			// Phase 11E: a consumable at count 0 keeps its place and its name but is greyed (and selecting it is a no-op, see UseConsumableSlot).
+			Segment.bOverrideWedgeColor = true;
+			Segment.WedgeColorOverride = FLinearColor(0.12f, 0.12f, 0.12f, 0.55f);
 		}
 		if (Slot.Kind == EBH_RadialSlotKind::WeaponSet)
 		{
@@ -350,6 +379,13 @@ bool UBH_StanceRadialComponent::UseConsumableSlot(int32 RadialSlotIndex)
 	if (Slot.IsEmpty())
 	{
 		return false; // empty slot: nothing to do
+	}
+
+	// Phase 11E: a slot at count 0 is disabled. Choosing it does nothing: no event, no request, no RPC. (Live count, not the cached label.)
+	if (GetLiveConsumableCount(ConsumableIndex) < 1)
+	{
+		UE_LOG(LogBHCombat, Verbose, TEXT("Radial consumable slot %d chosen but the stack is empty: ignored."), ConsumableIndex + 1);
+		return false;
 	}
 
 	OnConsumableSlotUsed.Broadcast(ConsumableIndex, Slot);
@@ -409,7 +445,11 @@ bool UBH_StanceRadialComponent::RefreshConsumableSlots()
 			continue;
 		}
 		const int32 Count = UBH_LootLibrary::GetItemCount(LocalPlayerState, ItemClass);
-		const FText Label = FText::Format(NSLOCTEXT("BHStance", "ConsumableLabel", "{0} x{1}"), UBH_LootLibrary::GetItemDisplayName(ItemClass), FText::AsNumber(Count));
+		// Count 0: the slot stays, the "x0" is dropped (the wedge is greyed instead, see RebuildEightSlot).
+		const FText ItemName = UBH_LootLibrary::GetItemDisplayName(ItemClass);
+		const FText Label = Count >= 1
+			? FText::Format(NSLOCTEXT("BHStance", "ConsumableLabel", "{0} x{1}"), ItemName, FText::AsNumber(Count))
+			: ItemName;
 		if (Slot.Quantity != Count || !Slot.DisplayName.EqualTo(Label))
 		{
 			Slot.Quantity = Count;
@@ -539,7 +579,7 @@ void UBH_StanceRadialComponent::HandleSegmentSelected(const FRadialSelectorSegme
 			}
 			return; // empty weapon set: nothing to select
 		}
-		UseConsumableSlot(SlotIndex);
+		UseConsumableSlot(SlotIndex); // ignores a slot at count 0
 		return;
 	}
 	SelectStance(SelectedSegment.Identifier);

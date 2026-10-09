@@ -2,11 +2,14 @@
 
 #include "Consumables/BH_ConsumableLibrary.h"
 #include "Consumables/BH_ConsumableEffects.h"
+#include "Consumables/BH_GA_UseConsumable.h"
 #include "Consumables/BH_WardenSanctuary.h"
+#include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Interaction/BH_InteractorComponent.h"
 #include "Loot/BH_LootLibrary.h"
 #include "Loot/BH_LootTypes.h"
+#include "Player/BH_PlayerState.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "Abilities/GameplayAbilityTypes.h"
@@ -30,6 +33,7 @@ FBH_ConsumableDefinition UBH_ConsumableLibrary::MakeSapDefinition()
 	Definition.Montage = TSoftObjectPtr<UAnimMontage>(FSoftObjectPath(BH_ConsumableDefaults::DrinkMontagePath));
 	Definition.UseDuration = BH_ConsumableDefaults::SapUseSeconds;
 	Definition.EffectKind = EBH_ConsumableEffectKind::HealOverTime;
+	Definition.bRefuseAtFullHealth = true;
 	Definition.HealFractionOfMaxHealth = BH_ConsumableDefaults::SapHealFraction;
 	Definition.HealDuration = BH_ConsumableDefaults::SapHealSeconds;
 	return Definition;
@@ -42,6 +46,7 @@ FBH_ConsumableDefinition UBH_ConsumableLibrary::MakeIncenseDefinition()
 	Definition.Montage = TSoftObjectPtr<UAnimMontage>(FSoftObjectPath(BH_ConsumableDefaults::CenserMontagePath));
 	Definition.UseDuration = BH_ConsumableDefaults::IncenseUseSeconds;
 	Definition.EffectKind = EBH_ConsumableEffectKind::DeploySanctuary;
+	Definition.bRefuseAtFullHealth = false;
 	Definition.SanctuaryRadius = BH_ConsumableDefaults::IncenseRadius;
 	Definition.SanctuaryDuration = BH_ConsumableDefaults::IncenseSeconds;
 	return Definition;
@@ -83,14 +88,92 @@ bool UBH_ConsumableLibrary::FindDefinition(TSubclassOf<UNarrativeItem> ItemClass
 	return false;
 }
 
+bool UBH_ConsumableLibrary::IsAtFullHealth(const APawn* Pawn)
+{
+	const UAbilitySystemComponent* ASC = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(Pawn);
+	if (!ASC || !ASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetHealthAttribute())
+		|| !ASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetMaxHealthAttribute()))
+	{
+		return false;
+	}
+	const float Health = ASC->GetNumericAttribute(UAH_AttributeSet::GetHealthAttribute());
+	const float MaxHealth = ASC->GetNumericAttribute(UAH_AttributeSet::GetMaxHealthAttribute());
+	return MaxHealth > 0.f && Health >= MaxHealth - BH_ConsumableDefaults::FullHealthTolerance;
+}
+
+bool UBH_ConsumableLibrary::CheckUseAllowed(const APawn* Pawn, TSubclassOf<UNarrativeItem> ItemClass, const FBH_ConsumableDefinition& Definition, EBH_ConsumableRefusal& OutReason)
+{
+	OutReason = EBH_ConsumableRefusal::None;
+	if (!Pawn || !ItemClass)
+	{
+		OutReason = EBH_ConsumableRefusal::Unavailable;
+		return false;
+	}
+	if (UBH_LootLibrary::GetItemCount(Pawn->GetPlayerState(), ItemClass) < 1)
+	{
+		OutReason = EBH_ConsumableRefusal::NoneOwned;
+		return false;
+	}
+	if (Definition.bRefuseAtFullHealth && IsAtFullHealth(Pawn))
+	{
+		OutReason = EBH_ConsumableRefusal::AtFullHealth;
+		return false;
+	}
+	return true;
+}
+
+FText UBH_ConsumableLibrary::GetRefusalText(EBH_ConsumableRefusal Reason)
+{
+	switch (Reason)
+	{
+	case EBH_ConsumableRefusal::NoneOwned:
+		return NSLOCTEXT("BHConsumable", "RefusedNoneOwned", "You have none of that.");
+	case EBH_ConsumableRefusal::AtFullHealth:
+		return NSLOCTEXT("BHConsumable", "RefusedFullHealth", "You are already at full health.");
+	case EBH_ConsumableRefusal::Busy:
+		return NSLOCTEXT("BHConsumable", "RefusedBusy", "You can't do that right now.");
+	case EBH_ConsumableRefusal::Unavailable:
+		return NSLOCTEXT("BHConsumable", "RefusedUnavailable", "That can't be used.");
+	default:
+		return FText::GetEmpty();
+	}
+}
+
+void UBH_ConsumableLibrary::ReportRefusal(const APawn* Pawn, TSubclassOf<UNarrativeItem> ItemClass, EBH_ConsumableRefusal Reason)
+{
+	if (Reason == EBH_ConsumableRefusal::None)
+	{
+		return;
+	}
+	UE_LOG(LogBHConsumable, Log, TEXT("Consumable use refused for %s (%s): %s"), *GetNameSafe(Pawn), *GetNameSafe(ItemClass), *GetRefusalText(Reason).ToString());
+
+	ABH_PlayerState* OwnerState = Pawn ? Pawn->GetPlayerState<ABH_PlayerState>() : nullptr;
+	if (OwnerState)
+	{
+		OwnerState->NotifyConsumableUseRefused(ItemClass, Reason);
+	}
+}
+
 bool UBH_ConsumableLibrary::RequestUseConsumable(APawn* Pawn, TSubclassOf<UNarrativeItem> ItemClass)
 {
 	if (!Pawn || !ItemClass)
 	{
 		return false;
 	}
-	// Local pre-check (the inventory replicates to its owner): no item, no request.
-	if (UBH_LootLibrary::GetItemCount(Pawn->GetPlayerState(), ItemClass) < 1)
+	// Local pre-check (the inventory and the health attribute replicate to their owner): no item / Sap at full health = no request, no RPC.
+	FBH_ConsumableDefinition Definition;
+	const bool bHaveDefinition = FindDefinition(ItemClass, Definition);
+	EBH_ConsumableRefusal Refusal = EBH_ConsumableRefusal::None;
+	if (bHaveDefinition)
+	{
+		if (!CheckUseAllowed(Pawn, ItemClass, Definition, Refusal))
+		{
+			UE_LOG(LogBHConsumable, Log, TEXT("RequestUseConsumable: %s cannot use %s (reason %d)."), *GetNameSafe(Pawn), *GetNameSafe(ItemClass), static_cast<int32>(Refusal));
+			ReportRefusal(Pawn, ItemClass, Refusal);
+			return false;
+		}
+	}
+	else if (UBH_LootLibrary::GetItemCount(Pawn->GetPlayerState(), ItemClass) < 1)
 	{
 		UE_LOG(LogBHConsumable, Log, TEXT("RequestUseConsumable: %s has none of %s."), *GetNameSafe(Pawn), *GetNameSafe(ItemClass));
 		return false;
@@ -125,12 +208,41 @@ bool UBH_ConsumableLibrary::ActivateOnServer(APawn* Pawn, TSubclassOf<UNarrative
 		return false;
 	}
 
+	// Authoritative refusal check: nothing is sent, so nothing can be consumed.
+	FBH_ConsumableDefinition Definition;
+	if (FindDefinition(ItemClass, Definition))
+	{
+		EBH_ConsumableRefusal Refusal = EBH_ConsumableRefusal::None;
+		if (!CheckUseAllowed(Pawn, ItemClass, Definition, Refusal))
+		{
+			ReportRefusal(Pawn, ItemClass, Refusal);
+			return false;
+		}
+	}
+
 	FGameplayEventData Payload;
 	Payload.EventTag = TAG_Event_Consumable_Use.GetTag();
 	Payload.Instigator = Pawn;
 	Payload.Target = Pawn;
 	Payload.OptionalObject = ItemClass.Get();
-	return ASC->HandleGameplayEvent(TAG_Event_Consumable_Use.GetTag(), &Payload) > 0;
+	const int32 Triggered = ASC->HandleGameplayEvent(TAG_Event_Consumable_Use.GetTag(), &Payload);
+	if (Triggered > 0)
+	{
+		return true;
+	}
+
+	// HandleGameplayEvent logs nothing when every trigger is blocked, so say why: which of the ability's blocking tags the user holds, and
+	// whether the ability's asset tag is blocked by another ability (BlockAbilitiesWithTag).
+	FGameplayTagContainer Owned;
+	ASC->GetOwnedGameplayTags(Owned);
+	const UBH_GA_UseConsumable* AbilityCDO = GetDefault<UBH_GA_UseConsumable>();
+	const FGameplayTagContainer BlockedBy = AbilityCDO ? AbilityCDO->GetUseBlockedByTags() : FGameplayTagContainer();
+	const FGameplayTagContainer Holding = Owned.Filter(BlockedBy);
+	const bool bAbilityTagBlocked = ASC->AreAbilityTagsBlocked(FGameplayTagContainer(TAG_Ability_Consumable_Use.GetTag()));
+	UE_LOG(LogBHConsumable, Warning, TEXT("ActivateOnServer: %s use of %s triggered nothing. Held blocking tags: [%s]. Ability tag blocked by another ability: %s."),
+		*GetNameSafe(Pawn), *GetNameSafe(ItemClass), *Holding.ToStringSimple(), bAbilityTagBlocked ? TEXT("YES") : TEXT("no"));
+	ReportRefusal(Pawn, ItemClass, EBH_ConsumableRefusal::Busy);
+	return false;
 }
 
 bool UBH_ConsumableLibrary::ApplyConsumableEffect(AActor* Avatar, const FBH_ConsumableDefinition& Definition)

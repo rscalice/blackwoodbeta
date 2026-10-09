@@ -6,6 +6,15 @@
 // lands on Health - i.e. NOT for parried or blocked hits). Picks a directional
 // montage from the attacker's position, grants State.Combat.Staggered while it
 // plays, and interrupts any running attack / parry.
+//
+// Phase 11E safety (a client pawn hit by a raw melee damage GE stayed Staggered + MovementLocked forever):
+//   * ActivationOwnedTags (Staggered + MovementLocked) are ref-counted loose tags added once per activation and removed once per EndAbility.
+//     The ability is ServerInitiated with bRetriggerInstancedAbility, so a second hit while the first reaction still plays can activate the
+//     CLIENT copy twice without an EndAbility in between: two tag references, one removal, tags stuck. ActivateAbility now counts activations
+//     since the last EndAbility and gives back the surplus reference immediately.
+//   * MaxReactionSeconds is a hard cap on any single reaction (montage or fallback timer): if neither ever finishes, the ability ends itself.
+//   * After EndAbility, the owning client scrubs any Staggered reference that is still held although no reaction is running (this ability is
+//     the only source of State.Combat.Staggered) and gives the matching MovementLocked references back.
 
 #pragma once
 
@@ -93,6 +102,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReaction", meta = (ClampMin = "0.05"))
 	float FallbackStaggerDuration = 0.4f;
 
+	/** Safety cap: no reaction (stagger + movement lock) may last longer than this, whatever the montage or the timers do. Longest authored reaction is well under 2 s. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HitReaction", meta = (ClampMin = "0.5", ForceUnits = "s"))
+	float MaxReactionSeconds = 3.f;
+
 	/** Which side of Victim a hit from SourceLocation lands on. */
 	UFUNCTION(BlueprintPure, Category = "HitReaction")
 	static EBH_HitDirection ComputeHitDirection(const AActor* Victim, const FVector& SourceLocation);
@@ -108,6 +121,12 @@ private:
 
 	void FinishReaction();
 
+	/** The MaxReactionSeconds cap fired: end the reaction (logs a warning, because it means a montage / timer never finished). */
+	void OnSafetyTimeout();
+
+	/** Owning client only: removes Staggered / MovementLocked references that outlived the last reaction. */
+	void ScrubLeakedTags(const FGameplayAbilityActorInfo* ActorInfo);
+
 	UAnimMontage* GetMontageForDirection(EBH_HitDirection Direction) const;
 
 	/** True stance-specific lookup (nullptr when the current stance has no entry / montage). */
@@ -117,4 +136,8 @@ private:
 	TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
 
 	FTimerHandle FallbackTimerHandle;
+	FTimerHandle SafetyTimerHandle;
+
+	/** ActivateAbility calls since the last EndAbility. More than 1 = a re-activation without an end (extra tag references to give back). */
+	int32 OutstandingActivations = 0;
 };

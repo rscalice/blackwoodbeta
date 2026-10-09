@@ -49,6 +49,11 @@ UBH_GA_UseConsumable::UBH_GA_UseConsumable()
 	AbilityTriggers.Add(Trigger);
 }
 
+FGameplayTagContainer UBH_GA_UseConsumable::GetUseBlockedByTags() const
+{
+	return ActivationBlockedTags;
+}
+
 void UBH_GA_UseConsumable::ActivateAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
 	const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData)
 {
@@ -79,9 +84,19 @@ void UBH_GA_UseConsumable::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 
 		const APawn* AvatarPawn = Cast<APawn>(GetAvatarActorFromActorInfo());
 		APlayerState* PlayerState = AvatarPawn ? AvatarPawn->GetPlayerState() : nullptr;
-		if (!PlayerState || UBH_LootLibrary::GetItemCount(PlayerState, ActiveItemClass) < 1)
+		if (!PlayerState)
 		{
-			UE_LOG(LogBHUseConsumable, Log, TEXT("UseConsumable: %s has no %s."), *GetNameSafe(AvatarPawn), *GetNameSafe(ActiveItemClass));
+			UE_LOG(LogBHUseConsumable, Log, TEXT("UseConsumable: %s has no player state."), *GetNameSafe(AvatarPawn));
+			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+			return;
+		}
+
+		// Authoritative refusal check (item count, refuse-at-full-health) BEFORE anything is committed or consumed.
+		EBH_ConsumableRefusal Refusal = EBH_ConsumableRefusal::None;
+		if (!UBH_ConsumableLibrary::CheckUseAllowed(AvatarPawn, ActiveItemClass, ActiveDefinition, Refusal))
+		{
+			UE_LOG(LogBHUseConsumable, Log, TEXT("UseConsumable: %s refused to use %s (reason %d)."), *GetNameSafe(AvatarPawn), *GetNameSafe(ActiveItemClass), static_cast<int32>(Refusal));
+			UBH_ConsumableLibrary::ReportRefusal(AvatarPawn, ActiveItemClass, Refusal);
 			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 			return;
 		}
@@ -108,8 +123,18 @@ void UBH_GA_UseConsumable::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 		UAnimMontage* Montage = ActiveDefinition.Montage.LoadSynchronous();
 		if (Montage && Montage->GetPlayLength() > KINDA_SMALL_NUMBER)
 		{
-			// The clip lasts exactly UseSeconds whatever its authored length.
-			const float PlayRate = FMath::Clamp(Montage->GetPlayLength() / UseSeconds, 0.1f, 5.f);
+			// A montage auto-blends out over its last BlendOut seconds, so at a rate of Length / UseSeconds the pose is already fading
+			// for the last BlendOut seconds of the use (the client drink looked over at ~0.86 s of a 1.2 s use). Pick the rate so the
+			// blend-out STARTS when the use ends (the fade then plays over the effect landing), capped so the whole clip never exceeds
+			// UseSeconds + BlendOut.
+			const float Length = Montage->GetPlayLength();
+			const float BlendOut = FMath::Clamp(Montage->GetDefaultBlendOutTime(), 0.f, Length * 0.5f);
+			const float RateWholeClip = Length / (UseSeconds + BlendOut);
+			const float RateBlendAtEnd = FMath::Max(Length - BlendOut, 0.05f) / UseSeconds;
+			const float PlayRate = FMath::Clamp(FMath::Min(RateWholeClip, RateBlendAtEnd), 0.1f, 5.f);
+			UE_LOG(LogBHUseConsumable, Log, TEXT("UseConsumable: montage '%s' length %.2f s, blend-out %.2f s, use %.2f s -> play rate %.3f (%s)."),
+				*GetNameSafe(Montage), Length, BlendOut, UseSeconds, PlayRate, bAuthority ? TEXT("server") : TEXT("client"));
+
 			MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, Montage, PlayRate);
 			MontageTask->OnInterrupted.AddDynamic(this, &UBH_GA_UseConsumable::OnMontageInterrupted);
 			MontageTask->OnCancelled.AddDynamic(this, &UBH_GA_UseConsumable::OnMontageInterrupted);

@@ -32,6 +32,7 @@ public class BlackwoodHollowBeta : ModuleRules
 			"ProceduralMeshComponent", // weapon swing trails (UBH_WeaponTrailComponent)
 			"DeveloperSettings", // Phase 9: UBH_RPGSettings (Project Settings > Game > Blackwood Hollow RPG)
 			"PhysicsCore",       // Phase 10A: EPhysicalSurface / UPhysicalMaterial::DetermineSurfaceType (footstep surfaces)
+			"Narrative",         // Phase 11P: UNarrativePartyComponent / UNarrativeComponent (UBH_PartyComponent on ABH_GameState)
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]

@@ -6,6 +6,10 @@
 //                                     radial wheel (a client sends ServerUseConsumable, the host activates directly). Give yourself some first:
 //                                     bh.Loot.Give Sap 3
 //   bh.Blight.Set <0-100>             set the local player's Blight meter. 0 clears it, 100 saturates it (saturation damage, stagger, Blight Rot).
+//
+// WORLD CAVEAT (Phase 11E): with several PIE windows, a command sent through the tool bridge (pie_console_command) can run in the CLIENT
+// world while you are watching the host (or the other way round). Every message below names the world / net mode / pawn / inventory count it
+// used, so "nothing sent" in the host log with Sap in the host inventory is recognisable as "this ran in the other world".
 
 #include "Consumables/BH_ConsumableLibrary.h"
 #include "Interaction/BH_InteractorComponent.h"
@@ -32,13 +36,29 @@ namespace BH_ConsumableDebugCommands_Private
 		}
 	}
 
+	static const TCHAR* NetModeName(const UWorld* World)
+	{
+		if (!World)
+		{
+			return TEXT("no world");
+		}
+		switch (World->GetNetMode())
+		{
+		case NM_Standalone: return TEXT("Standalone");
+		case NM_DedicatedServer: return TEXT("DedicatedServer");
+		case NM_ListenServer: return TEXT("ListenServer(host)");
+		case NM_Client: return TEXT("Client");
+		default: return TEXT("?");
+		}
+	}
+
 	static APawn* GetLocalPawn(const UWorld* World, const TCHAR* CommandName)
 	{
 		const APlayerController* LocalPC = World ? World->GetFirstPlayerController() : nullptr;
 		APawn* LocalPawn = LocalPC ? LocalPC->GetPawn() : nullptr;
 		if (!LocalPawn)
 		{
-			Notify(World, CommandName, TEXT("refused, no local player pawn yet."));
+			Notify(World, CommandName, FString::Printf(TEXT("refused, no local player pawn yet (world '%s', %s)."), World ? *World->GetName() : TEXT("none"), NetModeName(World)));
 		}
 		return LocalPawn;
 	}
@@ -74,7 +94,11 @@ namespace BH_ConsumableDebugCommands_Private
 			}
 			if (!UBH_ConsumableLibrary::RequestUseConsumable(LocalPawn, ItemClass))
 			{
-				Notify(World, TEXT("bh.Consumable.Use"), TEXT("nothing sent, you have none of that item (bh.Loot.Give Sap 3) or the request was refused locally."));
+				// RequestUseConsumable already told the player WHY when it was a refusal (full health, none owned). This line adds the context
+				// that tells the two worlds apart.
+				const int32 Count = UBH_LootLibrary::GetItemCount(LocalPawn->GetPlayerState(), ItemClass);
+				Notify(World, TEXT("bh.Consumable.Use"), FString::Printf(TEXT("nothing sent. World '%s' (%s), pawn %s, %d x %s in THIS world's inventory. If you have it in the other PIE window, the command ran in this window's world (bh.Loot.Give Sap 3 here, or type it in the other window)."),
+					*World->GetName(), NetModeName(World), *GetNameSafe(LocalPawn), Count, *GetNameSafe(ItemClass)));
 			}
 		}));
 

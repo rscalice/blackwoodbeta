@@ -11,7 +11,7 @@
 //                            (UBH_PlayerDeathComponent::TryOpenReviveWindow); when it re-enters combat OnPartyCombatChanged(true)
 //                            fires (an in-progress revive is interrupted by the death component).
 //
-//   IS THE PARTY WIPED?      Every player pawn is dead. OnPartyWiped fires once per wipe (it re-arms when somebody is alive again).
+//   IS THE PARTY WIPED?      Every PARTY MEMBER's pawn is dead (Phase 11P: members come from UBH_PartyLibrary / ABH_GameState). OnPartyWiped fires once per wipe (it re-arms when somebody is alive again).
 //                            TODO(GDD 5.5): party wipe consequences - enemies reset, encounters do NOT. Nothing listens to this yet.
 //
 // Config (DefaultGame.ini, [/Script/BlackwoodHollowBeta.BH_PartyStateSubsystem]): OutOfCombatGrace, EvaluateInterval.
@@ -77,6 +77,8 @@ private:
 	void Evaluate();
 	void EvaluateWipe();
 	void OpenReviveWindows();
+	/** Server: mirrors the combat flag onto ABH_GameState. */
+	void PublishCombatState(bool bNowInCombat) const;
 	void HandleAggroTargetChanged(UBH_CombatIdentityComponent* Source, AActor* NewTarget);
 
 	/** Runs Fn for the death component of every player pawn (server). */

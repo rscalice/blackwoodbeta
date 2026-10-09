@@ -7,9 +7,11 @@
 // FBH_ConsumableDefinition (UBH_ConsumableLibrary::FindDefinition): montage, UseDuration, and the effect that lands at the end.
 //
 // SERVER (authority) flow:
-//   1. resolve item class + definition; refuse unless the player's inventory holds >= 1 (server-side check, the client is never trusted),
+//   1. resolve item class + definition; refuse (UBH_ConsumableLibrary::CheckUseAllowed) unless the player's inventory holds >= 1 and, for
+//      refuse-at-full-health consumables (Heartwood Sap), the user is below full health. The client is never trusted. A refusal is reported
+//      to the owning player (ABH_PlayerState::OnConsumableUseRefused) and nothing is consumed,
 //   2. CommitAbility, then REMOVE EXACTLY ONE item,
-//   3. play the montage (play rate scaled so it lasts exactly UseDuration) and wait UseDuration,
+//   3. play the montage (play rate scaled so the pose holds for the whole UseDuration) and wait UseDuration,
 //   4. apply the effect (heal over time / sanctuary) and end.
 // An interruption BEFORE step 4 (posture break, death-adjacent cancels) refunds the item. Dying while drinking does not refund.
 // The owning client runs the same ability (NetExecutionPolicy ServerInitiated, like the hit reaction) only to play the montage locally.
@@ -24,6 +26,7 @@
 
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
+#include "GameplayTagContainer.h"
 #include "Consumables/BH_ConsumableTypes.h"
 #include "BH_GA_UseConsumable.generated.h"
 
@@ -44,6 +47,9 @@ public:
 
 	virtual void EndAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled) override;
+
+	/** The tags that stop this ability from starting (ActivationBlockedTags is protected). Used by the "why did HandleGameplayEvent return 0" diagnostics. */
+	FGameplayTagContainer GetUseBlockedByTags() const;
 
 private:
 	/** The use time is over: server applies the effect, everybody ends. */

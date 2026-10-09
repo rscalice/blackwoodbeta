@@ -2,12 +2,15 @@
 
 #include "Player/BH_PartyStateSubsystem.h"
 #include "Player/BH_PlayerDeathComponent.h"
+#include "Player/BH_GameState.h"
+#include "Player/BH_PartyLibrary.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "Engine/World.h"
-#include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerState.h"
 #include "TimerManager.h"
 
 bool UBH_PartyStateSubsystem::ShouldCreateSubsystem(UObject* Outer) const
@@ -114,6 +117,7 @@ void UBH_PartyStateSubsystem::Evaluate()
 		if (!bInCombat)
 		{
 			bInCombat = true;
+			PublishCombatState(true);
 			UE_LOG(LogBHCombat, Log, TEXT("Party: in combat."));
 			OnPartyCombatChanged.Broadcast(true);
 		}
@@ -121,6 +125,7 @@ void UBH_PartyStateSubsystem::Evaluate()
 	else if (bInCombat && Now - LastEngagedTime >= OutOfCombatGrace)
 	{
 		bInCombat = false;
+		PublishCombatState(false);
 		UE_LOG(LogBHCombat, Log, TEXT("Party: out of combat."));
 		OnPartyCombatChanged.Broadcast(false);
 		OpenReviveWindows();
@@ -135,18 +140,23 @@ void UBH_PartyStateSubsystem::Evaluate()
 
 void UBH_PartyStateSubsystem::ForEachPlayerComponent(TFunctionRef<void(UBH_PlayerDeathComponent&)> Fn) const
 {
-	const UWorld* World = GetWorld();
-	if (!World)
+	// Party members only (UBH_PartyLibrary falls back to every player when there is no party game state).
+	UBH_PartyLibrary::ForEachPartyMember(this, [&Fn](APlayerState&, APawn* MemberPawn)
 	{
-		return;
-	}
-	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
-	{
-		const APlayerController* PC = It->Get();
-		if (UBH_PlayerDeathComponent* Comp = UBH_PlayerDeathComponent::Find(PC ? PC->GetPawn() : nullptr))
+		if (UBH_PlayerDeathComponent* Comp = UBH_PlayerDeathComponent::Find(MemberPawn))
 		{
 			Fn(*Comp);
 		}
+	});
+}
+
+void UBH_PartyStateSubsystem::PublishCombatState(bool bNowInCombat) const
+{
+	// Mirror to the replicated game state so clients (death prompt) can read it.
+	const UWorld* World = GetWorld();
+	if (ABH_GameState* PartyGameState = World ? World->GetGameState<ABH_GameState>() : nullptr)
+	{
+		PartyGameState->SetPartyInCombat(bNowInCombat);
 	}
 }
 
