@@ -39,6 +39,7 @@ public class BlackwoodHollowBeta : ModuleRules
 			"Slate",
 			"SlateCore",
 			"NavigationSystem",  // wave spawner: project spawn points onto the navmesh
+			"CoreOnline",        // Phase 11C: FUniqueNetIdWrapper::ToString (per-player loot keys)
 		});
 
 		// Uncomment if/when online features are used.
