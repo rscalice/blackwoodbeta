@@ -66,7 +66,7 @@ namespace BH_Footstep_Private
 				return EBH_ArmorWeightClass::Medium;
 			}
 		}
-		return EBH_ArmorWeightClass::Cloth; // no tag = Cloth
+		return EBH_ArmorWeightClass::Light; // no tag = Light
 	}
 }
 
@@ -174,7 +174,7 @@ void UBH_AN_Footstep::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase
 		UGameplayStatics::SpawnSoundAtLocation(World, Sound, Location, FRotator::ZeroRotator, Volume, Pitch, 0.f, Set->Attenuation);
 	}
 
-	// Armor layer (Cloth when the owner has no State.Armor.Weight.* tag).
+	// Armor layer (Light when the owner has no State.Armor.Weight.* tag).
 	const EBH_ArmorWeightClass Weight = GetOwnerArmorWeight(Owner);
 	float ArmorVolume = 0.f;
 	if (USoundBase* ArmorSound = Set->PickArmorSound(Weight, ArmorVolume))

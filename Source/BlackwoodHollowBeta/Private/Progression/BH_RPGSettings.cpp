@@ -3,6 +3,8 @@
 #include "Progression/BH_RPGSettings.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Audio/BH_FootstepSet.h"
+#include "Items/BH_ArmorItem.h"
+#include "Engine/SkeletalMesh.h"
 
 namespace BH_RPGSettings_Private
 {
@@ -25,6 +27,58 @@ UBH_RPGSettings::UBH_RPGSettings()
 	CategoryName = TEXT("Game");
 	PlayerScalingTable = TSoftObjectPtr<UCurveTable>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/Data/Scaling/CT_PlayerScaling.CT_PlayerScaling")));
 	EnemyScalingTable = TSoftObjectPtr<UCurveTable>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/Data/Scaling/CT_EnemyScaling.CT_EnemyScaling")));
+
+	// Starting outfit (Phase 11E): the BasicCloth chest / pants / boots. No helm, no gloves.
+	auto AddOutfit = [this](EBH_EquipSlot Slot, const TCHAR* MeshPath)
+	{
+		FBH_StartingOutfitPiece Piece;
+		Piece.Slot = Slot;
+		Piece.Visual.SkeletalMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(MeshPath));
+		StartingOutfit.Add(Piece);
+	};
+	AddOutfit(EBH_EquipSlot::Chest, TEXT("/Game/Fab/BasicCloth/Chest.Chest"));
+	AddOutfit(EBH_EquipSlot::Legs, TEXT("/Game/Fab/BasicCloth/Pants.Pants"));
+	AddOutfit(EBH_EquipSlot::Feet, TEXT("/Game/Fab/BasicCloth/Boots.Boots"));
+
+	// bh.Armor.Give sets: item Blueprints /Game/BlackwoodHollow/Items/Armor/BI_Armor_<Prefix>_<Helm|Gloves|Chest|Pants|Boots>.
+	auto AddDebugSet = [this](const TCHAR* SetName, const TCHAR* Prefix)
+	{
+		FBH_ArmorDebugSet DebugSet;
+		DebugSet.SetName = FName(SetName);
+		for (const TCHAR* Piece : { TEXT("Helm"), TEXT("Gloves"), TEXT("Chest"), TEXT("Pants"), TEXT("Boots") })
+		{
+			const FString ClassPath = FString::Printf(TEXT("/Game/BlackwoodHollow/Items/Armor/BI_Armor_%s_%s.BI_Armor_%s_%s_C"), Prefix, Piece, Prefix, Piece);
+			DebugSet.Pieces.Add(TSoftClassPtr<UBH_ArmorItem>(FSoftObjectPath(ClassPath)));
+		}
+		DebugArmorSets.Add(DebugSet);
+	};
+	AddDebugSet(TEXT("Light"), TEXT("Vanguard"));
+	AddDebugSet(TEXT("Medium"), TEXT("Medium"));
+	AddDebugSet(TEXT("Heavy"), TEXT("Heavy"));
+}
+
+const FBH_ArmorVisual* UBH_RPGSettings::FindStartingOutfitVisual(EBH_EquipSlot Slot) const
+{
+	for (const FBH_StartingOutfitPiece& Piece : StartingOutfit)
+	{
+		if (Piece.Slot == Slot && Piece.Visual.HasMesh())
+		{
+			return &Piece.Visual;
+		}
+	}
+	return nullptr;
+}
+
+const FBH_ArmorDebugSet* UBH_RPGSettings::FindDebugArmorSet(const FString& SetName) const
+{
+	for (const FBH_ArmorDebugSet& DebugSet : DebugArmorSets)
+	{
+		if (DebugSet.SetName.ToString().Equals(SetName, ESearchCase::IgnoreCase))
+		{
+			return &DebugSet;
+		}
+	}
+	return nullptr;
 }
 
 const UBH_RPGSettings* UBH_RPGSettings::Get()
@@ -43,7 +97,7 @@ float UBH_RPGSettings::GetStaminaRegenMultiplier(EBH_ArmorWeightClass WeightClas
 	{
 	case EBH_ArmorWeightClass::Medium: return MediumStaminaRegenMultiplier;
 	case EBH_ArmorWeightClass::Heavy:  return HeavyStaminaRegenMultiplier;
-	default:                           return ClothStaminaRegenMultiplier;
+	default:                           return LightStaminaRegenMultiplier;
 	}
 }
 
@@ -53,7 +107,7 @@ float UBH_RPGSettings::GetDodgeDistanceMultiplier(EBH_ArmorWeightClass WeightCla
 	{
 	case EBH_ArmorWeightClass::Medium: return MediumDodgeDistanceMultiplier;
 	case EBH_ArmorWeightClass::Heavy:  return HeavyDodgeDistanceMultiplier;
-	default:                           return ClothDodgeDistanceMultiplier;
+	default:                           return LightDodgeDistanceMultiplier;
 	}
 }
 

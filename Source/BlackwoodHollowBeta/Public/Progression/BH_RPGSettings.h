@@ -16,6 +16,7 @@
 #include "Engine/DeveloperSettings.h"
 #include "Engine/CurveTable.h"
 #include "Items/BH_EquipmentTypes.h"
+#include "Items/BH_ArmorVisualTypes.h"
 #include "BH_RPGSettings.generated.h"
 
 class UBH_FootstepSet;
@@ -72,11 +73,11 @@ public:
 
 	// -- Armor weight class (the heaviest equipped piece decides) --------------------------------
 
-	UPROPERTY(Config, EditAnywhere, Category = "Armor Weight|Cloth", meta = (ClampMin = "0.05"))
-	float ClothStaminaRegenMultiplier = 1.0f;
+	UPROPERTY(Config, EditAnywhere, Category = "Armor Weight|Light", meta = (ClampMin = "0.05"))
+	float LightStaminaRegenMultiplier = 1.0f;
 
-	UPROPERTY(Config, EditAnywhere, Category = "Armor Weight|Cloth", meta = (ClampMin = "0.05"))
-	float ClothDodgeDistanceMultiplier = 1.0f;
+	UPROPERTY(Config, EditAnywhere, Category = "Armor Weight|Light", meta = (ClampMin = "0.05"))
+	float LightDodgeDistanceMultiplier = 1.0f;
 
 	UPROPERTY(Config, EditAnywhere, Category = "Armor Weight|Medium", meta = (ClampMin = "0.05"))
 	float MediumStaminaRegenMultiplier = 0.85f;
@@ -95,6 +96,25 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|RPG")
 	float GetDodgeDistanceMultiplier(EBH_ArmorWeightClass WeightClass) const;
+
+	// -- Armor visuals (Phase 11E) ----------------------------------------------------------------
+
+	/**
+	 * Cosmetic starting outfit: shown in any slot with no armor equipped (or whose equipped piece has no visual). Head and Arms are empty on
+	 * purpose (no helm, no gloves). Defaults: the BasicCloth chest / pants / boots.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Armor Visuals")
+	TArray<FBH_StartingOutfitPiece> StartingOutfit;
+
+	/** Sets the bh.Armor.Give <Light|Medium|Heavy> debug command grants and equips (item Blueprint classes, one per slot). Debug builds only. */
+	UPROPERTY(Config, EditAnywhere, Category = "Armor Visuals|Debug")
+	TArray<FBH_ArmorDebugSet> DebugArmorSets;
+
+	/** First starting-outfit visual with a mesh for Slot, or nullptr. */
+	const FBH_ArmorVisual* FindStartingOutfitVisual(EBH_EquipSlot Slot) const;
+
+	/** The debug set called SetName (case-insensitive), or nullptr. */
+	const FBH_ArmorDebugSet* FindDebugArmorSet(const FString& SetName) const;
 
 	// -- Lookups ------------------------------------------------------------------------------
 

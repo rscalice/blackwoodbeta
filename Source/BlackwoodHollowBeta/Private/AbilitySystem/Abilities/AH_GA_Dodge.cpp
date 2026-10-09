@@ -175,7 +175,7 @@ void UAH_GA_Dodge::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 		}
 
 		// Armor weight shortens the roll (State.Armor.Weight.* is granted by UBH_LoadoutComponent's weight effect).
-		EBH_ArmorWeightClass ArmorWeight = EBH_ArmorWeightClass::Cloth;
+		EBH_ArmorWeightClass ArmorWeight = EBH_ArmorWeightClass::Light;
 		if (const UAbilitySystemComponent* OwnerASC = GetAbilitySystemComponentFromActorInfo())
 		{
 			if (OwnerASC->HasMatchingGameplayTag(TAG_State_Armor_Weight_Heavy))

@@ -12,7 +12,7 @@ class UBH_FootstepSet;
 /**
  * Traces the ground under the foot (ECC_Visibility, ignoring the owner), reads the hit physical material's surface and plays
  * that surface's sound for Event at the hit point, plus the armor layer for the owner's heaviest armor weight class
- * (State.Armor.Weight.Heavy / .Medium tags on the owner's ASC; no tag = Cloth) and the surface's optional ImpactFX.
+ * (State.Armor.Weight.Heavy / .Medium tags on the owner's ASC; no tag = Light) and the surface's optional ImpactFX.
  *
  * Sounds, volumes, trace distances and the retrigger guard come from the FootstepSet (this notify's override, else
  * UBH_RPGSettings::DefaultFootstepSet). Event = Combat multiplies the volume by the set's CombatVolumeMultiplier (0.33).

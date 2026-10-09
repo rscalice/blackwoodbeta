@@ -32,6 +32,7 @@ class UBH_StanceComponent;
 class UBH_StanceMovementProfile;
 class UBH_PlayerDeathComponent;
 class UBH_InteractorComponent;
+class UBH_ArmorVisualComponent;
 class UGameplayAbility;
 class UInputAction;
 class UInputMappingContext;
@@ -67,6 +68,10 @@ public:
 	/** Phase 11C: the player's side of interaction (focus scan, prompt, hold RPCs). Only does anything on a locally controlled player pawn. */
 	UFUNCTION(BlueprintPure, Category = "BH|Interaction")
 	UBH_InteractorComponent* GetInteractorComponent() const { return InteractorComponent; }
+
+	/** Phase 11E: builds the equipped armor (or the starting outfit) on the MetaHuman visual body, locally on every machine. Cosmetic only. */
+	UFUNCTION(BlueprintPure, Category = "BH|Armor")
+	UBH_ArmorVisualComponent* GetArmorVisualComponent() const { return ArmorVisualComponent; }
 
 	// -- IGenericTeamAgentInterface (replicated so clients resolve teams without a controller) --
 	virtual FGenericTeamId GetGenericTeamId() const override { return BH_CombatTeam::ToGenericTeamId(CombatTeam); }
@@ -251,6 +256,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Interaction")
 	TObjectPtr<UBH_InteractorComponent> InteractorComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Armor")
+	TObjectPtr<UBH_ArmorVisualComponent> ArmorVisualComponent;
 
 private:
 	/** Idempotent. */

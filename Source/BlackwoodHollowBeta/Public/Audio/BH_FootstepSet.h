@@ -49,7 +49,7 @@ struct BLACKWOODHOLLOWBETA_API FBH_SurfaceFootsteps
 	TSoftObjectPtr<UNiagaraSystem> ImpactFX;
 };
 
-/** Armor layer: extra rattle / cloth sounds played on top of the surface sound for one armor weight class. */
+/** Armor layer: extra rattle / foley sounds played on top of the surface sound for one armor weight class. */
 USTRUCT(BlueprintType)
 struct BLACKWOODHOLLOWBETA_API FBH_ArmorFoley
 {
@@ -80,7 +80,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surfaces")
 	FBH_SurfaceFootsteps DefaultSurface;
 
-	/** Extra layer by the heaviest equipped armor piece (Cloth = no State.Armor.Weight.* tag). Missing class = nothing. */
+	/** Extra layer by the heaviest equipped armor piece (Light = no State.Armor.Weight.* tag). Missing class = nothing. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Armor")
 	TMap<EBH_ArmorWeightClass, FBH_ArmorFoley> ArmorFoley;
 

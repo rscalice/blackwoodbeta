@@ -102,7 +102,8 @@ void UBH_LoadoutComponent::BeginPlay()
 		Equipment->RegisterComponent();
 	}
 
-	// No clothing meshes: armour visuals are out of scope. The visible mesh is the leader pose component.
+	// No clothing slots on purpose: Narrative's clothing path (UEquippableItem_Clothing::HandleEquip) then never attaches anything to the hidden
+	// gameplay mesh. Armor visuals are built by UBH_ArmorVisualComponent on the visible MetaHuman body. The leader pose component is only kept for API completeness.
 	USkeletalMeshComponent* Leader = nullptr;
 	if (ACharacter* Character = Cast<ACharacter>(Owner))
 	{
@@ -778,7 +779,7 @@ void UBH_LoadoutComponent::RefreshArmorStatMods()
 
 	// Armor weight: ONE infinite effect for the heaviest equipped class (stamina regen multiplier + weight tag).
 	// Re-applied only when the class changes; no armor equipped -> no effect.
-	EBH_ArmorWeightClass Weight = EBH_ArmorWeightClass::Cloth;
+	EBH_ArmorWeightClass Weight = EBH_ArmorWeightClass::Light;
 	const bool bHasArmor = GetEquippedArmorWeight(Weight);
 	const int32 DesiredIndex = bHasArmor ? static_cast<int32>(Weight) : -1;
 	const bool bHandleAlive = ArmorWeightHandle.IsValid() && ASC->GetActiveGameplayEffect(ArmorWeightHandle) != nullptr;
@@ -819,7 +820,7 @@ void UBH_LoadoutComponent::RefreshArmorStatMods()
 
 bool UBH_LoadoutComponent::GetEquippedArmorWeight(EBH_ArmorWeightClass& OutWeight) const
 {
-	OutWeight = EBH_ArmorWeightClass::Cloth;
+	OutWeight = EBH_ArmorWeightClass::Light;
 	const UNarrativeInventoryComponent* Inventory = GetInventory();
 	if (!Inventory)
 	{
@@ -939,9 +940,9 @@ FString UBH_LoadoutComponent::DescribeState() const
 	const bool bHasSet = GetActiveLoadoutSet(ActiveSet);
 	Out += FString::Printf(TEXT("AvailableStances = [%s] | Pose = %s | ActiveSet = %s\n"), *Stances, *UBH_CombatFunctionLibrary::GetCurrentOverlayPoseDisplayName(GetOwner()), bHasSet ? (ActiveSet == EBH_LoadoutSet::A ? TEXT("A") : TEXT("B")) : TEXT("none"));
 
-	EBH_ArmorWeightClass ArmorWeight = EBH_ArmorWeightClass::Cloth;
+	EBH_ArmorWeightClass ArmorWeight = EBH_ArmorWeightClass::Light;
 	const bool bArmorWorn = GetEquippedArmorWeight(ArmorWeight);
-	const TCHAR* ArmorWeightName = !bArmorWorn ? TEXT("none") : (ArmorWeight == EBH_ArmorWeightClass::Heavy) ? TEXT("Heavy") : (ArmorWeight == EBH_ArmorWeightClass::Medium) ? TEXT("Medium") : TEXT("Cloth");
+	const TCHAR* ArmorWeightName = !bArmorWorn ? TEXT("none") : (ArmorWeight == EBH_ArmorWeightClass::Heavy) ? TEXT("Heavy") : (ArmorWeight == EBH_ArmorWeightClass::Medium) ? TEXT("Medium") : TEXT("Light");
 	float RegenRate = 0.f;
 
 	if (const UAbilitySystemComponent* ASC = GetOwnerASC())
