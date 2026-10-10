@@ -4,7 +4,10 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/EngineTypes.h"
+#include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
+#include "Player/BH_GameState.h"
+#include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogBHBreakable, Log, All);
 
@@ -12,6 +15,7 @@ ABH_Breakable::ABH_Breakable()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
+	bAlwaysRelevant = true; // a handful of tiny actors; also the world flag covers a client that misses a change (#85)
 	SetNetUpdateFrequency(5.f);
 
 	BodyMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BodyMesh"));
@@ -31,6 +35,15 @@ void ABH_Breakable::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(ABH_Breakable, bBroken);
 }
 
+FName ABH_Breakable::GetResolvedBrokenFlag() const
+{
+	if (!BrokenWorldFlag.IsNone())
+	{
+		return BrokenWorldFlag;
+	}
+	return FName(*FString::Printf(TEXT("Breakable.%s"), *GetFName().ToString()));
+}
+
 void ABH_Breakable::BeginPlay()
 {
 	Super::BeginPlay();
@@ -38,10 +51,63 @@ void ABH_Breakable::BeginPlay()
 	{
 		Health = MaxHealth;
 	}
-	else if (bBroken)
+	RefreshBrokenState(); // the replicated bBroken as a first guess; the world flag takes over once the game state is found
+	TryBindGameState();
+}
+
+void ABH_Breakable::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	GetWorldTimerManager().ClearTimer(BindRetryTimer);
+	if (bBoundToGameState)
 	{
-		ApplyBrokenState();
+		if (ABH_GameState* BHGameState = ABH_GameState::Get(this))
+		{
+			BHGameState->OnWorldFlagChanged.RemoveDynamic(this, &ABH_Breakable::HandleWorldFlagChanged);
+		}
+		bBoundToGameState = false;
 	}
+	Super::EndPlay(EndPlayReason);
+}
+
+void ABH_Breakable::TryBindGameState()
+{
+	ABH_GameState* BHGameState = ABH_GameState::Get(this);
+	if (!BHGameState)
+	{
+		// The game state can arrive after the level actors begin play (always on a client): retry shortly.
+		GetWorldTimerManager().SetTimer(BindRetryTimer, this, &ABH_Breakable::TryBindGameState, 0.25f, false);
+		return;
+	}
+	if (!bBoundToGameState)
+	{
+		BHGameState->OnWorldFlagChanged.AddDynamic(this, &ABH_Breakable::HandleWorldFlagChanged);
+		bBoundToGameState = true;
+		UE_LOG(LogBHBreakable, Log, TEXT("%s watches world flag %s (%s)."), *GetNameSafe(this), *GetResolvedBrokenFlag().ToString(), GetNetMode() == NM_Client ? TEXT("client") : TEXT("server"));
+	}
+	if (GetNetMode() != NM_Client && !bBroken && BHGameState->HasWorldFlag(GetResolvedBrokenFlag()))
+	{
+		BreakNow(); // the flag was set before this actor began play (a reloaded cell on the server)
+		return;
+	}
+	RefreshBrokenState();
+}
+
+void ABH_Breakable::HandleWorldFlagChanged(FName Flag, bool bIsSet)
+{
+	if (bIsSet && Flag == GetResolvedBrokenFlag())
+	{
+		RefreshBrokenState();
+	}
+}
+
+bool ABH_Breakable::ComputeEffectiveBroken() const
+{
+	if (bBroken)
+	{
+		return true;
+	}
+	const ABH_GameState* BHGameState = ABH_GameState::Get(this);
+	return BHGameState && BHGameState->HasWorldFlag(GetResolvedBrokenFlag());
 }
 
 void ABH_Breakable::BH_ReceiveMeleeHit(AActor* Attacker, float DamageMultiplier, const FHitResult& Hit)
@@ -71,8 +137,12 @@ void ABH_Breakable::BreakNow()
 	}
 	Health = 0.f;
 	bBroken = true;
+	if (ABH_GameState* BHGameState = ABH_GameState::Get(this))
+	{
+		BHGameState->SetWorldFlag(GetResolvedBrokenFlag(), true); // reaches every client, in range or not
+	}
 	ForceNetUpdate();
-	OnRep_Broken(); // the server does not get the RepNotify
+	RefreshBrokenState(); // the server does not get the RepNotify
 }
 
 void ABH_Breakable::OnRep_Health()
@@ -82,15 +152,19 @@ void ABH_Breakable::OnRep_Health()
 
 void ABH_Breakable::OnRep_Broken()
 {
-	ApplyBrokenState();
-	BP_OnBrokenChanged(bBroken);
+	RefreshBrokenState();
 }
 
-void ABH_Breakable::ApplyBrokenState()
+void ABH_Breakable::RefreshBrokenState()
 {
-	if (!bBroken)
+	if (bAppliedBroken || !ComputeEffectiveBroken())
 	{
 		return;
+	}
+	bAppliedBroken = true;
+	if (GetNetMode() == NM_Client)
+	{
+		Health = 0.f; // a client that returns from out of range still holds the level default
 	}
 	SetActorEnableCollision(false);
 	if (BodyMesh)
@@ -102,4 +176,5 @@ void ABH_Breakable::ApplyBrokenState()
 	{
 		SetActorHiddenInGame(true);
 	}
+	BP_OnBrokenChanged(true);
 }

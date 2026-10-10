@@ -97,8 +97,10 @@ UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_Greatsword, "Stance.Weapon.Grea
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_SwordShield, "Stance.Weapon.SwordShield", "Sword and shield stance (legacy key SwordAndShield).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_DualSword, "Stance.Weapon.DualSword", "Dual sword stance.");
 
+// Phase 12F-2: variant key of Sword & Shield (sword without a shield). Never a CurrentStance.
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_Sword, "Stance.Weapon.Sword", "Lookup key for the one-handed Sword variant of Sword & Shield (loadout mesh, guard / parry montages, block drain, melee ability). Never a CurrentStance.");
+
 // Phase 8D placeholder stances
-UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_OneHandedSword, "Stance.Weapon.OneHandedSword", "Placeholder: one-handed sword stance (not implemented yet).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_Bow, "Stance.Weapon.Bow", "Placeholder: bow stance (not implemented yet).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Stance_Weapon_Crossbow, "Stance.Weapon.Crossbow", "Placeholder: crossbow stance (not implemented yet).");
 
@@ -137,7 +139,7 @@ namespace BH_Stance
 		if (Name.Equals(TEXT("Unarmed"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Unarmed; }
 		if (Name.Equals(TEXT("Greatsword"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Greatsword; }
 		if (Name.Equals(TEXT("DualSword"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_DualSword; }
-		if (Name.Equals(TEXT("OneHandedSword"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_OneHandedSword; }
+		if (Name.Equals(TEXT("Sword"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Sword; }
 		if (Name.Equals(TEXT("Bow"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Bow; }
 		if (Name.Equals(TEXT("Crossbow"), ESearchCase::IgnoreCase)) { return TAG_Stance_Weapon_Crossbow; }
 		if (Name.Equals(TEXT("SwordAndShield"), ESearchCase::IgnoreCase)
@@ -155,7 +157,7 @@ namespace BH_Stance
 		if (StanceTag == TAG_Stance_Weapon_Greatsword.GetTag()) { return FName(TEXT("Greatsword")); }
 		if (StanceTag == TAG_Stance_Weapon_SwordShield.GetTag()) { return FName(TEXT("SwordAndShield")); }
 		if (StanceTag == TAG_Stance_Weapon_DualSword.GetTag()) { return FName(TEXT("DualSword")); }
-		if (StanceTag == TAG_Stance_Weapon_OneHandedSword.GetTag()) { return FName(TEXT("OneHandedSword")); }
+		if (StanceTag == TAG_Stance_Weapon_Sword.GetTag()) { return FName(TEXT("Sword")); }
 		if (StanceTag == TAG_Stance_Weapon_Bow.GetTag()) { return FName(TEXT("Bow")); }
 		if (StanceTag == TAG_Stance_Weapon_Crossbow.GetTag()) { return FName(TEXT("Crossbow")); }
 		return NAME_None;
@@ -164,9 +166,13 @@ namespace BH_Stance
 	bool IsPlaceholderStance(FGameplayTag Tag)
 	{
 		return Tag.IsValid()
-			&& (Tag == TAG_Stance_Weapon_OneHandedSword.GetTag()
-				|| Tag == TAG_Stance_Weapon_Bow.GetTag()
+			&& (Tag == TAG_Stance_Weapon_Bow.GetTag()
 				|| Tag == TAG_Stance_Weapon_Crossbow.GetTag());
+	}
+
+	bool IsVariantKeyStance(FGameplayTag Tag)
+	{
+		return Tag.IsValid() && Tag == TAG_Stance_Weapon_Sword.GetTag();
 	}
 
 	bool IsWeaponStance(FGameplayTag Tag)

@@ -87,6 +87,27 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|Stance")
 	FName GetCurrentStanceLegacyName() const;
 
+	// ---- Sword variant (Phase 12F-2) ----------------------------------------------------------------------------
+	// The one-handed Sword is Sword & Shield with the off hand empty. CurrentStance stays SwordShield (so the animation
+	// Blueprint, locomotion chooser, dodge, hit reactions, posture break and draw / sheath are shared); this is only a
+	// lookup KEY (Stance.Weapon.Sword) for what differs: loadout meshes, guard / parry montages, block drain, melee ability,
+	// no shield bash. Derived from the replicated inventory, so it is identical on every machine.
+
+	/** True while the stance is SwordShield and the active loadout set holds a main-hand weapon but nothing in the off hand. */
+	UFUNCTION(BlueprintPure, Category = "BH|Stance")
+	bool IsSwordVariant() const;
+
+	/** Stance.Weapon.Sword while IsSwordVariant(), else CurrentStance. Use for per-stance lookups that the Sword overrides. */
+	UFUNCTION(BlueprintPure, Category = "BH|Stance")
+	FGameplayTag GetStanceKey() const;
+
+	/** GetStanceKey() of Actor, or Stance.Weapon.Unarmed without a stance component. Game thread only. */
+	UFUNCTION(BlueprintPure, Category = "BH|Stance")
+	static FGameplayTag GetStanceKeyOf(const AActor* Actor);
+
+	/** Re-evaluates the Sword variant; when it changed, respawns the weapon meshes for the new key. Called by the loadout reconcile on every machine. */
+	void RefreshWeaponVariant();
+
 	UFUNCTION(BlueprintPure, Category = "BH|Stance")
 	bool IsStanceAllowed(FGameplayTag Stance) const;
 
@@ -98,7 +119,7 @@ public:
 	static FGameplayTag GetStanceTagOf(const AActor* Actor);
 
 	/**
-	 * Phase 8D: reports that a placeholder stance (OneHandedSword / Bow / Crossbow) was picked. Logs a Warning and shows
+	 * Phase 8D: reports that a placeholder stance (Bow / Crossbow) was picked. Logs a Warning and shows
 	 * "Stance not yet implemented: <Name>" on screen (local machine, development builds). The current stance is left unchanged.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "BH|Stance")
@@ -183,6 +204,9 @@ private:
 	void ApplyStanceLocal(FGameplayTag Old, FGameplayTag New);
 	void MirrorLooseTag(FGameplayTag Old, FGameplayTag New) const;
 	void EquipWeaponsFor(FGameplayTag New);
+
+	/** The variant the current weapon meshes were spawned for (RefreshWeaponVariant compares against it). */
+	bool bSwordVariantApplied = false;
 	void ApplyWeaponAttachment(bool bInHand);
 	void OnWeaponTransitionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 	UAbilitySystemComponent* ResolveASC() const;

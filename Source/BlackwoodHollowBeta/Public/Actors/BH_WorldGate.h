@@ -4,9 +4,13 @@
 // The Island 1 Span Gate. It does not know WHY it opens: it opens when the world flag WorldFlagName (default "Island1.SpanGateOpen") is set on
 // ABH_GameState. Phase 14 sets that flag from the quest; until then bh.World.OpenSpanGate does.
 //
-// The SERVER listens to ABH_GameState::OnWorldFlagChanged, sets the replicated bOpen, and every machine reacts in OnRep_Open (the server calls it
-// directly): the actor is hidden, collision goes off, it stops blocking navigation, and BP_OnGateOpenChanged fires for a slide / dissolve effect.
-// A late joiner receives bOpen with the actor, so it opens for them too. The world flag, and so the open gate, survives a party wipe.
+// WORLD FLAG IS THE SOURCE OF TRUTH (#85). ABH_GameState is always relevant and its flag list replicates to every client, whereas this actor's
+// own bOpen can be missed by a client that was out of range (or had its World Partition cell unloaded) when it changed. So EVERY machine reads
+// the flag in BeginPlay and follows OnWorldFlagChanged (retrying until the game state exists, it can arrive after the level actors on a client).
+// The SERVER additionally mirrors the flag into the replicated bOpen (kept for compatibility, and as the fallback when there is no BH game
+// state). The actor is also bAlwaysRelevant (few and tiny), as belt and braces for the in-range case.
+// On a change the actor is hidden, collision goes off, it stops blocking navigation, and BP_OnGateOpenChanged fires for a slide / dissolve effect.
+// The world flag, and so the open gate, survives a party wipe.
 //
 // NAVIGATION: as with ABH_Breakable, the gap only enters the navmesh at runtime when the RecastNavMesh generates Dynamically.
 //
@@ -42,7 +46,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|WorldGate")
 	bool IsOpen() const { return bOpen; }
 
-	/** Both machines, after bOpen changed (also for a late joiner). For a slide / dissolve effect. */
+	/** Both machines, when the open state changed (also for a client that returns after missing the change). For a slide / dissolve effect. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "BH|WorldGate")
 	void BP_OnGateOpenChanged(bool bNewOpen);
 
@@ -54,25 +58,32 @@ protected:
 	TObjectPtr<UStaticMeshComponent> BodyMesh;
 
 private:
-	/** Delegate target for ABH_GameState::OnWorldFlagChanged (server). */
+	/** Delegate target for ABH_GameState::OnWorldFlagChanged (any machine). */
 	UFUNCTION()
 	void HandleWorldFlagChanged(FName Flag, bool bIsSet);
 
 	UFUNCTION()
 	void OnRep_Open();
 
-	/** Server: binds to the game state, or re-arms a retry while it is not there yet. */
+	/** Any machine: binds to the game state, or re-arms a retry while it is not there yet. */
 	void TryBindGameState();
 
-	/** SERVER. */
+	/** SERVER. Mirrors the world flag into the replicated bOpen. */
 	void SetOpen(bool bNewOpen);
 
-	/** Applies bOpen on this machine (collision, nav, visibility). */
-	void ApplyOpenState();
+	/** The open state this machine should show: the world flag when a game state exists, otherwise the replicated bOpen. */
+	bool ComputeEffectiveOpen() const;
+
+	/** Recomputes the effective state and, when it changed, applies it (collision, nav, visibility) and fires BP_OnGateOpenChanged. */
+	void RefreshOpenState();
 
 	UPROPERTY(ReplicatedUsing = OnRep_Open)
 	bool bOpen = false;
 
 	FTimerHandle BindRetryTimer;
 	bool bBoundToGameState = false;
+
+	/** What this machine currently shows (local, not replicated). */
+	bool bAppliedOpen = false;
+	bool bHasApplied = false;
 };

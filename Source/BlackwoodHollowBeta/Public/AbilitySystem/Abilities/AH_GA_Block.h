@@ -59,6 +59,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block", meta = (ClampMin = "0.1"))
 	float MontagePlayRate = 1.f;
 
+	/** Stamina drain scale while the one-handed Sword variant guards (no shield; Sword & Shield is 0.6). Tuned in claude/balance.md. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block", meta = (ClampMin = "0"))
+	float SwordBlockStaminaScale = 0.9f;
+
 	/** Fraction of incoming damage removed by a successful block (1 = no chip damage). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float DamageReduction = 0.8f;

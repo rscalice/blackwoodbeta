@@ -120,8 +120,11 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Unarmed
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Greatsword);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_SwordShield);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_DualSword);
+// Phase 12F-2: the one-handed Sword is a VARIANT of Sword & Shield (same locomotion / dodge / hit reactions). This tag is only a
+// lookup KEY (loadout mesh entry, guard / parry montages, block drain, melee ability); it is never a CurrentStance.
+// See UBH_StanceComponent::GetStanceKey and BH_Stance::IsVariantKeyStance.
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Sword);
 // Phase 8D placeholder stances (selectable in the UI but not implemented yet; see BH_Stance::IsPlaceholderStance)
-BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_OneHandedSword);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Bow);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Stance_Weapon_Crossbow);
 
@@ -179,7 +182,10 @@ namespace BH_Stance
 	/** Tag is a child of Stance.Weapon (the parent itself does not count). */
 	BLACKWOODHOLLOWBETA_API bool IsWeaponStance(FGameplayTag Tag);
 
-	/** Phase 8D: OneHandedSword / Bow / Crossbow are listed in the UI but have no abilities or animations yet. */
+	/** True for the variant KEY tags (Stance.Weapon.Sword): valid lookup keys, never a stance that can be set. */
+BLACKWOODHOLLOWBETA_API bool IsVariantKeyStance(FGameplayTag Tag);
+
+/** Phase 8D: Bow / Crossbow are listed in the UI but have no abilities or animations yet. */
 	BLACKWOODHOLLOWBETA_API bool IsPlaceholderStance(FGameplayTag Tag);
 
 	/** Unarmed, Greatsword, SwordShield, DualSword (implemented stances only; placeholders are excluded). */

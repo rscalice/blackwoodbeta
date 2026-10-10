@@ -33,10 +33,8 @@ UBH_StanceRadialComponent::UBH_StanceRadialComponent()
 	StanceDisplayNamesByTag.Add(TAG_Stance_Weapon_DualSword.GetTag(), NSLOCTEXT("BHStance", "DS", "Dual Swords"));
 	StanceDisplayNamesByTag.Add(TAG_Stance_Weapon_Greatsword.GetTag(), NSLOCTEXT("BHStance", "GS", "Greatsword"));
 
-	StanceDisplayNames.Add(FName(TEXT("OneHandedSword")), NSLOCTEXT("BHStance", "Name_1H", "One-Handed Sword"));
 	StanceDisplayNames.Add(FName(TEXT("Bow")), NSLOCTEXT("BHStance", "Name_Bow", "Bow"));
 	StanceDisplayNames.Add(FName(TEXT("Crossbow")), NSLOCTEXT("BHStance", "Name_Crossbow", "Crossbow"));
-	StanceDisplayNamesByTag.Add(TAG_Stance_Weapon_OneHandedSword.GetTag(), NSLOCTEXT("BHStance", "Name_1H", "One-Handed Sword"));
 	StanceDisplayNamesByTag.Add(TAG_Stance_Weapon_Bow.GetTag(), NSLOCTEXT("BHStance", "Name_Bow", "Bow"));
 	StanceDisplayNamesByTag.Add(TAG_Stance_Weapon_Crossbow.GetTag(), NSLOCTEXT("BHStance", "Name_Crossbow", "Crossbow"));
 
@@ -179,7 +177,7 @@ void UBH_StanceRadialComponent::RebuildFromStances(const TArray<FName>& Stances)
 	TArray<FName> WheelStances = Stances;
 	if (bIncludePlaceholderStancesInWheel)
 	{
-		for (const FGameplayTag& Placeholder : { TAG_Stance_Weapon_OneHandedSword.GetTag(), TAG_Stance_Weapon_Bow.GetTag(), TAG_Stance_Weapon_Crossbow.GetTag() })
+		for (const FGameplayTag& Placeholder : { TAG_Stance_Weapon_Bow.GetTag(), TAG_Stance_Weapon_Crossbow.GetTag() })
 		{
 			WheelStances.AddUnique(BH_Stance::ToLegacyName(Placeholder));
 		}

@@ -103,6 +103,19 @@ UAnimMontage* UAH_GA_Parry::ResolveParryMontage() const
 	const FGameplayTag StanceTag = UBH_StanceComponent::FindStanceComponent(Avatar) ? UBH_StanceComponent::GetStanceTagOf(Avatar) : FGameplayTag();
 
 	UAnimMontage* Resolved = ParryMontage;
+	// Phase 12F-2: the stance KEY first (Stance.Weapon.Sword for the one-handed variant), then the stance itself.
+	const FGameplayTag KeyTag = UBH_StanceComponent::FindStanceComponent(Avatar) ? UBH_StanceComponent::GetStanceKeyOf(Avatar) : FGameplayTag();
+	if (KeyTag.IsValid() && KeyTag != StanceTag)
+	{
+		if (const TObjectPtr<UAnimMontage>* KeyFound = StanceParryMontagesByTag.Find(KeyTag))
+		{
+			if (*KeyFound)
+			{
+				UE_LOG(LogBHCombat, Verbose, TEXT("Parry: %s key=%s montage=%s"), *GetNameSafe(Avatar), *KeyTag.ToString(), *GetNameSafe(KeyFound->Get()));
+				return KeyFound->Get();
+			}
+		}
+	}
 	if (StanceTag.IsValid())
 	{
 		if (const TObjectPtr<UAnimMontage>* Found = StanceParryMontagesByTag.Find(StanceTag))

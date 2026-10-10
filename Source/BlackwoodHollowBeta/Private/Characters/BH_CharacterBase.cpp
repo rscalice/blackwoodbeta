@@ -8,6 +8,7 @@
 #include "Player/BH_PlayerDeathComponent.h"
 #include "Interaction/BH_InteractorComponent.h"
 #include "Items/BH_ArmorVisualComponent.h"
+#include "Combat/BH_WeaponVisualComponent.h"
 #include "Combat/BH_CombatFeel.h"
 #include "Consumables/BH_GA_UseConsumable.h"
 #include "Characters/BH_StanceMovementProfile.h"
@@ -44,6 +45,7 @@ ABH_CharacterBase::ABH_CharacterBase(const FObjectInitializer& ObjectInitializer
 	DeathComponent = CreateDefaultSubobject<UBH_PlayerDeathComponent>(TEXT("DeathComponent"));
 	InteractorComponent = CreateDefaultSubobject<UBH_InteractorComponent>(TEXT("InteractorComponent"));
 	ArmorVisualComponent = CreateDefaultSubobject<UBH_ArmorVisualComponent>(TEXT("ArmorVisualComponent"));
+	WeaponVisualComponent = CreateDefaultSubobject<UBH_WeaponVisualComponent>(TEXT("WeaponVisualComponent"));
 
 	// Attack telegraph decals must not tint the character itself.
 	if (USkeletalMeshComponent* SkelMesh = GetMesh())

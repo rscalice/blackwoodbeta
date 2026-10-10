@@ -111,7 +111,13 @@ void UAH_GA_Block::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 	{
 		AActor* StanceAvatar = ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr;
 		const FGameplayTag StanceTag = UBH_StanceComponent::FindStanceComponent(StanceAvatar) ? UBH_StanceComponent::GetStanceTagOf(StanceAvatar) : FGameplayTag();
-		const TObjectPtr<UAnimMontage>* TagFound = StanceTag.IsValid() ? StanceGuardMontagesByTag.Find(StanceTag) : nullptr;
+		// Phase 12F-2: the stance KEY first (Stance.Weapon.Sword for the one-handed variant), then the stance itself.
+		const FGameplayTag KeyTag = UBH_StanceComponent::FindStanceComponent(StanceAvatar) ? UBH_StanceComponent::GetStanceKeyOf(StanceAvatar) : FGameplayTag();
+		const TObjectPtr<UAnimMontage>* TagFound = KeyTag.IsValid() ? StanceGuardMontagesByTag.Find(KeyTag) : nullptr;
+		if (!(TagFound && *TagFound))
+		{
+			TagFound = StanceTag.IsValid() ? StanceGuardMontagesByTag.Find(StanceTag) : nullptr;
+		}
 		if (TagFound && *TagFound)
 		{
 			ActiveGuardMontage = *TagFound;
@@ -210,6 +216,7 @@ void UAH_GA_Block::DrainStaminaForBlock(float PostureCost)
 				if (StanceTag.MatchesTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Stance.Weapon.SwordShield")), false))) { Scale = 0.6f; }
 				else if (StanceTag.MatchesTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Stance.Weapon.Greatsword")), false))) { Scale = 1.0f; }
 				else if (StanceTag.MatchesTagExact(FGameplayTag::RequestGameplayTag(FName(TEXT("Stance.Weapon.DualSword")), false))) { Scale = 1.3f; }
+				if (UBH_StanceComponent::GetStanceKeyOf(StanceAvatar) == TAG_Stance_Weapon_Sword.GetTag()) { Scale = SwordBlockStaminaScale; } // no shield to soak the hit
 			}
 		}
 	}

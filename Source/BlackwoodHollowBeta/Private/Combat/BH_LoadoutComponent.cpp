@@ -873,6 +873,10 @@ void UBH_LoadoutComponent::Reconcile()
 		TryGrantStarterLoadout();
 	}
 	EvaluateAvailableStances();
+	if (UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(GetOwner()))
+	{
+		Stance->RefreshWeaponVariant(); // Phase 12F-2: the Sword variant follows the off hand, on every machine
+	}
 	RefreshStatMods(); // follows the current overlay pose (stance changes are not otherwise observable here)
 }
 

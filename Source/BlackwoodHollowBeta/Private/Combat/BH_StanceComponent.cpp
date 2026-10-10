@@ -6,6 +6,8 @@
 #include "Combat/BH_LoadoutComponent.h"
 #include "Combat/BH_LockOnComponent.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
+#include "Items/BH_EquipmentTypes.h"
+#include "Items/BH_WeaponItem.h"
 #include "Characters/BH_StanceMovementProfile.h"
 #include "UI/BH_HUDWidget.h"
 #include "AbilitySystemComponent.h"
@@ -101,13 +103,48 @@ FGameplayTag UBH_StanceComponent::GetStanceTagOf(const AActor* Actor)
 	return Stance && Stance->CurrentStance.IsValid() ? Stance->CurrentStance : TAG_Stance_Weapon_Unarmed.GetTag();
 }
 
+bool UBH_StanceComponent::IsSwordVariant() const
+{
+	if (CurrentStance != TAG_Stance_Weapon_SwordShield.GetTag())
+	{
+		return false;
+	}
+	const UBH_LoadoutComponent* Loadout = GetOwner() ? GetOwner()->FindComponentByClass<UBH_LoadoutComponent>() : nullptr;
+	EBH_LoadoutSet Set = EBH_LoadoutSet::A;
+	if (!Loadout || !Loadout->GetActiveLoadoutSet(Set))
+	{
+		return false; // enemies and anything without a player loadout keep the plain Sword & Shield behaviour
+	}
+	return Loadout->GetItemInSlot(UBH_EquipmentLibrary::GetMainSlot(Set)) != nullptr
+		&& Loadout->GetItemInSlot(UBH_EquipmentLibrary::GetOffSlot(Set)) == nullptr;
+}
+
+FGameplayTag UBH_StanceComponent::GetStanceKey() const
+{
+	return IsSwordVariant() ? TAG_Stance_Weapon_Sword.GetTag() : (CurrentStance.IsValid() ? CurrentStance : TAG_Stance_Weapon_Unarmed.GetTag());
+}
+
+FGameplayTag UBH_StanceComponent::GetStanceKeyOf(const AActor* Actor)
+{
+	const UBH_StanceComponent* Stance = FindStanceComponent(Actor);
+	return Stance ? Stance->GetStanceKey() : TAG_Stance_Weapon_Unarmed.GetTag();
+}
+
+void UBH_StanceComponent::RefreshWeaponVariant()
+{
+	if (IsSwordVariant() != bSwordVariantApplied && CurrentStance.IsValid())
+	{
+		EquipWeaponsFor(CurrentStance); // sets bSwordVariantApplied
+	}
+}
+
 FText UBH_StanceComponent::GetStanceDisplayText(FGameplayTag Stance)
 {
 	if (Stance == TAG_Stance_Weapon_Unarmed.GetTag()) { return NSLOCTEXT("BHStance", "Name_Unarmed", "Unarmed"); }
 	if (Stance == TAG_Stance_Weapon_Greatsword.GetTag()) { return NSLOCTEXT("BHStance", "Name_GS", "Greatsword"); }
 	if (Stance == TAG_Stance_Weapon_SwordShield.GetTag()) { return NSLOCTEXT("BHStance", "Name_SnS", "Sword & Shield"); }
 	if (Stance == TAG_Stance_Weapon_DualSword.GetTag()) { return NSLOCTEXT("BHStance", "Name_DS", "Dual Swords"); }
-	if (Stance == TAG_Stance_Weapon_OneHandedSword.GetTag()) { return NSLOCTEXT("BHStance", "Name_1H", "One-Handed Sword"); }
+	if (Stance == TAG_Stance_Weapon_Sword.GetTag()) { return NSLOCTEXT("BHStance", "Name_Sword", "Sword"); }
 	if (Stance == TAG_Stance_Weapon_Bow.GetTag()) { return NSLOCTEXT("BHStance", "Name_Bow", "Bow"); }
 	if (Stance == TAG_Stance_Weapon_Crossbow.GetTag()) { return NSLOCTEXT("BHStance", "Name_Crossbow", "Crossbow"); }
 
@@ -132,6 +169,10 @@ bool UBH_StanceComponent::RequestStance(FGameplayTag NewStance)
 	if (!Owner)
 	{
 		return false;
+	}
+	if (BH_Stance::IsVariantKeyStance(NewStance))
+	{
+		return false; // a lookup key, not a stance: the Sword is derived from the equipment (IsSwordVariant)
 	}
 	if (BH_Stance::IsPlaceholderStance(NewStance))
 	{
@@ -166,6 +207,10 @@ bool UBH_StanceComponent::SetStance(FGameplayTag NewStance)
 {
 	AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority())
+	{
+		return false;
+	}
+	if (BH_Stance::IsVariantKeyStance(NewStance))
 	{
 		return false;
 	}
@@ -245,8 +290,13 @@ void UBH_StanceComponent::EquipWeaponsFor(FGameplayTag New)
 	{
 		return;
 	}
+	// The Sword variant has its own loadout entry (sword in the main hand, empty off hand); without one it falls back to the stance's entry.
+	bSwordVariantApplied = New == TAG_Stance_Weapon_SwordShield.GetTag() && IsSwordVariant();
+	const FGameplayTag LoadoutKey = bSwordVariantApplied && WeaponLoadouts->LoadoutsByStance.Contains(TAG_Stance_Weapon_Sword.GetTag())
+		? TAG_Stance_Weapon_Sword.GetTag() : New;
+
 	TArray<UMeshComponent*> Attached;
-	UBH_CombatFunctionLibrary::EquipWeaponsForStance(Character, WeaponLoadouts, New, Attached);
+	UBH_CombatFunctionLibrary::EquipWeaponsForStance(Character, WeaponLoadouts, LoadoutKey, Attached);
 	// The meshes were just respawned in the hand: put them where the drawn state says (no transition montage).
 	ApplyWeaponAttachment(bWeaponDrawn);
 }

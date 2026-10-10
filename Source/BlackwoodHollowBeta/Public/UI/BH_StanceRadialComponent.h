@@ -17,7 +17,7 @@
 //   slot 0 = weapon loadout set A, slot 1 = set B (UBH_LoadoutComponent::GetStanceForSet), slots 2-7 = consumables
 //   (ConsumableSlots, empty-safe item reference; the item system arrives in Phase 11). The plugin draws the wedges from
 //   MenuData, so no custom radial widget is required; UIs that want more can read GetRadialSlots().
-// Phase 8D: the placeholder stances (OneHandedSword / Bow / Crossbow) can be listed (bIncludePlaceholderStancesInWheel)
+// Phase 8D: the placeholder stances (Bow / Crossbow) can be listed (bIncludePlaceholderStancesInWheel)
 //   but selecting one only logs "Stance not yet implemented" and keeps the current stance.
 // Phase 11E: a consumable slot whose stack is 0 stays in its place (the other wedges keep their angles) but is UNAVAILABLE:
 //   FBH_RadialSlotData::bAvailable = false, its label drops the "x0", its wedge is dimmed, and choosing it does nothing (no request,
@@ -156,7 +156,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|StanceRadial|EightSlot")
 	TArray<FBH_RadialConsumableSlot> ConsumableSlots;
 
-	/** Classic wheel only: also list OneHandedSword / Bow / Crossbow (selecting them reports "not yet implemented"). */
+	/** Classic wheel only: also list Bow / Crossbow (selecting them reports "not yet implemented"). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|StanceRadial")
 	bool bIncludePlaceholderStancesInWheel = false;
 

@@ -20,6 +20,7 @@
 #include "Characters/BH_EnemyBase.h"
 #include "Characters/BH_CharacterBase.h"
 #include "Combat/BH_StanceComponent.h"
+#include "AbilitySystem/Abilities/AH_GA_ShieldBash.h"
 #include "Engine/Texture2D.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemInterface.h"
@@ -324,6 +325,29 @@ bool UBH_CombatFunctionLibrary::HandleMeleeAttackInput(AActor* OwningActor, TSub
 	if (!ASC || !MeleeAbilityClass)
 	{
 		return false;
+	}
+
+	// Phase 12F-2: the one-handed Sword variant of Sword & Shield. No shield, so no shield bash; and its own combo replaces the
+	// stance's default attack (the player controller keeps passing the Sword & Shield combo, see UBH_StanceRadialComponent).
+	if (const UBH_StanceComponent* StanceComp = UBH_StanceComponent::FindStanceComponent(OwningActor))
+	{
+		if (StanceComp->IsSwordVariant())
+		{
+			if (MeleeAbilityClass->IsChildOf(UAH_GA_ShieldBash::StaticClass()))
+			{
+				UE_LOG(LogBHCombat, VeryVerbose, TEXT("HandleMeleeAttackInput: %s has no shield (Sword variant): bash ignored."), *GetNameSafe(OwningActor));
+				return false;
+			}
+			if (const UBH_WeaponLoadoutDataAsset* SwordLoadouts = StanceComp->WeaponLoadouts)
+			{
+				const FBH_OverlayWeaponLoadout* Base = SwordLoadouts->LoadoutsByStance.Find(TAG_Stance_Weapon_SwordShield.GetTag());
+				const FBH_OverlayWeaponLoadout* Variant = SwordLoadouts->LoadoutsByStance.Find(TAG_Stance_Weapon_Sword.GetTag());
+				if (Base && Variant && Variant->MeleeAbility && Base->MeleeAbility == MeleeAbilityClass)
+				{
+					MeleeAbilityClass = Variant->MeleeAbility;
+				}
+			}
+		}
 	}
 
 	const FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromClass(MeleeAbilityClass);

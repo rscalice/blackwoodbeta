@@ -33,6 +33,7 @@ class UBH_StanceMovementProfile;
 class UBH_PlayerDeathComponent;
 class UBH_InteractorComponent;
 class UBH_ArmorVisualComponent;
+class UBH_WeaponVisualComponent;
 class UGameplayAbility;
 class UInputAction;
 class UInputMappingContext;
@@ -259,6 +260,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Armor")
 	TObjectPtr<UBH_ArmorVisualComponent> ArmorVisualComponent;
+
+	/** Phase 12F-2 (#24): weapon visuals on the MetaHuman visual body. Cosmetic, every machine but a dedicated server. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Weapon")
+	TObjectPtr<UBH_WeaponVisualComponent> WeaponVisualComponent;
 
 private:
 	/** Idempotent. */
