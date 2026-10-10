@@ -21,6 +21,58 @@ void ABH_GameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(ABH_GameState, bPartyInCombat);
+	DOREPLIFETIME(ABH_GameState, WorldFlags);
+}
+
+ABH_GameState* ABH_GameState::Get(const UObject* WorldContext)
+{
+	const UWorld* ContextWorld = WorldContext ? WorldContext->GetWorld() : nullptr;
+	return ContextWorld ? ContextWorld->GetGameState<ABH_GameState>() : nullptr;
+}
+
+void ABH_GameState::SetWorldFlag(FName Flag, bool bValue)
+{
+	if (!HasAuthority() || Flag.IsNone())
+	{
+		return;
+	}
+	const bool bHad = WorldFlags.Contains(Flag);
+	if (bHad == bValue)
+	{
+		return;
+	}
+	if (bValue)
+	{
+		WorldFlags.Add(Flag);
+	}
+	else
+	{
+		WorldFlags.Remove(Flag);
+	}
+	ForceNetUpdate();
+	LastBroadcastFlags = WorldFlags;
+	OnWorldFlagChanged.Broadcast(Flag, bValue); // the server does not get the RepNotify
+}
+
+void ABH_GameState::OnRep_WorldFlags()
+{
+	// Turn the replicated array into one event per changed flag.
+	const TArray<FName> Previous = LastBroadcastFlags;
+	LastBroadcastFlags = WorldFlags;
+	for (const FName& Flag : WorldFlags)
+	{
+		if (!Previous.Contains(Flag))
+		{
+			OnWorldFlagChanged.Broadcast(Flag, true);
+		}
+	}
+	for (const FName& Flag : Previous)
+	{
+		if (!WorldFlags.Contains(Flag))
+		{
+			OnWorldFlagChanged.Broadcast(Flag, false);
+		}
+	}
 }
 
 void ABH_GameState::BeginPlay()

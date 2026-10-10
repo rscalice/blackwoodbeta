@@ -25,6 +25,9 @@ class UBH_ProgressionComponent;
 /** Broadcast (server and owning client) when a fragment slot changes. SlotIndex -1 = several / unknown slots changed. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnFragmentSlotsChanged, int32, SlotIndex);
 
+/** Broadcast (server and every client) when one of the per-player progression gates changes: weapon set B unlock, learned Overload Burst, respawn attunement. For UI. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnProgressionGatesChanged);
+
 /** Broadcast on the OWNING player's machine when a consumable use was refused (nothing consumed). Wire a toast / sound to it. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnConsumableUseRefused, TSubclassOf<UNarrativeItem>, ItemClass, EBH_ConsumableRefusal, Reason);
 
@@ -97,6 +100,46 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|Fragments")
 	FBH_OnFragmentSlotsChanged OnFragmentSlotsChanged;
 
+	// -- Progression gates (Phase 12F) -----------------------------------------------------------
+	// Per-player state that the Island 1 rules (ABH_IslandRules) and the world pickups change. All of it lives here (not on the pawn)
+	// so it survives death and respawn. Server writes, everything replicates, OnProgressionGatesChanged fires on every machine.
+
+	/** False while weapon set B is locked for this player (Island 1): the loadout refuses to equip into set B and the radial refuses to select it. Default true. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Progression")
+	bool IsWeaponSetBUnlocked() const { return bWeaponSetBUnlocked; }
+
+	/** SERVER. Locks / unlocks weapon set B for this player (bh.Loadout.UnlockSetB, ABH_IslandRules). */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "BlackwoodHollow|Progression")
+	void SetWeaponSetBUnlocked(bool bUnlocked);
+
+	/** True once this player has learned Overload Burst at a Warden obelisk (or through bh.Skills.GrantBurst). A partner marker reads it. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Progression")
+	bool HasLearnedOverloadBurst() const { return bOverloadBurstLearned; }
+
+	/** SERVER. Marks Overload Burst as learned and equips it into the first fragment slot that accepts it. @return true if the fragment ended up equipped. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "BlackwoodHollow|Progression")
+	bool GrantOverloadBurst();
+
+	/** True if this player attuned the respawn point(s) of HubName. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Respawn")
+	bool IsHubAttuned(FName HubName) const { return AttunedHubs.Contains(HubName); }
+
+	/** True once this player attuned a regular (non-starter) respawn point: the starter camp (ABH_RespawnPoint::bAttunedByDefault) is retired for them. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Respawn")
+	bool AreStarterPointsRetired() const { return bStarterPointsRetired; }
+
+	/** True if this player has attuned at least one respawn point of their own. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Respawn")
+	bool HasAttunedAnyHub() const { return AttunedHubs.Num() > 0; }
+
+	/** SERVER. Records that this player touched the respawn point of HubName; bRetireStarterPoints also retires the starter camp for them. @return true if anything changed. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "BlackwoodHollow|Respawn")
+	bool AttuneHub(FName HubName, bool bRetireStarterPoints);
+
+	/** Fires on every machine whenever one of the gates above changes. */
+	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|Progression")
+	FBH_OnProgressionGatesChanged OnProgressionGatesChanged;
+
 	// Debug RPCs: declared in every build (UHT forbids UFUNCTION inside #if); bodies are compiled out of Shipping.
 	// -- Debug RPCs (non-shipping) -------------------------------------------------------------
 	// The bh.* console commands (BH_RPGDebugCommands.cpp) call these from a client window; they act on the SERVER world exactly like
@@ -122,6 +165,18 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerDebugSpawnBoss();
 
+	/** Server: unlocks weapon set B for this player (bh.Loadout.UnlockSetB). */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugUnlockSetB();
+
+	/** Server: grants this player Overload Burst as if they had touched the Warden obelisk (bh.Skills.GrantBurst). */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugGrantBurst();
+
+	/** Server: sets the world flag Island1.SpanGateOpen on the game state (bh.World.OpenSpanGate). */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugOpenSpanGate();
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Inventory")
 	TObjectPtr<UNarrativeInventoryComponent> Inventory;
@@ -142,6 +197,25 @@ protected:
 
 	UFUNCTION()
 	void OnRep_FragmentSlots();
+
+	/** Phase 12F. Default true; ABH_IslandRules sets it false for the players of Island 1. */
+	UPROPERTY(ReplicatedUsing = OnRep_ProgressionGates)
+	bool bWeaponSetBUnlocked = true;
+
+	/** Phase 12F. Set by the Warden obelisk (or bh.Skills.GrantBurst). */
+	UPROPERTY(ReplicatedUsing = OnRep_ProgressionGates)
+	bool bOverloadBurstLearned = false;
+
+	/** Phase 12F. Respawn hubs (ABH_RespawnPoint::HubName) this player has touched. */
+	UPROPERTY(ReplicatedUsing = OnRep_ProgressionGates)
+	TArray<FName> AttunedHubs;
+
+	/** Phase 12F. True once the starter respawn camp no longer counts for this player. */
+	UPROPERTY(ReplicatedUsing = OnRep_ProgressionGates)
+	bool bStarterPointsRetired = false;
+
+	UFUNCTION()
+	void OnRep_ProgressionGates();
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerEquipFragment(int32 Slot, TSubclassOf<UAH_GA_FragmentBase> FragmentClass);

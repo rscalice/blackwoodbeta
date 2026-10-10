@@ -15,6 +15,7 @@
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "Components/BPC_HeartFragment.h"
 #include "Combat/BH_LoadoutComponent.h"
+#include "Actors/BH_IslandRules.h"
 #include "Progression/BH_ProgressionComponent.h"
 #include "Characters/BH_EnemyBase.h"
 #include "Characters/BH_CharacterBase.h"
@@ -312,6 +313,13 @@ bool UBH_CombatFunctionLibrary::HandleMeleeAttackInput(AActor* OwningActor, TSub
 	const FInputReentrancyGuard Guard;
 	BH_REJECT_NESTED_INPUT(Guard, "HandleMeleeAttackInput")
 
+	// Phase 12F: an unarmed island start (ABH_IslandRules::bStartUnarmed) has no attack until a weapon is equipped. Silent on purpose.
+	if (ABH_IslandRules::IsWeaponInputLocked(OwningActor))
+	{
+		UE_LOG(LogBHCombat, VeryVerbose, TEXT("HandleMeleeAttackInput: %s has no weapon equipped (island rules)."), *GetNameSafe(OwningActor));
+		return false;
+	}
+
 	UAbilitySystemComponent* ASC = ResolveAbilitySystemComponent(OwningActor);
 	if (!ASC || !MeleeAbilityClass)
 	{
@@ -345,6 +353,13 @@ bool UBH_CombatFunctionLibrary::HandleBlockInput(AActor* OwningActor, TSubclassO
 
 	const FInputReentrancyGuard Guard;
 	BH_REJECT_NESTED_INPUT(Guard, "HandleBlockInput")
+
+	// Phase 12F: no guard without a weapon on an unarmed island start. Releasing is never blocked (it only ends a block that is running).
+	if (bPressed && ABH_IslandRules::IsWeaponInputLocked(OwningActor))
+	{
+		UE_LOG(LogBHCombat, VeryVerbose, TEXT("HandleBlockInput: %s has no weapon equipped (island rules)."), *GetNameSafe(OwningActor));
+		return false;
+	}
 
 	UAbilitySystemComponent* ASC = ResolveAbilitySystemComponent(OwningActor);
 	if (!ASC || !BlockAbilityClass)
@@ -406,6 +421,13 @@ bool UBH_CombatFunctionLibrary::HandleParryInput(AActor* OwningActor)
 
 	const FInputReentrancyGuard Guard;
 	BH_REJECT_NESTED_INPUT(Guard, "HandleParryInput")
+
+	// Phase 12F: no parry without a weapon on an unarmed island start.
+	if (ABH_IslandRules::IsWeaponInputLocked(OwningActor))
+	{
+		UE_LOG(LogBHCombat, VeryVerbose, TEXT("HandleParryInput: %s has no weapon equipped (island rules)."), *GetNameSafe(OwningActor));
+		return false;
+	}
 
 	UAbilitySystemComponent* ASC = ResolveAbilitySystemComponent(OwningActor);
 	if (!ASC)

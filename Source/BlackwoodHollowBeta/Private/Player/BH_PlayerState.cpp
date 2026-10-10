@@ -9,6 +9,7 @@
 #include "Consumables/BH_ConsumableLibrary.h"
 #include "Progression/BH_ProgressionComponent.h"
 #include "AI/BH_EnemyWaveSpawner.h"
+#include "Player/BH_GameState.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -47,6 +48,90 @@ void ABH_PlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(ABH_PlayerState, FragmentSlots);
+	DOREPLIFETIME(ABH_PlayerState, bWeaponSetBUnlocked);
+	DOREPLIFETIME(ABH_PlayerState, bOverloadBurstLearned);
+	DOREPLIFETIME(ABH_PlayerState, AttunedHubs);
+	DOREPLIFETIME(ABH_PlayerState, bStarterPointsRetired);
+}
+
+// ============================================================================
+// Progression gates (Phase 12F)
+// ============================================================================
+
+void ABH_PlayerState::SetWeaponSetBUnlocked(bool bUnlocked)
+{
+	if (!HasAuthority() || bWeaponSetBUnlocked == bUnlocked)
+	{
+		return;
+	}
+	bWeaponSetBUnlocked = bUnlocked;
+	ForceNetUpdate();
+	OnRep_ProgressionGates(); // the server does not get the RepNotify
+}
+
+bool ABH_PlayerState::GrantOverloadBurst()
+{
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	const TSubclassOf<UAH_GA_FragmentBase> BurstClass = UAH_GA_OverloadBurst::StaticClass();
+	bool bEquipped = false;
+	for (int32 SlotIndex = 0; SlotIndex < NumFragmentSlots; ++SlotIndex)
+	{
+		if (GetFragmentInSlot(SlotIndex) == BurstClass)
+		{
+			bEquipped = true; // already in a slot
+			break;
+		}
+	}
+	for (int32 SlotIndex = 0; SlotIndex < NumFragmentSlots && !bEquipped; ++SlotIndex)
+	{
+		if (CanEquipInSlot(SlotIndex, BurstClass))
+		{
+			bEquipped = EquipFragment(SlotIndex, BurstClass);
+		}
+	}
+
+	if (!bOverloadBurstLearned)
+	{
+		bOverloadBurstLearned = true;
+		ForceNetUpdate();
+		OnRep_ProgressionGates();
+	}
+	return bEquipped;
+}
+
+bool ABH_PlayerState::AttuneHub(FName HubName, bool bRetireStarterPoints)
+{
+	if (!HasAuthority() || HubName.IsNone())
+	{
+		return false;
+	}
+	bool bChanged = false;
+	if (!AttunedHubs.Contains(HubName))
+	{
+		AttunedHubs.Add(HubName);
+		bChanged = true;
+	}
+	if (bRetireStarterPoints && !bStarterPointsRetired)
+	{
+		bStarterPointsRetired = true;
+		bChanged = true;
+	}
+	if (bChanged)
+	{
+		ForceNetUpdate();
+		OnRep_ProgressionGates();
+		UE_LOG(LogBHCombat, Log, TEXT("%s attuned respawn hub '%s' (starter points retired: %s)."), *GetPlayerName(), *HubName.ToString(), bStarterPointsRetired ? TEXT("yes") : TEXT("no"));
+	}
+	return bChanged;
+}
+
+void ABH_PlayerState::OnRep_ProgressionGates()
+{
+	OnProgressionGatesChanged.Broadcast();
 }
 
 // ============================================================================
@@ -306,6 +391,46 @@ void ABH_PlayerState::ServerDebugSpawnBoss_Implementation()
 	UE_LOG(LogBHCombat, Log, TEXT("bh.Arena.SpawnBoss (remote, from '%s'): %d wave spawner(s)."), *GetPlayerName(), Count);
 }
 
+bool ABH_PlayerState::ServerDebugUnlockSetB_Validate()
+{
+	return true;
+}
+
+void ABH_PlayerState::ServerDebugUnlockSetB_Implementation()
+{
+	SetWeaponSetBUnlocked(true);
+	UE_LOG(LogBHCombat, Log, TEXT("bh.Loadout.UnlockSetB: weapon set B unlocked for %s."), *GetPlayerName());
+}
+
+bool ABH_PlayerState::ServerDebugGrantBurst_Validate()
+{
+	return true;
+}
+
+void ABH_PlayerState::ServerDebugGrantBurst_Implementation()
+{
+	const bool bEquipped = GrantOverloadBurst();
+	UE_LOG(LogBHCombat, Log, TEXT("bh.Skills.GrantBurst: Overload Burst granted to %s (equipped: %s)."), *GetPlayerName(), bEquipped ? TEXT("yes") : TEXT("no"));
+}
+
+bool ABH_PlayerState::ServerDebugOpenSpanGate_Validate()
+{
+	return true;
+}
+
+void ABH_PlayerState::ServerDebugOpenSpanGate_Implementation()
+{
+	if (ABH_GameState* State = GetWorld() ? GetWorld()->GetGameState<ABH_GameState>() : nullptr)
+	{
+		State->SetWorldFlag(ABH_GameState::SpanGateOpenFlag(), true);
+		UE_LOG(LogBHCombat, Log, TEXT("bh.World.OpenSpanGate: world flag '%s' set."), *ABH_GameState::SpanGateOpenFlag().ToString());
+	}
+	else
+	{
+		UE_LOG(LogBHCombat, Warning, TEXT("bh.World.OpenSpanGate: the game state is not an ABH_GameState, no world flag store."));
+	}
+}
+
 #else // UE_BUILD_SHIPPING: stubs so the RPCs link; validation rejects every call.
 bool ABH_PlayerState::ServerDebugGrantXP_Validate(int32) { return false; }
 void ABH_PlayerState::ServerDebugGrantXP_Implementation(int32) {}
@@ -315,4 +440,10 @@ bool ABH_PlayerState::ServerDebugSkipToWave_Validate(int32) { return false; }
 void ABH_PlayerState::ServerDebugSkipToWave_Implementation(int32) {}
 bool ABH_PlayerState::ServerDebugSpawnBoss_Validate() { return false; }
 void ABH_PlayerState::ServerDebugSpawnBoss_Implementation() {}
+bool ABH_PlayerState::ServerDebugUnlockSetB_Validate() { return false; }
+void ABH_PlayerState::ServerDebugUnlockSetB_Implementation() {}
+bool ABH_PlayerState::ServerDebugGrantBurst_Validate() { return false; }
+void ABH_PlayerState::ServerDebugGrantBurst_Implementation() {}
+bool ABH_PlayerState::ServerDebugOpenSpanGate_Validate() { return false; }
+void ABH_PlayerState::ServerDebugOpenSpanGate_Implementation() {}
 #endif // !UE_BUILD_SHIPPING

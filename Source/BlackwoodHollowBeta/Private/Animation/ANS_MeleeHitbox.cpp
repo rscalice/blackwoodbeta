@@ -5,6 +5,7 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Combat/BH_WeaponTrailComponent.h"
 #include "Combat/BH_WeaponBladeData.h"
+#include "Combat/BH_Damageable.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -368,6 +369,17 @@ void UANS_MeleeHitbox::ProcessHit(USkeletalMeshComponent* MeshComp, UAnimSequenc
 			return;
 		}
 		Swing.HitActors.Add(HitActor);
+	}
+
+	// Phase 12F: props without a GAS component (the coral barricade) take the hit through IBH_Damageable. The authority alone decides;
+	// the owning client runs the same notify but never applies anything.
+	if (IBH_Damageable* Damageable = Cast<IBH_Damageable>(HitActor))
+	{
+		if (Owner->HasAuthority())
+		{
+			Damageable->BH_ReceiveMeleeHit(Owner, DamageMultiplier, Hit);
+		}
+		return;
 	}
 
 	FGameplayEventData Payload;

@@ -8,6 +8,7 @@
 #include "Consumables/BH_ConsumableLibrary.h"
 #include "Loot/BH_LootLibrary.h"
 #include "Loot/BH_LootTypes.h"
+#include "Player/BH_PlayerState.h"
 #include "NarrativeItem.h"
 #include "GameFramework/PlayerState.h"
 #include "RadialSelectorType.h"
@@ -231,18 +232,25 @@ TArray<FBH_RadialSlotData> UBH_StanceRadialComponent::GetRadialSlots() const
 	const APawn* Pawn = GetControlledPawn();
 	const UBH_LoadoutComponent* Loadout = UBH_LoadoutComponent::FindLoadoutComponent(Pawn);
 
+	// Phase 12F: set B can be locked per player (Island 1). A locked set reads as an empty, unavailable wedge.
+	const APlayerController* OwnerController = Cast<APlayerController>(GetOwner());
+	const ABH_PlayerState* OwnerBHState = OwnerController ? OwnerController->GetPlayerState<ABH_PlayerState>() : nullptr;
+	const bool bSetBLocked = OwnerBHState && !OwnerBHState->IsWeaponSetBUnlocked();
+
 	for (int32 SetIndex = 0; SetIndex < 2; ++SetIndex)
 	{
+		const bool bLockedSet = (SetIndex == 1) && bSetBLocked;
 		FBH_RadialSlotData Slot;
 		Slot.SlotIndex = SetIndex;
 		Slot.Kind = EBH_RadialSlotKind::WeaponSet;
-		Slot.StanceName = Loadout ? Loadout->GetStanceForSet(SetIndex == 0 ? EBH_LoadoutSet::A : EBH_LoadoutSet::B) : NAME_None;
+		Slot.StanceName = (Loadout && !bLockedSet) ? Loadout->GetStanceForSet(SetIndex == 0 ? EBH_LoadoutSet::A : EBH_LoadoutSet::B) : NAME_None;
 		Slot.bEmpty = Slot.StanceName.IsNone();
 		Slot.bAvailable = !Slot.bEmpty;
 		Slot.Identifier = BH_StanceRadialPrivate::WeaponSlotIdentifier(SetIndex, Slot.bEmpty);
 		if (Slot.bEmpty)
 		{
-			Slot.DisplayName = SetIndex == 0 ? NSLOCTEXT("BHStance", "EmptySetA", "Set A (empty)") : NSLOCTEXT("BHStance", "EmptySetB", "Set B (empty)");
+			Slot.DisplayName = SetIndex == 0 ? NSLOCTEXT("BHStance", "EmptySetA", "Set A (empty)")
+				: (bLockedSet ? NSLOCTEXT("BHStance", "LockedSetB", "Set B (locked)") : NSLOCTEXT("BHStance", "EmptySetB", "Set B (empty)"));
 		}
 		else
 		{
@@ -492,6 +500,17 @@ bool UBH_StanceRadialComponent::SelectStance(FName Stance)
 		// Phase 8D: keep the current stance (and the PC's MeleeAttackAbilityClass) untouched.
 		UBH_StanceComponent::NotifyStanceNotImplemented(Pawn, StanceTag);
 		return false;
+	}
+
+	// Phase 12F: a stance that only set B provides is refused while set B is locked for this player.
+	const ABH_PlayerState* BHPlayerState = PC->GetPlayerState<ABH_PlayerState>();
+	if (BHPlayerState && !BHPlayerState->IsWeaponSetBUnlocked())
+	{
+		const UBH_LoadoutComponent* PawnLoadout = UBH_LoadoutComponent::FindLoadoutComponent(Pawn);
+		if (PawnLoadout && PawnLoadout->GetStanceForSet(EBH_LoadoutSet::A) != Stance && PawnLoadout->GetStanceForSet(EBH_LoadoutSet::B) == Stance)
+		{
+			return false;
+		}
 	}
 
 	const bool bRequested = UBH_CombatFunctionLibrary::RequestStanceByName(Pawn, Stance.ToString());

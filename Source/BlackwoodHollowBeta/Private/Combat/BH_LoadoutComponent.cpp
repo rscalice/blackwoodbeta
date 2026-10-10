@@ -10,6 +10,8 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "Progression/BH_RPGSettings.h"
+#include "Player/BH_PlayerState.h"
+#include "Actors/BH_IslandRules.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "EquipmentComponent.h"
@@ -54,6 +56,14 @@ namespace BH_LoadoutComponent_Private
 	static const UBH_WeaponItem* GetWeaponCDO(const UClass* ItemClass)
 	{
 		return ItemClass ? Cast<UBH_WeaponItem>(ItemClass->GetDefaultObject()) : nullptr;
+	}
+
+	/** Phase 12F: true while the owning pawn's player has weapon set B locked (ABH_PlayerState::IsWeaponSetBUnlocked). Any machine (the flag replicates). */
+	static bool IsSetBLocked(const AActor* OwnerActor)
+	{
+		const APawn* OwnerPawn = Cast<APawn>(OwnerActor);
+		const ABH_PlayerState* OwnerState = OwnerPawn ? Cast<ABH_PlayerState>(OwnerPawn->GetPlayerState()) : nullptr;
+		return OwnerState && !OwnerState->IsWeaponSetBUnlocked();
 	}
 }
 
@@ -255,6 +265,10 @@ bool UBH_LoadoutComponent::ValidateEquip(const UBH_WeaponItem* Item, EBH_EquipSl
 	{
 		return Fail(TEXT("Not a weapon slot"));
 	}
+	if (UBH_EquipmentLibrary::GetSlotLoadoutSet(Slot) == EBH_LoadoutSet::B && BH_LoadoutComponent_Private::IsSetBLocked(GetOwner()))
+	{
+		return Fail(TEXT("Weapon set B is locked"));
+	}
 
 	const bool bOffSlot = UBH_EquipmentLibrary::IsOffHandSlot(Slot);
 	if (Item->GripType == EBH_WeaponGripType::TwoHanded && bOffSlot)
@@ -442,6 +456,10 @@ bool UBH_LoadoutComponent::ApplyLoadoutPreset(const TArray<FBH_StarterLoadoutEnt
 		if (!UBH_EquipmentLibrary::IsWeaponSlot(Entry.Slot))
 		{
 			return Fail(FString::Printf(TEXT("%s: %s is not a weapon slot"), *ItemClass->GetName(), *SlotName(Entry.Slot)));
+		}
+		if (UBH_EquipmentLibrary::GetSlotLoadoutSet(Entry.Slot) == EBH_LoadoutSet::B && IsSetBLocked(GetOwner()))
+		{
+			return Fail(TEXT("Weapon set B is locked"));
 		}
 		const bool bOff = UBH_EquipmentLibrary::IsOffHandSlot(Entry.Slot);
 		if ((CDO->GripType == EBH_WeaponGripType::TwoHanded && bOff) || (CDO->GripType == EBH_WeaponGripType::OffHand && !bOff))
@@ -866,6 +884,16 @@ void UBH_LoadoutComponent::TryGrantStarterLoadout()
 		return; // not a player pawn yet (or PlayerState not assigned): try again next reconcile
 	}
 	bStarterGranted = true;
+
+	// Phase 12F: Island 1 starts the players unarmed (ABH_IslandRules::bStartUnarmed). The weapon cache grants the first weapon later.
+	if (const ABH_IslandRules* Rules = ABH_IslandRules::FindRules(GetOwner()))
+	{
+		if (Rules->bStartUnarmed)
+		{
+			UE_LOG(LogBHLoadout, Log, TEXT("Starter loadout skipped: the island rules start the players unarmed"));
+			return;
+		}
+	}
 
 	// A respawned pawn re-uses the PlayerState inventory: do not hand the kit out twice.
 	for (UNarrativeItem* Existing : Inventory->GetItems())

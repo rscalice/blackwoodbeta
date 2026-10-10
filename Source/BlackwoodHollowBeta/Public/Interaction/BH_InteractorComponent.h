@@ -151,6 +151,15 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerUseConsumable(TSubclassOf<UNarrativeItem> ItemClass);
 
+	/**
+	 * bh.Interact.Complete (Phase 12F): the server completes ONE interaction for this pawn right now, skipping the hold, through the same
+	 * UBH_InteractableComponent::NotifyInteractionCompleted a real interaction ends in. Target = ClientFocus when it is valid (range and
+	 * BH_CanInteract still checked), else the nearest interactable this pawn could use (range and BH_CanInteract, no facing test).
+	 * Compiled out in Shipping.
+	 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugCompleteInteraction(UBH_InteractableComponent* ClientFocus);
+
 	/** bh.Blight.Set: server sets this pawn's Blight meter (0..100; 100 saturates). Compiled out in Shipping. */
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerDebugSetBlight(float Value);
