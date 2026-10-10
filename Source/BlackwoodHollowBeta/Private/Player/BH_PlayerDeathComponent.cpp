@@ -2,6 +2,9 @@
 
 #include "Player/BH_PlayerDeathComponent.h"
 #include "Player/BH_PartyStateSubsystem.h"
+#include "Player/BH_PartyLibrary.h"
+#include "Player/BH_GameState.h"
+#include "AbilitySystem/StatusEffects/BH_FractureEffects.h"
 #include "Player/BH_RespawnPoint.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
@@ -664,11 +667,30 @@ void UBH_PlayerDeathComponent::TryOpenReviveWindow()
 void UBH_PlayerDeathComponent::RequestRespawnAtHub()
 {
 	const APawn* PawnOwner = Cast<APawn>(GetOwner());
-	if (!PawnOwner || !PawnOwner->IsLocallyControlled() || !IsWindowOpen())
+	if (!PawnOwner || !PawnOwner->IsLocallyControlled() || !IsWindowOpen() || IsHubRespawnBlockedByCombat())
 	{
 		return;
 	}
 	ServerRespawnAtHub();
+}
+
+bool UBH_PlayerDeathComponent::IsHubRespawnBlockedByCombat() const
+{
+	const UWorld* const World = GetWorld();
+	const ABH_GameState* const State = World ? World->GetGameState<ABH_GameState>() : nullptr;
+	if (!State || !State->IsPartyInCombat())
+	{
+		return false;
+	}
+	// Combat only blocks while somebody else can still fight; the last one standing (wipe / solo) may always go home.
+	for (const APawn* const Living : UBH_PartyLibrary::GetLivingPartyPawns(this))
+	{
+		if (Living && Living != GetOwner())
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 void UBH_PlayerDeathComponent::RequestWaitForRevive()
@@ -687,11 +709,20 @@ void UBH_PlayerDeathComponent::ServerRespawnAtHub_Implementation()
 	{
 		return;
 	}
+	if (IsHubRespawnBlockedByCombat())
+	{
+		UE_LOG(LogBHCombat, Log, TEXT("%s: hub respawn refused, the party is in combat."), *GetNameSafe(GetOwner()));
+		return;
+	}
 	FVector Destination = FVector::ZeroVector;
 	float DestinationYaw = 0.f;
 	FName HubName;
 	ResolveRespawnDestination(Destination, DestinationYaw, HubName, /*bLogFallback*/ true);
 	ReturnToLife(Destination, DestinationYaw, RespawnHealthPercent);
+
+	// Phase 11G: the price of going home. EVERY party member is fractured (living partners too); a partner revive never gets here.
+	const int32 Fractured = UBH_FractureLibrary::ApplyFractureToParty(this);
+	UE_LOG(LogBHCombat, Log, TEXT("%s: hub respawn, %d party member(s) fractured."), *GetNameSafe(GetOwner()), Fractured);
 }
 
 void UBH_PlayerDeathComponent::ServerWaitForRevive_Implementation()
@@ -1237,9 +1268,58 @@ void UBH_PlayerDeathComponent::ServerDebugRevive_Implementation()
 	UE_LOG(LogBHCombat, Log, TEXT("bh.Player.Revive: %s revived in place."), *GetNameSafe(GetOwner()));
 }
 
+bool UBH_PlayerDeathComponent::ServerDebugWipe_Validate(bool bKillParty)
+{
+	return true;
+}
+
+void UBH_PlayerDeathComponent::ServerDebugWipe_Implementation(bool bKillParty)
+{
+	if (UBH_PartyStateSubsystem* const PartyState = UBH_PartyStateSubsystem::Get(this))
+	{
+		PartyState->ForceWipe(bKillParty);
+	}
+}
+
+bool UBH_PlayerDeathComponent::ServerDebugFracture_Validate(bool bApply, bool bWholeParty)
+{
+	return true;
+}
+
+void UBH_PlayerDeathComponent::ServerDebugFracture_Implementation(bool bApply, bool bWholeParty)
+{
+	if (bWholeParty)
+	{
+		if (bApply)
+		{
+			UBH_FractureLibrary::ApplyFractureToParty(this);
+		}
+		else
+		{
+			UBH_PartyLibrary::ForEachPartyMember(this, [](APlayerState& PlayerState, APawn* MemberPawn)
+			{
+				UAbilitySystemComponent* MemberASC = UBH_FractureLibrary::ResolveASC(MemberPawn);
+				if (!MemberASC)
+				{
+					MemberASC = UBH_FractureLibrary::ResolveASC(&PlayerState);
+				}
+				UBH_FractureLibrary::RemoveFracture(MemberASC);
+			});
+		}
+		return;
+	}
+	UAbilitySystemComponent* const ASC = GetOwnerASC();
+	const bool bChanged = bApply ? UBH_FractureLibrary::ApplyFracture(ASC) : UBH_FractureLibrary::RemoveFracture(ASC);
+	UE_LOG(LogBHCombat, Log, TEXT("bh.Fracture.%s: %s %s."), bApply ? TEXT("Apply") : TEXT("Remove"), *GetNameSafe(GetOwner()), bChanged ? TEXT("changed") : TEXT("unchanged"));
+}
+
 #else // UE_BUILD_SHIPPING: stubs so the RPCs link; validation rejects every call.
 bool UBH_PlayerDeathComponent::ServerDebugKill_Validate() { return false; }
 void UBH_PlayerDeathComponent::ServerDebugKill_Implementation() {}
 bool UBH_PlayerDeathComponent::ServerDebugRevive_Validate() { return false; }
 void UBH_PlayerDeathComponent::ServerDebugRevive_Implementation() {}
+bool UBH_PlayerDeathComponent::ServerDebugWipe_Validate(bool bKillParty) { return false; }
+void UBH_PlayerDeathComponent::ServerDebugWipe_Implementation(bool bKillParty) {}
+bool UBH_PlayerDeathComponent::ServerDebugFracture_Validate(bool bApply, bool bWholeParty) { return false; }
+void UBH_PlayerDeathComponent::ServerDebugFracture_Implementation(bool bApply, bool bWholeParty) {}
 #endif // !UE_BUILD_SHIPPING

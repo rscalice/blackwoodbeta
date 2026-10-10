@@ -85,7 +85,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "HeartFragment|Shielding")
 	TArray<float> ShieldingByLevel = { 0.15f };
 
-	/** Fraction (0..1) of Blight build-up currently shielded: ShieldingByLevel[ShieldingLevel]. */
+	/** Fraction (0..1) of Blight build-up currently shielded: ShieldingByLevel[ShieldingLevel] x the Fracture efficiency multiplier (0.75 while fractured). */
 	UFUNCTION(BlueprintPure, Category = "HeartFragment|Shielding")
 	float GetShieldingFraction() const;
 

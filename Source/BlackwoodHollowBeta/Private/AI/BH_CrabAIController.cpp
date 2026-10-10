@@ -3,6 +3,7 @@
 #include "AI/BH_CrabAIController.h"
 #include "AI/BH_AttackTokenSubsystem.h"
 #include "Characters/BH_EnemyCrab.h"
+#include "Characters/BH_EnemyBase.h"
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "Combat/BH_CombatTeam.h"
 #include "AbilitySystem/AH_AttributeSet.h"
@@ -472,7 +473,7 @@ void ABH_CrabAIController::ScanForTarget()
 {
 	const APawn* Me = GetPawn();
 	UWorld* World = GetWorld();
-	if (!Me || !World)
+	if (!Me || !World || bResetHold)
 	{
 		return;
 	}
@@ -561,8 +562,37 @@ void ABH_CrabAIController::SetCrabTarget(AActor* NewTarget)
 	{
 		Identity->SetAggroTarget(NewTarget);
 	}
+	else if (ABH_EnemyBase* EnemyBase = Cast<ABH_EnemyBase>(GetPawn()))
+	{
+		// Phase 11F (#21): the crab has no identity component; ABH_EnemyBase carries its aggro for the party-combat state.
+		EnemyBase->SetAggroTarget(NewTarget);
+	}
 
 	UpdateBlackboard();
+}
+
+void ABH_CrabAIController::ResetAI()
+{
+	ReleaseAttackToken();
+	SetCrabTarget(nullptr);
+	StopMovement();
+	if (UBrainComponent* Brain = GetBrainComponent())
+	{
+		Brain->RestartLogic();
+	}
+}
+
+void ABH_CrabAIController::SetResetHold(bool bHold)
+{
+	if (bHold == bResetHold)
+	{
+		return;
+	}
+	bResetHold = bHold;
+	if (bHold)
+	{
+		ResetAI();
+	}
 }
 
 void ABH_CrabAIController::OnTargetAttackingChanged(const FGameplayTag Tag, int32 NewCount)

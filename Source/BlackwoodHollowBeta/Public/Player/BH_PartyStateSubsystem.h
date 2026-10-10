@@ -3,7 +3,8 @@
 //
 // Server-authoritative world subsystem (not created on pure clients). It answers two questions for the death flow:
 //
-//   IS THE PARTY IN COMBAT?  Yes while any LIVING enemy's replicated AggroTarget (UBH_CombatIdentityComponent) is a LIVING player.
+//   IS THE PARTY IN COMBAT?  Yes while any LIVING enemy's AggroTarget is a LIVING player: the replicated AggroTarget of a UBH_CombatIdentityComponent, or
+//                            (Phase 11F, GitHub #21) the AggroTarget of an ABH_EnemyBase that has NO identity component (the crab).
 //                            It stays "in combat" until OutOfCombatGrace seconds have passed with none. The aggro sources are
 //                            tracked event-driven through UBH_CombatIdentityComponent::OnAnyAggroTargetChanged and re-evaluated
 //                            every EvaluateInterval seconds (the grace timer, an enemy or its target dying, ...).
@@ -12,7 +13,8 @@
 //                            fires (an in-progress revive is interrupted by the death component).
 //
 //   IS THE PARTY WIPED?      Every PARTY MEMBER's pawn is dead (Phase 11P: members come from UBH_PartyLibrary / ABH_GameState). OnPartyWiped fires once per wipe (it re-arms when somebody is alive again).
-//                            TODO(GDD 5.5): party wipe consequences - enemies reset, encounters do NOT. Nothing listens to this yet.
+//                            Phase 11F: a wipe resets every living enemy (UBH_EnemyResetComponent::ResetAllInWorld) and then broadcasts OnPartyWiped, which the
+//                            wave spawners use to respawn the dead enemies of their CURRENT wave. Cleared waves, fog, containers, pickups stay as they are.
 //
 // Config (DefaultGame.ini, [/Script/BlackwoodHollowBeta.BH_PartyStateSubsystem]): OutOfCombatGrace, EvaluateInterval.
 
@@ -24,6 +26,7 @@
 #include "BH_PartyStateSubsystem.generated.h"
 
 class AActor;
+class ABH_EnemyBase;
 class UBH_CombatIdentityComponent;
 class UBH_PlayerDeathComponent;
 
@@ -47,7 +50,7 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "BH|Party", meta = (ClampMin = "0.05", ForceUnits = "s"))
 	float EvaluateInterval = 0.25f;
 
-	/** Server: the party was wiped (all players dead). TODO(GDD 5.5): enemies reset, encounters do not. */
+	/** Server: the party was wiped (all players dead), after the living enemies were reset. */
 	UPROPERTY(BlueprintAssignable, Category = "BH|Party")
 	FBH_OnPartyWiped OnPartyWiped;
 
@@ -73,6 +76,12 @@ public:
 	/** Server: a player died or came back to life: re-checks the wipe immediately (no waiting for the timer). */
 	void NotifyPlayerStateChanged();
 
+	/**
+	 * Server, debug (bh.Party.Wipe). false = run the wipe consequences right now (enemies reset, OnPartyWiped) without touching the players;
+	 * true = kill every party member and let the normal wipe detection do the rest.
+	 */
+	void ForceWipe(bool bKillParty);
+
 private:
 	void Evaluate();
 	void EvaluateWipe();
@@ -80,6 +89,10 @@ private:
 	/** Server: mirrors the combat flag onto ABH_GameState. */
 	void PublishCombatState(bool bNowInCombat) const;
 	void HandleAggroTargetChanged(UBH_CombatIdentityComponent* Source, AActor* NewTarget);
+	void HandleEnemyAggroChanged(ABH_EnemyBase* Enemy, AActor* NewTarget);
+
+	/** Resets every living enemy, then broadcasts OnPartyWiped. */
+	void RunWipeConsequences();
 
 	/** Runs Fn for the death component of every player pawn (server). */
 	void ForEachPlayerComponent(TFunctionRef<void(UBH_PlayerDeathComponent&)> Fn) const;
@@ -87,7 +100,11 @@ private:
 	/** Enemies that currently have an aggro target (weak; pruned in Evaluate). */
 	TSet<TWeakObjectPtr<UBH_CombatIdentityComponent>> AggroSources;
 
+	/** Phase 11F (#21): ABH_EnemyBase enemies with an aggro target (the ones without an identity component report here). */
+	TSet<TWeakObjectPtr<ABH_EnemyBase>> EnemyAggroSources;
+
 	FDelegateHandle AggroHandle;
+	FDelegateHandle EnemyAggroHandle;
 	FTimerHandle EvaluateTimer;
 	double LastEngagedTime = -1.0e9;
 	bool bInCombat = false;

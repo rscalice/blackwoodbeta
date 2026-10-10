@@ -6,6 +6,7 @@
 #include "AbilitySystem/Abilities/AH_GA_FragmentBase.h"
 #include "AbilitySystem/Abilities/AH_GA_OverloadBurst.h"
 #include "AbilitySystem/StatusEffects/BH_BlightEffects.h"
+#include "AbilitySystem/StatusEffects/BH_FractureEffects.h"
 #include "Player/BH_PlayerState.h"
 #include "GameFramework/Pawn.h"
 #include "AbilitySystemComponent.h"
@@ -142,7 +143,9 @@ float UBPC_HeartFragment::GetShieldingFraction() const
 		return 0.f;
 	}
 	const int32 Index = FMath::Clamp(ShieldingLevel, 0, ShieldingByLevel.Num() - 1);
-	return FMath::Clamp(ShieldingByLevel[Index], 0.f, 1.f);
+	// Phase 11G: Fracture weakens the shielding (x0.75: 15% -> 11.25%). 1.0 when not fractured.
+	const float Efficiency = UBH_FractureLibrary::GetShieldingEfficiencyMultiplier(GetOwnerASC());
+	return FMath::Clamp(ShieldingByLevel[Index] * Efficiency, 0.f, 1.f);
 }
 
 void UBPC_HeartFragment::SetShieldingLevel(int32 NewLevel)

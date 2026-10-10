@@ -294,6 +294,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BH|Death")
 	void RequestWaitForRevive();
 
+	/**
+	 * Phase 11G. True while the hub respawn is refused: the party is in combat AND at least one other party member is alive.
+	 * (Nobody else alive = a wipe or solo play: the respawn is always allowed.) Works on any machine (reads the replicated
+	 * ABH_GameState combat flag); the server re-checks it in ServerRespawnAtHub, the death prompt greys the button with it.
+	 */
+	UFUNCTION(BlueprintPure, Category = "BH|Death")
+	bool IsHubRespawnBlockedByCombat() const;
+
 	// -- The reviver ---------------------------------------------------------------------------
 
 	/** The nearest body this pawn could revive right now (window open, in ReviveRange, not already being revived by someone else), or null. */
@@ -340,6 +348,14 @@ public:
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerDebugRevive();
+
+	/** bh.Party.Wipe: runs the party-wipe consequences (enemy / wave reset); bKillParty first kills every party member (a real wipe). */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugWipe(bool bKillParty);
+
+	/** bh.Fracture.Apply / Remove: bApply true = apply; bWholeParty false = this pawn only. */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugFracture(bool bApply, bool bWholeParty);
 
 protected:
 	virtual void BeginPlay() override;

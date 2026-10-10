@@ -52,6 +52,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|Brain")
 	AActor* GetBrainTarget() const { return Target.Get(); }
 
+	/** SERVER (Phase 11F party-wipe reset). Drops the target (aggro report, attack token, focus, movement, defend / attack plan) and goes Idle. */
+	void ResetAI();
+
+	/** SERVER. true = ResetAI, then the brain neither scans nor acts (the reset component walks the pawn home); false = it scans again. */
+	void SetResetHold(bool bHold);
+
+	UFUNCTION(BlueprintPure, Category = "BH|Brain")
+	bool IsResetHeld() const { return bResetHold; }
+
 	// -- Tunables (BH|Brain) -----------------------------------------------------------
 
 	/** Hostile pawns closer than this (and visible) become targets. */
@@ -308,6 +317,9 @@ private:
 
 	EBH_AIState State = EBH_AIState::Idle;
 	TWeakObjectPtr<AActor> Target;
+
+	/** Party-wipe reset in progress: Tick does nothing (see SetResetHold). */
+	bool bResetHold = false;
 
 	TWeakObjectPtr<UAbilitySystemComponent> WatchedTargetASC;
 	FDelegateHandle TargetAttackingHandle;

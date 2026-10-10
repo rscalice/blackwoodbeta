@@ -6,6 +6,8 @@
 //   Btn_Respawn       UButton       "Respawn at <Hub>" (clicking it = ChooseRespawn); visible while the revive window is open
 //   Txt_RespawnLabel  UTextBlock    the label of Btn_Respawn ("Respawn at Port Vanguard")
 //   Btn_Wait          UButton       "Wait for revive" (clicking it = ChooseWait); visible while the player has not chosen yet
+//   Txt_RespawnBlocked UTextBlock   (Phase 11G) "Can't respawn during combat"; shown next to / under the greyed Btn_Respawn while the hub respawn is
+//                                   refused (the party is in combat and another party member is alive). Absent: the text replaces Txt_RespawnLabel instead.
 //   Txt_WaitLabel     UTextBlock    the label of Btn_Wait
 //   Bar_Revive        UProgressBar  revive progress 0..1 (shown while a revive is in progress, for the downed player AND for the reviver)
 //   Txt_ReviveStatus  UTextBlock    "Being revived..." (downed player) / "Reviving <Name>..." (reviver)
@@ -52,6 +54,10 @@ public:
 	/** Format of the respawn button; {Hub} = the hub label ("Port Vanguard"). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|DeathPrompt|Text")
 	FText RespawnLabelFormat = NSLOCTEXT("BlackwoodHollow", "DeathRespawnFormat", "Respawn at {Hub}");
+
+	/** Phase 11G: shown while the hub respawn is refused because the party is in combat and somebody else is alive. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|DeathPrompt|Text")
+	FText RespawnBlockedText = NSLOCTEXT("BlackwoodHollow", "DeathRespawnBlocked", "Can't respawn during combat");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|DeathPrompt|Text")
 	FText WaitLabel = NSLOCTEXT("BlackwoodHollow", "DeathWaitLabel", "Wait for revive");
@@ -137,6 +143,9 @@ protected:
 	TObjectPtr<UButton> Btn_Wait;
 
 	UPROPERTY(BlueprintReadOnly, Category = "BH|DeathPrompt", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Txt_RespawnBlocked;
+
+	UPROPERTY(BlueprintReadOnly, Category = "BH|DeathPrompt", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Txt_WaitLabel;
 
 	UPROPERTY(BlueprintReadOnly, Category = "BH|DeathPrompt", meta = (BindWidgetOptional))
@@ -170,6 +179,7 @@ private:
 	bool bBeingRevived = false;
 	bool bReviving = false;
 	bool bShowingRevivePrompt = false;
+	bool bRespawnBlocked = false;
 	bool bCursorShown = false;
 	FText RevivingName;
 };

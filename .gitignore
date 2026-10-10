@@ -75,3 +75,10 @@ Plugins/**/Intermediate/*
 
 # Cache files for the editor to use
 DerivedDataCache/*
+
+# Python bytecode (editor tooling)
+__pycache__/
+*.pyc
+
+# Armor fit tool: scratch MetaHuman builds (re-created by Fit Armor; kept locally for re-harvest)
+Content/BlackwoodHollow/Characters/BodyTypes/*/Built_Fit/

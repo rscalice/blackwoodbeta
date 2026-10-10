@@ -5,6 +5,7 @@
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "Characters/BH_EnemyBase.h"
 #include "Combat/BH_CombatTeam.h"
+#include "Player/BH_PartyStateSubsystem.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Components/ArrowComponent.h"
 #include "Components/BillboardComponent.h"
@@ -82,6 +83,13 @@ ABH_EnemyWaveSpawner::ABH_EnemyWaveSpawner()
 void ABH_EnemyWaveSpawner::BeginPlay()
 {
 	Super::BeginPlay();
+	if (HasAuthority())
+	{
+		if (UBH_PartyStateSubsystem* PartyState = UBH_PartyStateSubsystem::Get(this))
+		{
+			PartyState->OnPartyWiped.AddDynamic(this, &ABH_EnemyWaveSpawner::HandlePartyWiped);
+		}
+	}
 	if (bAutoStart && HasAuthority())
 	{
 		StartWaves();
@@ -90,6 +98,10 @@ void ABH_EnemyWaveSpawner::BeginPlay()
 
 void ABH_EnemyWaveSpawner::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (UBH_PartyStateSubsystem* PartyState = UBH_PartyStateSubsystem::Get(this))
+	{
+		PartyState->OnPartyWiped.RemoveDynamic(this, &ABH_EnemyWaveSpawner::HandlePartyWiped);
+	}
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(SpawnTimer);
@@ -225,6 +237,7 @@ void ABH_EnemyWaveSpawner::BeginWave(int32 WaveIndex)
 	}
 	CurrentWaveIndex = WaveIndex;
 	SpawnedInWave = 0;
+	Roster.Reset();
 
 	const FBH_EnemyWave& Wave = Waves[WaveIndex];
 	PendingSpawns.Reset();
@@ -337,8 +350,7 @@ FVector ABH_EnemyWaveSpawner::ResolveSpawnLocation(TSubclassOf<APawn> EnemyClass
 
 APawn* ABH_EnemyWaveSpawner::SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 SpawnIndex, int32 EnemyLevel)
 {
-	UWorld* World = GetWorld();
-	if (!World || !EnemyClass)
+	if (!GetWorld() || !EnemyClass)
 	{
 		UE_LOG(LogBHCombat, Warning, TEXT("WaveSpawner '%s': wave %d has an entry with no EnemyClass; skipped."), *GetName(), CurrentWaveIndex);
 		return nullptr;
@@ -346,6 +358,30 @@ APawn* ABH_EnemyWaveSpawner::SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 Spa
 
 	FRotator Rotation;
 	const FVector Location = ResolveSpawnLocation(EnemyClass, SpawnIndex, Rotation);
+
+	FBH_WaveRosterSlot Slot;
+	Slot.EnemyClass = EnemyClass;
+	Slot.EnemyLevel = FMath::Max(1, EnemyLevel);
+	Slot.SpawnTransform = FTransform(Rotation, Location);
+	Slot.Pawn = SpawnEnemyAt(Slot.EnemyClass, Slot.SpawnTransform, Slot.EnemyLevel);
+	APawn* Spawned = Slot.Pawn.Get();
+	if (Spawned)
+	{
+		Roster.Add(Slot);
+	}
+	return Spawned;
+}
+
+APawn* ABH_EnemyWaveSpawner::SpawnEnemyAt(TSubclassOf<APawn> EnemyClass, const FTransform& SpawnTransform, int32 EnemyLevel)
+{
+	UWorld* World = GetWorld();
+	if (!World || !EnemyClass)
+	{
+		return nullptr;
+	}
+
+	const FVector Location = SpawnTransform.GetLocation();
+	const FRotator Rotation = SpawnTransform.Rotator();
 
 	APawn* Pawn = World->SpawnActorDeferred<APawn>(EnemyClass, FTransform(Rotation, Location), this, nullptr, ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
 	if (!Pawn)
@@ -377,7 +413,6 @@ APawn* ABH_EnemyWaveSpawner::SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 Spa
 	if (Identity)
 	{
 		Identity->CombatTeam = EBH_CombatTeam::Enemies;
-		Identity->SetResetOnDeath(false);
 		Identity->OnDeath.AddDynamic(this, &ABH_EnemyWaveSpawner::HandleEnemyDeath);
 	}
 	else
@@ -394,6 +429,35 @@ APawn* ABH_EnemyWaveSpawner::SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 Spa
 
 	UE_LOG(LogBHCombat, Log, TEXT("WaveSpawner '%s': wave %d spawned %s (level %d) at %s (alive %d)."), *GetName(), CurrentWaveIndex, *Pawn->GetName(), EnemyBase ? EnemyBase->EnemyLevel : 0, *Location.ToCompactString(), Alive.Num());
 	return Pawn;
+}
+
+void ABH_EnemyWaveSpawner::HandlePartyWiped()
+{
+	if (!HasAuthority() || !bRunning || !Waves.IsValidIndex(CurrentWaveIndex))
+	{
+		return;
+	}
+	// The wave was cleared and the next one is on its timer: a cleared wave stays cleared.
+	if (GetWorldTimerManager().IsTimerActive(NextWaveTimer))
+	{
+		return;
+	}
+
+	int32 Respawned = 0;
+	for (FBH_WaveRosterSlot& Slot : Roster)
+	{
+		APawn* Existing = Slot.Pawn.Get();
+		if (Existing && IsValid(Existing) && Alive.Contains(Existing))
+		{
+			continue; // still alive: its own UBH_EnemyResetComponent healed it and sent it home
+		}
+		if (APawn* Fresh = SpawnEnemyAt(Slot.EnemyClass, Slot.SpawnTransform, Slot.EnemyLevel))
+		{
+			Slot.Pawn = Fresh;
+			++Respawned;
+		}
+	}
+	UE_LOG(LogBHCombat, Log, TEXT("WaveSpawner '%s': party wiped, wave %d restarted (%d respawned, %d alive, %d still to spawn)."), *GetName(), CurrentWaveIndex, Respawned, Alive.Num(), PendingSpawns.Num());
 }
 
 void ABH_EnemyWaveSpawner::HandleEnemyBaseDeath(ABH_EnemyBase* /*Enemy*/, AActor* Killer)

@@ -38,6 +38,9 @@ class ABH_EnemyBase;
 /** Server: this enemy's health reached zero (fires after the death hooks and the XP grant). */
 DECLARE_MULTICAST_DELEGATE_TwoParams(FBH_OnEnemyDeath, ABH_EnemyBase* /*Enemy*/, AActor* /*Killer*/);
 
+/** Server: an ABH_EnemyBase's aggro target changed (Target is null when it dropped aggro). */
+DECLARE_MULTICAST_DELEGATE_TwoParams(FBH_OnEnemyAggroChanged, ABH_EnemyBase* /*Enemy*/, AActor* /*Target*/);
+
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API ABH_EnemyBase : public ACharacter, public IAbilitySystemInterface, public IGenericTeamAgentInterface
 {
@@ -123,6 +126,19 @@ public:
 	/** Server only: fires when this enemy dies (the wave spawner listens to it). */
 	FBH_OnEnemyDeath OnEnemyDeath;
 
+	// -- Aggro (Phase 11F, GitHub #21) -----------------------------------------------------
+	// Enemies WITHOUT a UBH_CombatIdentityComponent (the crab) report who they fight here instead, so the party-in-combat state
+	// (UBH_PartyStateSubsystem) counts them too. The AI controllers call SetAggroTarget only when the pawn has no identity component.
+
+	/** Server only: any ABH_EnemyBase's aggro target changed. UBH_PartyStateSubsystem listens to this. */
+	static FBH_OnEnemyAggroChanged OnAnyEnemyAggroChanged;
+
+	/** SERVER. Who this enemy is fighting (null = nobody). Broadcasts OnAnyEnemyAggroChanged when it changes. */
+	void SetAggroTarget(AActor* NewTarget);
+
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Enemy")
+	AActor* GetAggroTarget() const { return AggroTarget.Get(); }
+
 	// -- Test behaviour ------------------------------------------------------
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Enemy|Testing")
@@ -193,6 +209,9 @@ private:
 	static constexpr float FaceTargetSearchInterval = 0.25f;
 
 	TWeakObjectPtr<const AActor> CachedFaceTarget;
+
+	/** Server-side aggro target (see SetAggroTarget). Not replicated: only the server's party-combat evaluation reads it. */
+	TWeakObjectPtr<AActor> AggroTarget;
 	double NextFaceTargetSearchTime = 0.0;
 
 	FTimerHandle AutoAttackTimerHandle;

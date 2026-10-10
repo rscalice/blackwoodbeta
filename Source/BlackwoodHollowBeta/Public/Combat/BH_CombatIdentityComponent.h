@@ -11,8 +11,9 @@
 //
 // DEATH: on an ABH_CharacterBase owner (motion-matching enemies) the death ragdolls on EVERY machine: bDead replicates, its OnRep (and
 // the server / listen-server host directly, and BeginPlay for an actor that arrives already dead) calls ABH_CharacterBase::StartRagdollLocal
-// with the character's velocity (capped). The server then despawns the body (bDespawnOnDeath / DespawnDelay) and stops its AI, unless
-// bResetOnDeath is explicitly on (the body then stands back up after ResetDelay: StopRagdollLocal on every machine).
+// with the character's velocity (capped). The server then despawns the body (bDespawnOnDeath / DespawnDelay) and stops its AI.
+// (Phase 11F removed the legacy bResetOnDeath / ResetDelay / OnReset "stand back up after dying" test hook: nothing used it. A living enemy is
+// reset after a party wipe by UBH_EnemyResetComponent, which this component adds to its owner on the server.)
 //
 // The character needs an AbilitySystemComponent (added in its Blueprint) and, for weapon meshes on every machine,
 // a UBH_StanceWatcherComponent (its FallbackLoadouts is filled from WeaponLoadouts below).
@@ -35,7 +36,6 @@ class UAbilitySystemComponent;
 class UBH_CombatIdentityComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnIdentityDeath, AActor*, Killer);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnIdentityReset);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnAggroTargetChanged, AActor*, NewAggroTarget);
 /** Native, static twin of FBH_OnAggroTargetChanged: fires for ANY identity component on this machine (the HUD listens once instead of per boss). */
 DECLARE_MULTICAST_DELEGATE_TwoParams(FBH_OnAnyAggroTargetChanged, UBH_CombatIdentityComponent* /*Source*/, AActor* /*NewAggroTarget*/);
@@ -88,18 +88,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Setup", meta = (ClampMin = "0.0"))
 	float StartingStanceDelay = 0.3f;
 
-	/** Refill and stand the body back up ResetDelay seconds after dying (test dummies). Off by default: a dead enemy ragdolls and despawns. When on, bDespawnOnDeath is ignored. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Death")
-	bool bResetOnDeath = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Death", meta = (EditCondition = "bResetOnDeath", ClampMin = "0.1"))
-	float ResetDelay = 4.f;
-
 	// -- Per-archetype stats (BH|Stats) ---------------------------------------------------
 	// Applied on the server right after SetupCombatCharacter (which creates the attribute set with the constructor
 	// defaults: Health/MaxHealth 100, Posture 100, Stamina 100, AttackPower 10, Defense 5). A value is only used when its
 	// Override flag is ticked. Max* values also fill the matching current value (Health/Posture/Stamina), and
-	// ResetAfterDeath restores to these values. Tune these live in the BP class defaults of each enemy archetype.
+	// UBH_EnemyResetComponent restores to these values. Tune these live in the BP class defaults of each enemy archetype.
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Stats")
 	bool bOverrideMaxHealth = false;
@@ -170,23 +163,15 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "BH|Death")
 	FBH_OnIdentityDeath OnDeath;
 
-	/** Refilled and revived after ResetDelay (authority). */
-	UPROPERTY(BlueprintAssignable, Category = "BH|Death")
-	FBH_OnIdentityReset OnReset;
-
 	UFUNCTION(BlueprintPure, Category = "BH|Death")
 	bool IsDead() const { return bDead; }
 
-	/** Destroy the (ragdolling) body DespawnDelay seconds after death and stop its AI (server). Ignored while bResetOnDeath is on. */
+	/** Destroy the (ragdolling) body DespawnDelay seconds after death and stop its AI (server). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Death")
 	bool bDespawnOnDeath = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Death", meta = (EditCondition = "bDespawnOnDeath", ClampMin = "0.1", ForceUnits = "s"))
 	float DespawnDelay = 6.f;
-
-	/** Convenience setter (the wave spawner turns the auto-reset off for its enemies). */
-	UFUNCTION(BlueprintCallable, Category = "BH|Death")
-	void SetResetOnDeath(bool bInResetOnDeath) { bResetOnDeath = bInResetOnDeath; }
 
 	// -- Boss (BH|Boss) -----------------------------------------------------------------
 	// A boss gets the big bottom-centre health bar (UBH_BossHealthBarWidget, driven by UBH_HUDSubsystem) on the machine of every
@@ -244,11 +229,9 @@ private:
 	void InitServer();
 	void ApplyStartingStance();
 	void HandleHealthZero(AActor* Killer);
-	void ResetAfterDeath();
 	UAbilitySystemComponent* ResolveASC() const;
 
 	FTimerHandle StanceTimer;
-	FTimerHandle ResetTimer;
 	FTimerHandle CosmeticsTimer;
 	FDelegateHandle HealthZeroHandle;
 

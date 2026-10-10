@@ -5,6 +5,8 @@
 #include "Player/BH_GameState.h"
 #include "Player/BH_PartyLibrary.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Characters/BH_EnemyBase.h"
+#include "Characters/BH_EnemyResetComponent.h"
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
@@ -28,10 +30,12 @@ void UBH_PartyStateSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	AggroSources.Reset();
+	EnemyAggroSources.Reset();
 	bInCombat = false;
 	bWipeLatched = false;
 	LastEngagedTime = -1.0e9;
 	AggroHandle = UBH_CombatIdentityComponent::OnAnyAggroTargetChanged().AddUObject(this, &UBH_PartyStateSubsystem::HandleAggroTargetChanged);
+	EnemyAggroHandle = ABH_EnemyBase::OnAnyEnemyAggroChanged.AddUObject(this, &UBH_PartyStateSubsystem::HandleEnemyAggroChanged);
 }
 
 void UBH_PartyStateSubsystem::Deinitialize()
@@ -41,11 +45,17 @@ void UBH_PartyStateSubsystem::Deinitialize()
 		UBH_CombatIdentityComponent::OnAnyAggroTargetChanged().Remove(AggroHandle);
 		AggroHandle.Reset();
 	}
+	if (EnemyAggroHandle.IsValid())
+	{
+		ABH_EnemyBase::OnAnyEnemyAggroChanged.Remove(EnemyAggroHandle);
+		EnemyAggroHandle.Reset();
+	}
 	if (const UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(EvaluateTimer);
 	}
 	AggroSources.Reset();
+	EnemyAggroSources.Reset();
 	Super::Deinitialize();
 }
 
@@ -82,6 +92,23 @@ void UBH_PartyStateSubsystem::HandleAggroTargetChanged(UBH_CombatIdentityCompone
 	}
 }
 
+void UBH_PartyStateSubsystem::HandleEnemyAggroChanged(ABH_EnemyBase* Enemy, AActor* NewTarget)
+{
+	// Process-wide delegate (every PIE world): only this world's enemies count.
+	if (!Enemy || Enemy->GetWorld() != GetWorld())
+	{
+		return;
+	}
+	if (NewTarget)
+	{
+		EnemyAggroSources.Add(Enemy);
+	}
+	else
+	{
+		EnemyAggroSources.Remove(Enemy);
+	}
+}
+
 void UBH_PartyStateSubsystem::Evaluate()
 {
 	const UWorld* World = GetWorld();
@@ -104,6 +131,24 @@ void UBH_PartyStateSubsystem::Evaluate()
 		const AActor* Enemy = Source->GetOwner();
 		const UAbilitySystemComponent* EnemyASC = Enemy ? UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(Enemy) : nullptr;
 		const bool bEnemyAlive = Enemy && !Source->IsDead() && !(EnemyASC && EnemyASC->HasMatchingGameplayTag(TAG_State_Combat_Dead));
+		if (bEnemyAlive && UBH_PlayerDeathComponent::IsLivingPlayer(Target))
+		{
+			bEngaged = true;
+		}
+	}
+
+	// Same test for ABH_EnemyBase enemies without an identity component (the crab).
+	for (auto It = EnemyAggroSources.CreateIterator(); It; ++It)
+	{
+		const ABH_EnemyBase* Enemy = It->Get();
+		const AActor* Target = Enemy ? Enemy->GetAggroTarget() : nullptr;
+		if (!Enemy || !Target)
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+		const UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent();
+		const bool bEnemyAlive = !Enemy->IsEnemyDead() && !(EnemyASC && EnemyASC->HasMatchingGameplayTag(TAG_State_Combat_Dead));
 		if (bEnemyAlive && UBH_PlayerDeathComponent::IsLivingPlayer(Target))
 		{
 			bEngaged = true;
@@ -207,12 +252,39 @@ void UBH_PartyStateSubsystem::EvaluateWipe()
 		{
 			bWipeLatched = true;
 			UE_LOG(LogBHCombat, Log, TEXT("Party wiped (%d player(s) down)."), NumPlayers);
-			// TODO(GDD 5.5): enemies reset, encounters do NOT. Not implemented yet: listeners bind to OnPartyWiped.
-			OnPartyWiped.Broadcast();
+			RunWipeConsequences();
 		}
 	}
 	else if (NumLiving > 0)
 	{
 		bWipeLatched = false; // somebody is up again: the next wipe fires again
 	}
+}
+
+void UBH_PartyStateSubsystem::RunWipeConsequences()
+{
+	// GDD 5.5: enemies reset, encounters do NOT. Living enemies are healed / un-aggroed / sent home here; the wave spawners listen to
+	// OnPartyWiped and respawn the dead enemies of their current wave. World progress (fog, containers, pickups) is not touched.
+	UBH_EnemyResetComponent::ResetAllInWorld(GetWorld());
+	OnPartyWiped.Broadcast();
+}
+
+void UBH_PartyStateSubsystem::ForceWipe(bool bKillParty)
+{
+	if (!bKillParty)
+	{
+		UE_LOG(LogBHCombat, Log, TEXT("Party: forced wipe consequences (debug)."));
+		RunWipeConsequences();
+		return;
+	}
+	TArray<UBH_PlayerDeathComponent*> Members;
+	ForEachPlayerComponent([&Members](UBH_PlayerDeathComponent& Comp)
+	{
+		Members.Add(&Comp);
+	});
+	for (UBH_PlayerDeathComponent* Comp : Members)
+	{
+		Comp->ServerDebugKill(); // a Server RPC called on the server runs right here: lethal damage through the normal pipeline
+	}
+	UE_LOG(LogBHCombat, Log, TEXT("Party: debug wipe, killed %d player(s); the normal wipe detection takes over."), Members.Num());
 }

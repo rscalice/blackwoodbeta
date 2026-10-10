@@ -9,6 +9,7 @@
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/Abilities/AH_GA_MeleeAttack_Base.h"
 #include "Characters/BH_CharacterBase.h"
+#include "Characters/BH_EnemyBase.h"
 #include "Characters/BH_CharacterTypes.h"
 #include "Combat/BH_StanceComponent.h"
 #include "GenericTeamAgentInterface.h"
@@ -287,6 +288,11 @@ void ABH_AIController::SetTarget(AActor* NewTarget)
 	{
 		Identity->SetAggroTarget(NewTarget);
 	}
+	else if (ABH_EnemyBase* EnemyBase = Cast<ABH_EnemyBase>(GetPawn()))
+	{
+		// Phase 11F (#21): an enemy without an identity component reports its aggro through ABH_EnemyBase so the party-combat state sees it.
+		EnemyBase->SetAggroTarget(NewTarget);
+	}
 
 	if (NewTarget)
 	{
@@ -315,6 +321,50 @@ void ABH_AIController::SetTarget(AActor* NewTarget)
 		{
 			SetState(EBH_AIState::Idle);
 		}
+	}
+}
+
+// ============================================================================
+// Party-wipe reset (Phase 11F)
+// ============================================================================
+
+void ABH_AIController::ResetAI()
+{
+	EndDefend();
+	ReleaseAttackToken();
+	SetTarget(nullptr);
+	StopMovement();
+	ClearFocus(EAIFocusPriority::Gameplay);
+	bAttackStarted = false;
+	ComboLength = 0;
+	SetState(EBH_AIState::Idle);
+	ScanTimer = TargetScanInterval;
+}
+
+void ABH_AIController::SetResetHold(bool bHold)
+{
+	if (bHold == bResetHold)
+	{
+		return;
+	}
+	bResetHold = bHold;
+	ABH_CharacterBase* BHPawn = Cast<ABH_CharacterBase>(GetPawn());
+	if (bHold)
+	{
+		ResetAI();
+		if (BHPawn)
+		{
+			BHPawn->SetAIDesiredGait(EBH_Gait::Walk); // the walk home is a walk
+		}
+	}
+	else
+	{
+		if (BHPawn)
+		{
+			BHPawn->SetAIDesiredGait(EBH_Gait::Run);
+		}
+		SetState(EBH_AIState::Idle);
+		ScanTimer = 0.f;
 	}
 }
 
@@ -830,6 +880,11 @@ void ABH_AIController::Tick(float DeltaSeconds)
 	if (!Me || !ASC || !Me->HasAuthority())
 	{
 		return;
+	}
+
+	if (bResetHold)
+	{
+		return; // being walked / teleported home by the reset component
 	}
 
 	StateTime += DeltaSeconds;

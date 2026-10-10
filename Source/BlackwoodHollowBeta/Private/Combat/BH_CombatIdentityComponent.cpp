@@ -3,6 +3,7 @@
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "Combat/BH_StanceWatcherComponent.h"
 #include "Combat/BH_StanceComponent.h"
+#include "Characters/BH_EnemyResetComponent.h"
 #include "Characters/BH_CharacterBase.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
 #include "AbilitySystem/AH_AttributeSet.h"
@@ -139,6 +140,8 @@ void UBH_CombatIdentityComponent::BeginPlay()
 	if (Owner->HasAuthority())
 	{
 		InitServer();
+		// Phase 11F: remembers the spawn transform and resets this enemy on a party wipe (no Blueprint edit needed).
+		UBH_EnemyResetComponent::EnsureOn(Owner);
 	}
 
 	// An actor that arrives already dead (late join, relevancy) ragdolls right away; the OnRep waits for BeginPlay.
@@ -153,7 +156,6 @@ void UBH_CombatIdentityComponent::EndPlay(const EEndPlayReason::Type EndPlayReas
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(StanceTimer);
-		World->GetTimerManager().ClearTimer(ResetTimer);
 		World->GetTimerManager().ClearTimer(CosmeticsTimer);
 	}
 	if (HealthZeroHandle.IsValid())
@@ -347,14 +349,6 @@ void UBH_CombatIdentityComponent::HandleHealthZero(AActor* Killer)
 		ASC->CancelAllAbilities();
 	}
 
-	if (UWorld* World = GetWorld())
-	{
-		if (bResetOnDeath)
-		{
-			World->GetTimerManager().SetTimer(ResetTimer, this, &UBH_CombatIdentityComponent::ResetAfterDeath, FMath::Max(0.1f, ResetDelay), false);
-		}
-	}
-
 	if (!bWasDead)
 	{
 		UBH_ProgressionComponent::GrantKillXP(OwnerActor, XPReward); // positions are read now, before the body ragdolls / despawns
@@ -363,7 +357,7 @@ void UBH_CombatIdentityComponent::HandleHealthZero(AActor* Killer)
 		// The server (and a listen-server host) gets no RepNotify: ragdoll here; clients do it in OnRep_Dead.
 		SyncRagdollToDeadState(DeathVelocity);
 
-		if (bDespawnOnDeath && !bResetOnDeath && OwnerActor)
+		if (bDespawnOnDeath && OwnerActor)
 		{
 			if (APawn* PawnOwner = Cast<APawn>(OwnerActor))
 			{
@@ -373,29 +367,4 @@ void UBH_CombatIdentityComponent::HandleHealthZero(AActor* Killer)
 		}
 	}
 	OnDeath.Broadcast(Killer);
-}
-
-void UBH_CombatIdentityComponent::ResetAfterDeath()
-{
-	UAbilitySystemComponent* ASC = ResolveASC();
-	const UAH_AttributeSet* Set = ASC ? ASC->GetSet<UAH_AttributeSet>() : nullptr;
-	if (!ASC || !Set)
-	{
-		return;
-	}
-
-	ApplyInitialStats(ASC); // archetype values (not the constructor defaults)
-	ASC->SetNumericAttributeBase(UAH_AttributeSet::GetHealthAttribute(), Set->GetMaxHealth());
-	ASC->SetNumericAttributeBase(UAH_AttributeSet::GetPostureAttribute(), Set->GetMaxPosture());
-	ASC->SetNumericAttributeBase(UAH_AttributeSet::GetStaminaAttribute(), Set->GetMaxStamina());
-	ASC->SetLooseGameplayTagCount(TAG_State_Combat_Dead, 0, EGameplayTagReplicationState::TagOnly);
-	ASC->SetLooseGameplayTagCount(TAG_State_Combat_PostureBroken, 0, EGameplayTagReplicationState::TagOnly);
-	bDead = false;
-	if (AActor* OwnerActor = GetOwner())
-	{
-		OwnerActor->ForceNetUpdate();
-	}
-	SyncRagdollToDeadState(FVector::ZeroVector); // stand the body back up here; clients do the same in OnRep_Dead
-
-	OnReset.Broadcast();
 }

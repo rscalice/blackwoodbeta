@@ -37,6 +37,7 @@ void UBH_DeathPromptWidget::NativeConstruct()
 	bBeingRevived = false;
 	bReviving = false;
 	bShowingRevivePrompt = false;
+	bRespawnBlocked = false;
 	Refresh(); // start collapsed / empty
 
 	TryBind();
@@ -64,8 +65,16 @@ void UBH_DeathPromptWidget::Poll()
 {
 	TryBind();
 
-	// The reviver's hint: a downed party member is within range.
+	// Phase 11G: the hub respawn is refused while the party fights and somebody else is still up (the server enforces it too).
 	const UBH_PlayerDeathComponent* Comp = BoundComponent.Get();
+	const bool bNowBlocked = Comp && Comp->IsHubRespawnBlockedByCombat();
+	if (bNowBlocked != bRespawnBlocked)
+	{
+		bRespawnBlocked = bNowBlocked;
+		Refresh();
+	}
+
+	// The reviver's hint: a downed party member is within range.
 	APawn* Candidate = Comp ? Comp->FindReviveCandidate() : nullptr;
 	if (Candidate != RevivePromptCandidate.Get())
 	{
@@ -166,6 +175,10 @@ void UBH_DeathPromptWidget::HandleReviveProgress(float Fraction, bool bIsDeadPla
 
 void UBH_DeathPromptWidget::ChooseRespawn()
 {
+	if (bRespawnBlocked)
+	{
+		return; // greyed: nothing to send (the death component also refuses on both machines)
+	}
 	if (UBH_PlayerDeathComponent* Comp = BoundComponent.Get())
 	{
 		Comp->RequestRespawnAtHub();
@@ -228,13 +241,23 @@ void UBH_DeathPromptWidget::Refresh()
 		Txt_Prompt->SetText(PromptText);
 		Txt_Prompt->SetVisibility(bDown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
+	const bool bBlocked = bShowRespawn && bRespawnBlocked;
 	if (Btn_Respawn)
 	{
 		Btn_Respawn->SetVisibility(bShowRespawn ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		Btn_Respawn->SetIsEnabled(!bBlocked); // greyed while the hub respawn is refused (Phase 11G)
 	}
 	if (Txt_RespawnLabel)
 	{
-		Txt_RespawnLabel->SetText(FText::FormatNamed(RespawnLabelFormat, TEXT("Hub"), FText::FromString(GetRespawnHubLabel())));
+		// Without a dedicated Txt_RespawnBlocked the reason replaces the button label.
+		Txt_RespawnLabel->SetText((bBlocked && !Txt_RespawnBlocked)
+			? RespawnBlockedText
+			: FText::FormatNamed(RespawnLabelFormat, TEXT("Hub"), FText::FromString(GetRespawnHubLabel())));
+	}
+	if (Txt_RespawnBlocked)
+	{
+		Txt_RespawnBlocked->SetText(RespawnBlockedText);
+		Txt_RespawnBlocked->SetVisibility(bBlocked ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 	if (Btn_Wait)
 	{
