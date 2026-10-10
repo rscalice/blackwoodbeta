@@ -26,6 +26,7 @@
 #include "AbilitySystemInterface.h"
 #include "GenericTeamAgentInterface.h"
 #include "Combat/BH_CombatTeam.h"
+#include "Combat/BH_EnemyRank.h"
 #include "Loot/BH_LootTypes.h"
 #include "BH_EnemyBase.generated.h"
 
@@ -93,7 +94,7 @@ public:
 	// -- Level scaling (Phase 9) ---------------------------------------------
 
 	/** Enemy level. Set before BeginPlay (placed instance, Expose on Spawn, or the wave spawner's deferred spawn). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Enemy|Scaling", meta = (ExposeOnSpawn = true, ClampMin = "1"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "BlackwoodHollow|Enemy|Scaling", meta = (ExposeOnSpawn = true, ClampMin = "1"))
 	int32 EnemyLevel = 1;
 
 	/** Row prefix in the enemy scaling table ("Crab" -> "Crab.MaxHealth", ...). None = this enemy is not scaled by the table. */
@@ -108,6 +109,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Enemy|Loot")
 	FBH_DropTable DropTable;
 
+	// -- Rank / archetype (Phase 12G) ------------------------------------------------------
+	// Same data and same multipliers as UBH_CombatIdentityComponent (see BH_EnemyRank.h). Set before BeginPlay (Blueprint default, placed instance,
+	// or UBH_EnemyRankLibrary::PrepareSpawn on a deferred spawn); the server multiplies Health / Posture once in InitializeServerStats.
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "BlackwoodHollow|Enemy|Rank", meta = (ExposeOnSpawn = true))
+	EBH_EnemyRank Rank = EBH_EnemyRank::Common;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "BlackwoodHollow|Enemy|Rank", meta = (ExposeOnSpawn = true))
+	EBH_EnemyArchetype Archetype = EBH_EnemyArchetype::Skirmisher;
+
 	/**
 	 * SERVER. Writes EnemyLevel into the Level attribute and, for every row that exists in the enemy scaling table, sets the BASE
 	 * MaxHealth (refilling Health), MaxPosture (refilling Posture), AttackPower and Defense. Missing rows leave the current value alone.
@@ -115,7 +126,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Enemy|Scaling")
 	void ApplyLevelScaling();
 
-	/** XP this enemy grants on death: the table's "<Prefix>.XPReward" at EnemyLevel, else XPRewardOverride. */
+	/** XP this enemy grants on death: the table's "<Prefix>.XPReward" at EnemyLevel, else XPRewardOverride; times the rank XP multiplier. */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Enemy|Scaling")
 	int32 GetXPReward() const;
 
@@ -129,15 +140,19 @@ public:
 	// -- Aggro (Phase 11F, GitHub #21) -----------------------------------------------------
 	// Enemies WITHOUT a UBH_CombatIdentityComponent (the crab) report who they fight here instead, so the party-in-combat state
 	// (UBH_PartyStateSubsystem) counts them too. The AI controllers call SetAggroTarget only when the pawn has no identity component.
+	// Phase 12G: the target replicates, so the boss bar (Elite rank) works for these enemies on every machine.
 
 	/** Server only: any ABH_EnemyBase's aggro target changed. UBH_PartyStateSubsystem listens to this. */
 	static FBH_OnEnemyAggroChanged OnAnyEnemyAggroChanged;
+
+	/** EVERY machine (server in SetAggroTarget, clients in the OnRep): any ABH_EnemyBase's aggro target changed. The HUD boss bar listens to this. */
+	static FBH_OnEnemyAggroChanged OnAnyEnemyAggroSeen;
 
 	/** SERVER. Who this enemy is fighting (null = nobody). Broadcasts OnAnyEnemyAggroChanged when it changes. */
 	void SetAggroTarget(AActor* NewTarget);
 
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Enemy")
-	AActor* GetAggroTarget() const { return AggroTarget.Get(); }
+	AActor* GetAggroTarget() const { return AggroTarget; }
 
 	// -- Test behaviour ------------------------------------------------------
 
@@ -210,8 +225,12 @@ private:
 
 	TWeakObjectPtr<const AActor> CachedFaceTarget;
 
-	/** Server-side aggro target (see SetAggroTarget). Not replicated: only the server's party-combat evaluation reads it. */
-	TWeakObjectPtr<AActor> AggroTarget;
+	UFUNCTION()
+	void OnRep_AggroTarget();
+
+	/** Who this enemy fights (see SetAggroTarget). Replicated for the Elite boss bar. */
+	UPROPERTY(ReplicatedUsing = OnRep_AggroTarget)
+	TObjectPtr<AActor> AggroTarget;
 	double NextFaceTargetSearchTime = 0.0;
 
 	FTimerHandle AutoAttackTimerHandle;

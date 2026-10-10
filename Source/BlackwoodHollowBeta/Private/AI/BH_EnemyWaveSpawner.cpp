@@ -2,6 +2,7 @@
 
 #include "AI/BH_EnemyWaveSpawner.h"
 #include "AI/BH_AIController.h"
+#include "Combat/BH_EnemyRank.h"
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "Characters/BH_EnemyBase.h"
 #include "Combat/BH_CombatTeam.h"
@@ -397,6 +398,11 @@ APawn* ABH_EnemyWaveSpawner::SpawnEnemyAt(TSubclassOf<APawn> EnemyClass, const F
 		EnemyBase->EnemyLevel = FMath::Max(1, EnemyLevel);
 		EnemyBase->CombatTeam = EBH_CombatTeam::Enemies;
 		EnemyBase->bResetOnDeath = false;
+	}
+	else
+	{
+		// Identity-component characters: their component only exists after FinishSpawning, so the level is parked for their own BeginPlay.
+		UBH_EnemyRankLibrary::PrepareSpawn(Pawn, -1, FMath::Max(1, EnemyLevel));
 	}
 	Pawn->FinishSpawning(FTransform(Rotation, Location));
 

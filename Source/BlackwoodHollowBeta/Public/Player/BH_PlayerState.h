@@ -177,6 +177,14 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerDebugOpenSpanGate();
 
+	/** Server (Phase 12G): spawns the enemy called ShortName (UBH_RPGSettings::DebugEnemyClasses) a few metres in front of this player. RankOverride -1 = the Blueprint's rank, LevelOverride 0 = level 1 (bh.Enemy.Spawn). */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugSpawnEnemy(const FString& ShortName, int32 RankOverride, int32 LevelOverride);
+
+	/** Server (Phase 12G): kills every living enemy within RadiusCm of this player's pawn (0 = the whole world) through the real health-zero death path (bh.Enemy.KillAll). */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerDebugKillAllEnemies(float RadiusCm);
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Inventory")
 	TObjectPtr<UNarrativeInventoryComponent> Inventory;

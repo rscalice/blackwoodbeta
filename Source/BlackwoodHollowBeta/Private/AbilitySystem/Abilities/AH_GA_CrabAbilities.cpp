@@ -109,13 +109,14 @@ void UAH_GA_CrabPinch::BeginAttack()
 
 	// The warning marks where the target stands NOW; moving out of it is the counter-play.
 	TargetPoint = GetGroundPoint(Target);
+	const float ScaledDuration = TelegraphDuration * Crab->TelegraphTimeScale;
 	if (UBH_TelegraphComponent* Telegraph = Crab->GetTelegraph())
 	{
-		Telegraph->StartTelegraph(TargetPoint, TelegraphRadius, TelegraphDuration);
+		Telegraph->StartTelegraph(TargetPoint, TelegraphRadius, ScaledDuration);
 	}
 
 	SetPhase(EBH_CrabActionPhase::PinchWindup);
-	ScheduleStep(this, &UAH_GA_CrabPinch::OnTelegraphFinished, TelegraphDuration);
+	ScheduleStep(this, &UAH_GA_CrabPinch::OnTelegraphFinished, ScaledDuration);
 }
 
 void UAH_GA_CrabPinch::OnTelegraphFinished()
@@ -163,6 +164,87 @@ void UAH_GA_CrabPinch::OnVictimResolved(AActor* Victim, const FBH_CrabHitOutcome
 
 	// Phase 10B: build-up on the victim's Blight meter (server only; the meter mitigates and saturates itself).
 	if (!Victim || !Victim->HasAuthority())
+	{
+		return;
+	}
+	if (UBPC_HeartFragment* Heart = Victim->FindComponentByClass<UBPC_HeartFragment>())
+	{
+		Heart->AddBlightBuildup(BlightBuildupPerHit, GetAvatarActorFromActorInfo());
+	}
+}
+
+// ============================================================================
+// Slam (Phase 12G)
+// ============================================================================
+
+UAH_GA_CrabSlam::UAH_GA_CrabSlam()
+{
+	FGameplayTagContainer DefaultAssetTags;
+	DefaultAssetTags.AddTag(TAG_Ability_Combat_MeleeAttack);
+	SetAssetTags(DefaultAssetTags);
+
+	ActivationOwnedTags.AddTag(TAG_State_Combat_Attacking);
+	ActivationOwnedTags.AddTag(TAG_State_Combat_MovementLocked);
+
+	// Heavy: far more than the Pinch (8 / 12), then a long recovery (the opening to punish it).
+	BaseDamage = 18.f;
+	BasePostureDamage = 30.f;
+	RecoveryTime = 1.1f;
+}
+
+void UAH_GA_CrabSlam::BeginAttack()
+{
+	ABH_EnemyCrab* Crab = GetCrab();
+	const AActor* Target = ResolveTarget();
+	if (!Crab || !Target)
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		return;
+	}
+
+	Crab->MarkSlamUsed();
+
+	// The warning marks where the target stands NOW; moving out of it is the counter-play (multicast to every machine by the telegraph component).
+	SlamPoint = GetGroundPoint(Target);
+	const float ScaledDuration = TelegraphDuration * Crab->TelegraphTimeScale;
+	if (UBH_TelegraphComponent* Telegraph = Crab->GetTelegraph())
+	{
+		Telegraph->StartTelegraph(SlamPoint, TelegraphRadius, ScaledDuration);
+	}
+
+	SetPhase(EBH_CrabActionPhase::PinchWindup);
+	ScheduleStep(this, &UAH_GA_CrabSlam::OnTelegraphFinished, ScaledDuration);
+}
+
+void UAH_GA_CrabSlam::OnTelegraphFinished()
+{
+	SetPhase(EBH_CrabActionPhase::PinchSnap);
+	FaceLocationNow(SlamPoint);
+	ScheduleStep(this, &UAH_GA_CrabSlam::OnImpact, ImpactDelay);
+}
+
+void UAH_GA_CrabSlam::OnImpact()
+{
+	TArray<AActor*> Candidates;
+	CollectPawnsInSphere(SlamPoint, TelegraphRadius, Candidates);
+	for (AActor* Candidate : Candidates)
+	{
+		ResolveHitOnActor(Candidate, Candidate->GetActorLocation());
+	}
+	FinishAttack();
+}
+
+void UAH_GA_CrabSlam::OnVictimResolved(AActor* Victim, const FBH_CrabHitOutcome& Outcome)
+{
+	if (!Outcome.bConnected || Outcome.bParried || !Victim || !Victim->HasAuthority())
+	{
+		return;
+	}
+
+	// Knockback: the slam centre is the origin, so a victim is thrown away from the point of impact (ApplyHitPushback pushes away from the Attacker).
+	UBH_CombatFeelLibrary::ApplyHitPushback(GetAvatarActorFromActorInfo(), Victim, KnockbackTier, Outcome.bBlocked);
+
+	if (Outcome.bBlocked && !bApplyBlightWhenBlocked)
 	{
 		return;
 	}

@@ -136,3 +136,21 @@ public:
 protected:
 	virtual bool CalculateRawConditionValue(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) const override;
 };
+
+/** Phase 12G: true while the crab owns the slam ability (UAH_GA_CrabSlam), has a target, is not busy and Cooldown seconds passed since its last slam. Not ticking, no aborts. */
+UCLASS(meta = (DisplayName = "BH Slam Gate"))
+class BLACKWOODHOLLOWBETA_API UBTDecorator_BH_SlamGate : public UBTDecorator
+{
+	GENERATED_BODY()
+
+public:
+	UBTDecorator_BH_SlamGate(const FObjectInitializer& ObjectInitializer);
+	virtual FString GetStaticDescription() const override;
+
+	/** Minimum seconds between slams (measured from ABH_EnemyCrab::MarkSlamUsed). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Condition", meta = (ClampMin = "0.0"))
+	float Cooldown = 7.f;
+
+protected:
+	virtual bool CalculateRawConditionValue(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) const override;
+};

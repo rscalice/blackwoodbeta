@@ -4,6 +4,8 @@
 //   UAH_GA_CrabJab       fast, low damage, high posture damage: short wind-up, lunge, timed sweep.
 //   UAH_GA_CrabPinch     telegraphed at the target's position (UBH_TelegraphComponent), then lunge, then an area hit that adds Blight
 //                        build-up (UBPC_HeartFragment::AddBlightBuildup, Phase 10B) to a victim that neither blocked nor parried it.
+//   UAH_GA_CrabSlam      (Phase 12G, the Elite crab) heavy ground slam: a wide telegraph at the target's position, then one area hit with
+//                        knockback and Blight build-up. Reuses the Pinch poses (PinchWindup held for the telegraph, PinchSnap on impact).
 //   UAH_GA_CrabSidestep  lateral dash away from the target's line (random side, wall-checked); not while attacking / posture-broken.
 //
 // Poses are NOT played here: each step reports an EBH_CrabActionPhase (JabWindup, JabStrike, PinchWindup, PinchSnap, Sidestep)
@@ -14,6 +16,7 @@
 
 #include "CoreMinimal.h"
 #include "AbilitySystem/Abilities/AH_GA_CrabAttackBase.h"
+#include "Combat/BH_CombatFeel.h"
 #include "AH_GA_CrabAbilities.generated.h"
 
 /** Quick stab. Asset tag Ability.Combat.MeleeAttack (hit reactions / posture break cancel it), owns State.Combat.Attacking. */
@@ -104,6 +107,50 @@ private:
 	void OnSnapHit();
 
 	FVector TargetPoint = FVector::ZeroVector;
+};
+
+/** Heavy ground slam (the Elite's signature): wide telegraph, long wind-up, one area hit with knockback and Blight build-up. */
+UCLASS(Blueprintable)
+class BLACKWOODHOLLOWBETA_API UAH_GA_CrabSlam : public UAH_GA_CrabAttackBase
+{
+	GENERATED_BODY()
+
+public:
+	UAH_GA_CrabSlam();
+
+	/** Seconds the ground warning fills, before the crab's TelegraphTimeScale. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Slam", meta = (ClampMin = "0.1"))
+	float TelegraphDuration = 1.2f;
+
+	/** Radius (cm) of the telegraphed area and of the area hit. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Slam", meta = (ClampMin = "10.0"))
+	float TelegraphRadius = 440.f;
+
+	/** Seconds between the end of the wind-up and the area hit (the PinchSnap pose). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Slam", meta = (ClampMin = "0.01"))
+	float ImpactDelay = 0.15f;
+
+	/** Knockback strength of a connected (or blocked) victim, through UBH_CombatFeelLibrary::ApplyHitPushback (distance / duration per tier in the combat feel settings). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Slam")
+	EBH_ImpactTier KnockbackTier = EBH_ImpactTier::Massive;
+
+	/** Blight build-up (0-100 meter) added per connected hit, BEFORE BlightResistance / Heart-Fragment shielding. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Slam|Blight", meta = (ClampMin = "0.0"))
+	float BlightBuildupPerHit = 35.f;
+
+	/** false (default): a blocked hit adds no build-up; a parried hit never does. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Crab|Slam|Blight")
+	bool bApplyBlightWhenBlocked = false;
+
+protected:
+	virtual void BeginAttack() override;
+	virtual void OnVictimResolved(AActor* Victim, const FBH_CrabHitOutcome& Outcome) override;
+
+private:
+	void OnTelegraphFinished();
+	void OnImpact();
+
+	FVector SlamPoint = FVector::ZeroVector;
 };
 
 /** Short lateral dash (dodges the player's line of attack). Shares Ability.Combat.Dodge / State.Combat.Dodging with the player dodge. */

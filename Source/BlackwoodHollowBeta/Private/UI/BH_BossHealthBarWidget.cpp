@@ -8,6 +8,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
+#include "Combat/BH_EnemyRank.h"
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "GameFramework/Actor.h"
 
@@ -131,8 +132,8 @@ void UBH_BossHealthBarWidget::PresentBoss(AActor* Boss)
 
 	if (Txt_Name)
 	{
-		const UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(Boss);
-		ShownName = Identity ? Identity->GetBossBarName() : FText::FromString(Boss->GetName());
+		const FText RankedName = UBH_EnemyRankLibrary::GetBossBarName(Boss);
+		ShownName = RankedName.IsEmpty() ? FText::FromString(Boss->GetName()) : RankedName;
 		Txt_Name->SetText(ShownName);
 	}
 

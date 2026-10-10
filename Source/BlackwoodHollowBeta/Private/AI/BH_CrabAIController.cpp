@@ -261,6 +261,23 @@ UBehaviorTree* ABH_CrabAIController::BuildCrabTree()
 		AddAttack(Flank, TEXT("Jab"), UAH_GA_CrabJab::StaticClass(), 2.f);
 	}
 
+	// [1b] Phase 12G Slam: only crabs that own UAH_GA_CrabSlam (the Elite); the gate is closed for every other crab.
+	{
+		UBTDecorator_BH_SlamGate* SlamGate = B.Make<UBTDecorator_BH_SlamGate>(TEXT("Slam gate"));
+		SlamGate->Cooldown = 7.f;
+		UBTDecorator_BH_TargetWithin* Within = B.Make<UBTDecorator_BH_TargetWithin>(TEXT("Target within 800"));
+		Within->MaxDistance = 800.f;
+
+		UBTComposite_Sequence* Heavy = B.Make<UBTComposite_Sequence>(TEXT("Heavy: Slam"));
+		FCrabTreeBuilder::AddComposite(Root, Heavy, { SlamGate, Within });
+
+		UBTTask_BH_RequestAttackToken* Request = B.Make<UBTTask_BH_RequestAttackToken>(TEXT("Request token"));
+		Request->MaxWaitTime = 0.75f;
+		FCrabTreeBuilder::AddTask(Heavy, Request);
+
+		AddAttack(Heavy, TEXT("Slam"), UAH_GA_CrabSlam::StaticClass(), 5.f);
+	}
+
 	// [2] Open: Pinch (target in pinch range)
 	{
 		UBTDecorator_BH_TargetWithin* Within = B.Make<UBTDecorator_BH_TargetWithin>(TEXT("Target within 450"));

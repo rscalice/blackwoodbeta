@@ -186,6 +186,20 @@ float ABH_EnemyCrab::GetSecondsSinceLastSidestep() const
 	return World ? static_cast<float>(World->GetTimeSeconds() - LastSidestepTime) : 0.f;
 }
 
+float ABH_EnemyCrab::GetSecondsSinceLastSlam() const
+{
+	const UWorld* World = GetWorld();
+	return World ? static_cast<float>(World->GetTimeSeconds() - LastSlamTime) : 0.f;
+}
+
+void ABH_EnemyCrab::MarkSlamUsed()
+{
+	if (const UWorld* World = GetWorld())
+	{
+		LastSlamTime = World->GetTimeSeconds();
+	}
+}
+
 void ABH_EnemyCrab::MarkSidestepUsed()
 {
 	if (const UWorld* World = GetWorld())

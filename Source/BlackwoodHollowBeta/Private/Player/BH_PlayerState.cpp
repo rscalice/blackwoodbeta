@@ -5,10 +5,19 @@
 #include "AbilitySystem/Abilities/AH_GA_FragmentBase.h"
 #include "AbilitySystem/Abilities/AH_GA_OverloadBurst.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "Components/BPC_HeartFragment.h"
 #include "Consumables/BH_ConsumableLibrary.h"
 #include "Progression/BH_ProgressionComponent.h"
 #include "AI/BH_EnemyWaveSpawner.h"
+#include "Characters/BH_EnemyBase.h"
+#include "Combat/BH_EnemyRank.h"
+#include "Progression/BH_RPGSettings.h"
+#include "AbilitySystem/AH_AttributeSet.h"
+#include "AbilitySystemComponent.h"
+#include "NavigationSystem.h"
+#include "Components/CapsuleComponent.h"
+#include "GameFramework/Character.h"
 #include "Player/BH_GameState.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -431,6 +440,121 @@ void ABH_PlayerState::ServerDebugOpenSpanGate_Implementation()
 	}
 }
 
+bool ABH_PlayerState::ServerDebugSpawnEnemy_Validate(const FString& ShortName, int32 RankOverride, int32 LevelOverride)
+{
+	return ShortName.Len() > 0 && ShortName.Len() <= 32 && RankOverride >= -1 && RankOverride <= 3 && LevelOverride >= 0 && LevelOverride <= MaxDebugLevel;
+}
+
+void ABH_PlayerState::ServerDebugSpawnEnemy_Implementation(const FString& ShortName, int32 RankOverride, int32 LevelOverride)
+{
+	UWorld* World = GetWorld();
+	const APawn* PlayerPawn = GetPawn();
+	const UBH_RPGSettings* Settings = UBH_RPGSettings::Get();
+	if (!World || !PlayerPawn || !Settings)
+	{
+		UE_LOG(LogBHCombat, Warning, TEXT("bh.Enemy.Spawn: refused, '%s' has no pawn / world."), *GetPlayerName());
+		return;
+	}
+
+	TSubclassOf<APawn> EnemyClass;
+	FString KnownNames;
+	for (const TPair<FName, TSoftClassPtr<APawn>>& Pair : Settings->DebugEnemyClasses)
+	{
+		KnownNames += Pair.Key.ToString() + TEXT(" ");
+		if (Pair.Key.ToString().Equals(ShortName, ESearchCase::IgnoreCase))
+		{
+			EnemyClass = Pair.Value.LoadSynchronous();
+			break;
+		}
+	}
+	if (!EnemyClass)
+	{
+		UE_LOG(LogBHCombat, Warning, TEXT("bh.Enemy.Spawn: no enemy called '%s' (or its Blueprint is missing). Known: %s"), *ShortName, *KnownNames);
+		return;
+	}
+
+	constexpr float SpawnDistance = 500.f; // 5 m in front of the player
+	FVector Location = PlayerPawn->GetActorLocation() + PlayerPawn->GetActorForwardVector().GetSafeNormal2D() * SpawnDistance;
+	if (UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(World))
+	{
+		FNavLocation NavLocation;
+		if (NavSys->ProjectPointToNavigation(Location, NavLocation, FVector(300.0, 300.0, 600.0)))
+		{
+			Location = NavLocation.Location;
+		}
+	}
+	float LiftZ = 20.f;
+	if (const ACharacter* ClassDefaults = Cast<ACharacter>(EnemyClass->GetDefaultObject()))
+	{
+		LiftZ += ClassDefaults->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	}
+	Location.Z += LiftZ;
+	const FRotator Facing(0.f, (PlayerPawn->GetActorLocation() - Location).GetSafeNormal2D().Rotation().Yaw, 0.f);
+
+	APawn* Spawned = World->SpawnActorDeferred<APawn>(EnemyClass, FTransform(Facing, Location), nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
+	if (!Spawned)
+	{
+		UE_LOG(LogBHCombat, Warning, TEXT("bh.Enemy.Spawn: failed to spawn %s."), *GetNameSafe(EnemyClass));
+		return;
+	}
+	if (ABH_EnemyBase* EnemyBase = Cast<ABH_EnemyBase>(Spawned))
+	{
+		EnemyBase->CombatTeam = EBH_CombatTeam::Enemies;
+		EnemyBase->bResetOnDeath = false;
+	}
+	UBH_EnemyRankLibrary::PrepareSpawn(Spawned, RankOverride, LevelOverride);
+	Spawned->FinishSpawning(FTransform(Facing, Location));
+
+	UE_LOG(LogBHCombat, Log, TEXT("bh.Enemy.Spawn (from '%s'): %s -> %s rank %s / %s level %d at %s."), *GetPlayerName(), *ShortName, *Spawned->GetName(),
+		UBH_EnemyRankLibrary::RankName(UBH_EnemyRankLibrary::GetRank(Spawned)), UBH_EnemyRankLibrary::ArchetypeName(UBH_EnemyRankLibrary::GetArchetype(Spawned)),
+		UBH_EnemyRankLibrary::GetEnemyLevel(Spawned), *Location.ToCompactString());
+}
+
+bool ABH_PlayerState::ServerDebugKillAllEnemies_Validate(float RadiusCm)
+{
+	return RadiusCm >= 0.f && RadiusCm <= 1000000.f;
+}
+
+void ABH_PlayerState::ServerDebugKillAllEnemies_Implementation(float RadiusCm)
+{
+	UWorld* World = GetWorld();
+	const APawn* PlayerPawn = GetPawn();
+	if (!World)
+	{
+		return;
+	}
+	int32 Killed = 0;
+	for (TActorIterator<APawn> It(World); It; ++It)
+	{
+		APawn* Candidate = *It;
+		if (!UBH_EnemyRankLibrary::HasRankData(Candidate))
+		{
+			continue;
+		}
+		if (RadiusCm > 0.f && PlayerPawn && FVector::Dist(Candidate->GetActorLocation(), PlayerPawn->GetActorLocation()) > RadiusCm)
+		{
+			continue;
+		}
+		UAbilitySystemComponent* ASC = Candidate->FindComponentByClass<UAbilitySystemComponent>();
+		if (!ASC || ASC->HasMatchingGameplayTag(TAG_State_Combat_Dead) || !ASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetHealthAttribute()))
+		{
+			continue;
+		}
+		// Lethal true damage through the normal pipeline (IncomingDamage -> Health -> OnHealthZero: XP, drops, ragdoll, wave bookkeeping).
+		// A direct attribute override would skip PostGameplayEffectExecute, so the death path would never run.
+		FGameplayEffectContextHandle Context = ASC->MakeEffectContext();
+		Context.AddInstigator(const_cast<APawn*>(PlayerPawn), const_cast<APawn*>(PlayerPawn));
+		const FGameplayEffectSpecHandle Spec = ASC->MakeOutgoingSpec(UAH_GE_MeleeDamage::StaticClass(), 1.f, Context);
+		if (Spec.IsValid() && Spec.Data.IsValid())
+		{
+			Spec.Data->SetSetByCallerMagnitude(TAG_Data_Damage, 1.0e6f);
+			ASC->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+		}
+		++Killed;
+	}
+	UE_LOG(LogBHCombat, Log, TEXT("bh.Enemy.KillAll (from '%s'): %d enemies killed (radius %.0f cm)."), *GetPlayerName(), Killed, RadiusCm);
+}
+
 #else // UE_BUILD_SHIPPING: stubs so the RPCs link; validation rejects every call.
 bool ABH_PlayerState::ServerDebugGrantXP_Validate(int32) { return false; }
 void ABH_PlayerState::ServerDebugGrantXP_Implementation(int32) {}
@@ -446,4 +570,8 @@ bool ABH_PlayerState::ServerDebugGrantBurst_Validate() { return false; }
 void ABH_PlayerState::ServerDebugGrantBurst_Implementation() {}
 bool ABH_PlayerState::ServerDebugOpenSpanGate_Validate() { return false; }
 void ABH_PlayerState::ServerDebugOpenSpanGate_Implementation() {}
+bool ABH_PlayerState::ServerDebugSpawnEnemy_Validate(const FString&, int32, int32) { return false; }
+void ABH_PlayerState::ServerDebugSpawnEnemy_Implementation(const FString&, int32, int32) {}
+bool ABH_PlayerState::ServerDebugKillAllEnemies_Validate(float) { return false; }
+void ABH_PlayerState::ServerDebugKillAllEnemies_Implementation(float) {}
 #endif // !UE_BUILD_SHIPPING
