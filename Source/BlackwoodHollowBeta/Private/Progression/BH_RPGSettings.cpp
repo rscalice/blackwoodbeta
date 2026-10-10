@@ -28,7 +28,8 @@ UBH_RPGSettings::UBH_RPGSettings()
 	PlayerScalingTable = TSoftObjectPtr<UCurveTable>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/Data/Scaling/CT_PlayerScaling.CT_PlayerScaling")));
 	EnemyScalingTable = TSoftObjectPtr<UCurveTable>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/Data/Scaling/CT_EnemyScaling.CT_EnemyScaling")));
 
-	// Starting outfit (Phase 11E): the BasicCloth chest / pants / boots. No helm, no gloves.
+	// Starting outfit (Phase 11E): the BasicCloth MaleNormal chest / gloves / pants / boots (fitted to the MetaHuman visual body). No helm.
+	// Config/DefaultGame.ini overrides this list with the same paths; keep the two in sync.
 	auto AddOutfit = [this](EBH_EquipSlot Slot, const TCHAR* MeshPath)
 	{
 		FBH_StartingOutfitPiece Piece;
@@ -36,9 +37,10 @@ UBH_RPGSettings::UBH_RPGSettings()
 		Piece.Visual.SkeletalMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(MeshPath));
 		StartingOutfit.Add(Piece);
 	};
-	AddOutfit(EBH_EquipSlot::Chest, TEXT("/Game/Fab/BasicCloth/Chest.Chest"));
-	AddOutfit(EBH_EquipSlot::Legs, TEXT("/Game/Fab/BasicCloth/Pants.Pants"));
-	AddOutfit(EBH_EquipSlot::Feet, TEXT("/Game/Fab/BasicCloth/Boots.Boots"));
+	AddOutfit(EBH_EquipSlot::Chest, TEXT("/Game/BlackwoodHollow/Equipment/Armor/BasicCloth/SKM_BasicCloth_Chest_MaleNormal.SKM_BasicCloth_Chest_MaleNormal"));
+	AddOutfit(EBH_EquipSlot::Arms,  TEXT("/Game/BlackwoodHollow/Equipment/Armor/BasicCloth/SKM_BasicCloth_Gloves_MaleNormal.SKM_BasicCloth_Gloves_MaleNormal"));
+	AddOutfit(EBH_EquipSlot::Legs,  TEXT("/Game/BlackwoodHollow/Equipment/Armor/BasicCloth/SKM_BasicCloth_Pants_MaleNormal.SKM_BasicCloth_Pants_MaleNormal"));
+	AddOutfit(EBH_EquipSlot::Feet,  TEXT("/Game/BlackwoodHollow/Equipment/Armor/BasicCloth/SKM_BasicCloth_Boots_MaleNormal.SKM_BasicCloth_Boots_MaleNormal"));
 
 	// bh.Armor.Give sets: item Blueprints /Game/BlackwoodHollow/Items/Armor/BI_Armor_<Prefix>_<Helm|Gloves|Chest|Pants|Boots>.
 	auto AddDebugSet = [this](const TCHAR* SetName, const TCHAR* Prefix)

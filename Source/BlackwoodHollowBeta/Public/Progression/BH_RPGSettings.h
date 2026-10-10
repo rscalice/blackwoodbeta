@@ -100,8 +100,8 @@ public:
 	// -- Armor visuals (Phase 11E) ----------------------------------------------------------------
 
 	/**
-	 * Cosmetic starting outfit: shown in any slot with no armor equipped (or whose equipped piece has no visual). Head and Arms are empty on
-	 * purpose (no helm, no gloves). Defaults: the BasicCloth chest / pants / boots.
+	 * Cosmetic starting outfit: shown in any slot with no armor equipped (or whose equipped piece has no visual). Head is empty on
+	 * purpose (no helm). Defaults: the BasicCloth MaleNormal chest / gloves / pants / boots.
 	 */
 	UPROPERTY(Config, EditAnywhere, Category = "Armor Visuals")
 	TArray<FBH_StartingOutfitPiece> StartingOutfit;
