@@ -112,7 +112,8 @@ void UBH_WeaponVisualComponent::UpdateSwordArm(USkeletalMeshComponent* Body, flo
 {
 	UAnimInstance* Anim = Body ? Body->GetAnimInstance() : nullptr;
 	static const FName SwordArmAlphaName(TEXT("SwordArmAlpha"));
-	const FFloatProperty* Property = Anim ? FindFProperty<FFloatProperty>(Anim->GetClass(), SwordArmAlphaName) : nullptr;
+	// Blueprint "float" variables are doubles in UE5, so look the property up as a numeric one.
+	const FNumericProperty* Property = Anim ? CastField<FNumericProperty>(Anim->GetClass()->FindPropertyByName(SwordArmAlphaName)) : nullptr;
 	if (!Property)
 	{
 		return;
@@ -120,7 +121,7 @@ void UBH_WeaponVisualComponent::UpdateSwordArm(USkeletalMeshComponent* Body, flo
 	const UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(GetOwner());
 	const float Target = (Stance && Stance->IsWeaponDrawn() && Stance->IsSwordVariant()) ? 1.f : 0.f;
 	SwordArmAlpha = FMath::FInterpConstantTo(SwordArmAlpha, Target, DeltaTime, 1.f / FMath::Max(SwordArmBlendTime, 0.01f));
-	Property->SetPropertyValue_InContainer(Anim, SwordArmAlpha);
+	Property->SetFloatingPointPropertyValue(Property->ContainerPtrToValuePtr<void>(Anim), static_cast<double>(SwordArmAlpha));
 }
 
 void UBH_WeaponVisualComponent::ReleaseSlot(int32 SlotIndex)
