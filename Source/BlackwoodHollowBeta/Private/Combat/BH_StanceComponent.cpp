@@ -1,6 +1,7 @@
 // Blackwood Hollow - replicated weapon stance component (implementation)
 
 #include "Combat/BH_StanceComponent.h"
+#include "Actors/BH_IslandRules.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "Combat/BH_LoadoutComponent.h"
@@ -83,6 +84,12 @@ bool UBH_StanceComponent::IsStanceAllowed(FGameplayTag Stance) const
 	if (!BH_Stance::IsWeaponStance(Stance))
 	{
 		return false;
+	}
+	// Island 1 unarmed start: until the cache equips a weapon, only Unarmed is allowed. Without this, a stance requested at spawn
+	// (empty AvailableStances = "allow anything" below) equipped the stance's default Sword & Shield meshes on the back.
+	if (ABH_IslandRules::IsWeaponInputLocked(GetOwner()))
+	{
+		return Stance == TAG_Stance_Weapon_Unarmed.GetTag();
 	}
 	const UBH_LoadoutComponent* Loadout = GetOwner() ? GetOwner()->FindComponentByClass<UBH_LoadoutComponent>() : nullptr;
 	if (!Loadout || Loadout->AvailableStances.Num() == 0)
