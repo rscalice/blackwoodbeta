@@ -28,6 +28,7 @@
 #include "BH_Breakable.generated.h"
 
 class UStaticMeshComponent;
+class UBoxComponent;
 
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API ABH_Breakable : public AActor, public IBH_Damageable
@@ -87,9 +88,16 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void OnConstruction(const FTransform& Transform) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> BodyMesh;
+
+	/** #103: blocks pawns. BodyMesh is a PhysicsBody object (so melee sweeps hit it) and the player capsule ignores PhysicsBody, so the mesh
+	 *  alone never stops the player. This WorldStatic box, fitted to the mesh bounds in OnConstruction, does. Goes away with the actor's
+	 *  collision when it breaks. It does not affect navigation (BodyMesh already does). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UBoxComponent> PawnBlocker;
 
 private:
 	UFUNCTION()

@@ -1,7 +1,9 @@
 // Blackwood Hollow - a breakable world blocker (implementation)
 
 #include "Actors/BH_Breakable.h"
+#include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/EngineTypes.h"
 #include "Engine/World.h"
@@ -25,7 +27,29 @@ ABH_Breakable::ABH_Breakable()
 	BodyMesh->SetCollisionObjectType(ECC_PhysicsBody);
 	BodyMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 
+	PawnBlocker = CreateDefaultSubobject<UBoxComponent>(TEXT("PawnBlocker"));
+	PawnBlocker->SetupAttachment(BodyMesh);
+	PawnBlocker->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	PawnBlocker->SetCollisionObjectType(ECC_WorldStatic);
+	PawnBlocker->SetCollisionResponseToAllChannels(ECR_Ignore);
+	PawnBlocker->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+	PawnBlocker->SetCanEverAffectNavigation(false);
+	PawnBlocker->SetGenerateOverlapEvents(false);
+	PawnBlocker->SetHiddenInGame(true);
+
 	Health = MaxHealth;
+}
+
+void ABH_Breakable::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	// Fit the blocker to the mesh in the mesh's local space; it is attached to BodyMesh, so it inherits the mesh's scale.
+	if (PawnBlocker && BodyMesh && BodyMesh->GetStaticMesh())
+	{
+		const FBox LocalBox = BodyMesh->GetStaticMesh()->GetBoundingBox();
+		PawnBlocker->SetBoxExtent(LocalBox.GetExtent(), false);
+		PawnBlocker->SetRelativeLocation(LocalBox.GetCenter());
+	}
 }
 
 void ABH_Breakable::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
