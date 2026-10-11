@@ -5,6 +5,7 @@
 #include "Audio/BH_FootstepSet.h"
 #include "Items/BH_ArmorItem.h"
 #include "Engine/SkeletalMesh.h"
+#include "GameFramework/Pawn.h"
 
 namespace BH_RPGSettings_Private
 {
@@ -28,7 +29,25 @@ UBH_RPGSettings::UBH_RPGSettings()
 	PlayerScalingTable = TSoftObjectPtr<UCurveTable>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/Data/Scaling/CT_PlayerScaling.CT_PlayerScaling")));
 	EnemyScalingTable = TSoftObjectPtr<UCurveTable>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/Data/Scaling/CT_EnemyScaling.CT_EnemyScaling")));
 
-	// Starting outfit (Phase 11E): the BasicCloth chest / pants / boots. No helm, no gloves.
+	// Enemy rank multipliers (Phase 12G), Health / Posture / Damage / XP. All [Claude], tunable here.
+	CommonRank  = FBH_EnemyRankMultipliers(1.f, 1.f, 1.f, 1.f);
+	VeteranRank = FBH_EnemyRankMultipliers(1.6f, 1.4f, 1.2f, 2.f);
+	EliteRank   = FBH_EnemyRankMultipliers(4.f, 3.f, 1.4f, 6.f);
+	BossRank    = FBH_EnemyRankMultipliers(8.f, 5.f, 1.6f, 12.f);
+
+	// bh.Enemy.Spawn short names (Phase 12G).
+	auto AddEnemy = [this](const TCHAR* ShortName, const TCHAR* Path)
+	{
+		DebugEnemyClasses.Add(FName(ShortName), TSoftClassPtr<APawn>(FSoftObjectPath(Path)));
+	};
+	AddEnemy(TEXT("Crab"), TEXT("/Game/BlackwoodHollow/Characters/Enemies/Crab/BP_BH_Enemy_Crab.BP_BH_Enemy_Crab_C"));
+	AddEnemy(TEXT("ArmouredCrab"), TEXT("/Game/BlackwoodHollow/Characters/Enemies/Crab/BP_BH_Enemy_Crab_Armoured.BP_BH_Enemy_Crab_Armoured_C"));
+	AddEnemy(TEXT("EliteCrab"), TEXT("/Game/BlackwoodHollow/Characters/Enemies/Crab/BP_BH_Enemy_Crab_Elite.BP_BH_Enemy_Crab_Elite_C"));
+	AddEnemy(TEXT("CV"), TEXT("/Game/BlackwoodHollow/Characters/Enemies/MM/BP_BH_Enemy_CorruptedVanguard_MM.BP_BH_Enemy_CorruptedVanguard_MM_C"));
+	AddEnemy(TEXT("CVSergeant"), TEXT("/Game/BlackwoodHollow/Characters/Enemies/MM/BP_BH_Enemy_CV_Sergeant.BP_BH_Enemy_CV_Sergeant_C"));
+
+	// Starting outfit (Phase 11E): the BasicCloth MaleNormal chest / gloves / pants / boots (fitted to the MetaHuman visual body). No helm.
+	// Config/DefaultGame.ini overrides this list with the same paths; keep the two in sync.
 	auto AddOutfit = [this](EBH_EquipSlot Slot, const TCHAR* MeshPath)
 	{
 		FBH_StartingOutfitPiece Piece;
@@ -36,9 +55,10 @@ UBH_RPGSettings::UBH_RPGSettings()
 		Piece.Visual.SkeletalMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(MeshPath));
 		StartingOutfit.Add(Piece);
 	};
-	AddOutfit(EBH_EquipSlot::Chest, TEXT("/Game/Fab/BasicCloth/Chest.Chest"));
-	AddOutfit(EBH_EquipSlot::Legs, TEXT("/Game/Fab/BasicCloth/Pants.Pants"));
-	AddOutfit(EBH_EquipSlot::Feet, TEXT("/Game/Fab/BasicCloth/Boots.Boots"));
+	AddOutfit(EBH_EquipSlot::Chest, TEXT("/Game/BlackwoodHollow/Equipment/Armor/BasicCloth/SKM_BasicCloth_Chest_MaleNormal.SKM_BasicCloth_Chest_MaleNormal"));
+	AddOutfit(EBH_EquipSlot::Arms,  TEXT("/Game/BlackwoodHollow/Equipment/Armor/BasicCloth/SKM_BasicCloth_Gloves_MaleNormal.SKM_BasicCloth_Gloves_MaleNormal"));
+	AddOutfit(EBH_EquipSlot::Legs,  TEXT("/Game/BlackwoodHollow/Equipment/Armor/BasicCloth/SKM_BasicCloth_Pants_MaleNormal.SKM_BasicCloth_Pants_MaleNormal"));
+	AddOutfit(EBH_EquipSlot::Feet,  TEXT("/Game/BlackwoodHollow/Equipment/Armor/BasicCloth/SKM_BasicCloth_Boots_MaleNormal.SKM_BasicCloth_Boots_MaleNormal"));
 
 	// bh.Armor.Give sets: item Blueprints /Game/BlackwoodHollow/Items/Armor/BI_Armor_<Prefix>_<Helm|Gloves|Chest|Pants|Boots>.
 	auto AddDebugSet = [this](const TCHAR* SetName, const TCHAR* Prefix)
@@ -55,6 +75,17 @@ UBH_RPGSettings::UBH_RPGSettings()
 	AddDebugSet(TEXT("Light"), TEXT("Vanguard"));
 	AddDebugSet(TEXT("Medium"), TEXT("Medium"));
 	AddDebugSet(TEXT("Heavy"), TEXT("Heavy"));
+}
+
+FBH_EnemyRankMultipliers UBH_RPGSettings::GetRankMultipliers(EBH_EnemyRank Rank) const
+{
+	switch (Rank)
+	{
+	case EBH_EnemyRank::Veteran: return VeteranRank;
+	case EBH_EnemyRank::Elite:   return EliteRank;
+	case EBH_EnemyRank::Boss:    return BossRank;
+	default:                     return CommonRank;
+	}
 }
 
 const FBH_ArmorVisual* UBH_RPGSettings::FindStartingOutfitVisual(EBH_EquipSlot Slot) const

@@ -428,7 +428,8 @@ private:
 	void BeginDeath();
 	void CommitState();
 	void SampleBodyRest();
-	bool ResolveRespawnDestination(FVector& OutLocation, float& OutYaw, FName& OutHubName, bool bLogFallback) const;
+	/** Phase 12F: the point is the nearest one THIS player attuned (nearest of any when none); OutAppliesFracture (optional) receives that point's bAppliesFracture (true for the fallbacks). */
+	bool ResolveRespawnDestination(FVector& OutLocation, float& OutYaw, FName& OutHubName, bool bLogFallback, bool* OutAppliesFracture = nullptr) const;
 	void ReturnToLife(const FVector& Location, float Yaw, float HealthFraction);
 	void SetReviveInfo(APawn* Reviver, uint8 ProgressPct);
 

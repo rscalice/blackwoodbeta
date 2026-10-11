@@ -681,6 +681,59 @@ void UBH_InteractorComponent::ServerDebugSetBlight_Implementation(float Value)
 #endif
 }
 
+bool UBH_InteractorComponent::ServerDebugCompleteInteraction_Validate(UBH_InteractableComponent* ClientFocus)
+{
+#if UE_BUILD_SHIPPING
+	return false;
+#else
+	return true;
+#endif
+}
+
+void UBH_InteractorComponent::ServerDebugCompleteInteraction_Implementation(UBH_InteractableComponent* ClientFocus)
+{
+#if !UE_BUILD_SHIPPING
+	APawn* PawnOwner = Cast<APawn>(GetOwner());
+	UWorld* ComponentWorld = GetWorld();
+	const UBH_InteractionSubsystem* Registry = ComponentWorld ? ComponentWorld->GetSubsystem<UBH_InteractionSubsystem>() : nullptr;
+	if (!PawnOwner || !Registry)
+	{
+		return;
+	}
+
+	UBH_InteractableComponent* Target = (ClientFocus && ValidateTarget(ClientFocus)) ? ClientFocus : nullptr;
+	if (!Target)
+	{
+		// No usable focus from the caller (a host typing for another player index, a Python call): the nearest interactable this pawn can use.
+		float BestDistance = TNumericLimits<float>::Max();
+		for (const TWeakObjectPtr<UBH_InteractableComponent>& Weak : Registry->GetAll())
+		{
+			UBH_InteractableComponent* Candidate = Weak.Get();
+			if (!Candidate || !ValidateTarget(Candidate))
+			{
+				continue;
+			}
+			const float Distance = Candidate->GetDistanceFrom(PawnOwner->GetActorLocation());
+			if (Distance < BestDistance)
+			{
+				BestDistance = Distance;
+				Target = Candidate;
+			}
+		}
+	}
+
+	if (!Target)
+	{
+		UE_LOG(LogBHInteractor, Warning, TEXT("bh.Interact.Complete: %s has nothing to interact with in range."), *GetNameSafe(PawnOwner));
+		return;
+	}
+	UE_LOG(LogBHInteractor, Log, TEXT("bh.Interact.Complete: %s completes '%s'."), *GetNameSafe(PawnOwner), *GetNameSafe(Target->GetOwner()));
+	Target->NotifyInteractionCompleted(PawnOwner);
+#else
+	(void)ClientFocus;
+#endif
+}
+
 bool UBH_InteractorComponent::ServerDebugResetLoot_Validate()
 {
 #if UE_BUILD_SHIPPING

@@ -2,7 +2,7 @@
 // Target: Unreal Engine 5.8 (C++)
 //
 // FBH_ArmorVisual describes what ONE armor slot looks like on the visible MetaHuman body (see UBH_ArmorVisualComponent):
-//   * SkeletalMesh: leader-posed to the visual body (same bone names / reference pose as SK_BH_TallBody). One combined mesh may be
+//   * SkeletalMesh: leader-posed to the visual body (same bone names / reference pose as the MetaHuman MaleNormal visual body). One combined mesh may be
 //     shared by several slots: HiddenMaterialSlots lists the material indices NOT to draw (e.g. the Villager mesh: slot 0 body, 1 tunic,
 //     2 shoes, 3 pants, 4 belt).
 //   * StaticMesh: used when SkeletalMesh is empty. Attached to StaticMeshBone of the visual body (e.g. the leather cap on "head").

@@ -3,6 +3,7 @@
 #include "UI/BH_OverheadVitalsComponent.h"
 #include "UI/BH_OverheadVitalsWidget.h"
 #include "Combat/BH_LockOnComponent.h"
+#include "Combat/BH_EnemyRank.h"
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
@@ -58,14 +59,12 @@ void UBH_OverheadVitalsComponent::BeginPlay()
 	}
 
 	// Bosses get the big top-centre boss bar instead (UBH_BossHealthBarWidget): never show the small overhead one.
-	if (const UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(GetOwner()))
+	// Phase 12G: also true for an Elite / Boss rank ABH_EnemyBase (rank is set before BeginPlay and replicated with the actor).
+	if (UBH_EnemyRankLibrary::IsBossPresented(GetOwner()))
 	{
-		if (Identity->bIsBoss)
-		{
-			SetVisibility(false);
-			SetComponentTickEnabled(false);
-			return;
-		}
+		SetVisibility(false);
+		SetComponentTickEnabled(false);
+		return;
 	}
 
 	// Position: HeightAboveCapsuleTop above the top of the owner's capsule (relative to the root it hangs from).

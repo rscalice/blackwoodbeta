@@ -717,12 +717,21 @@ void UBH_PlayerDeathComponent::ServerRespawnAtHub_Implementation()
 	FVector Destination = FVector::ZeroVector;
 	float DestinationYaw = 0.f;
 	FName HubName;
-	ResolveRespawnDestination(Destination, DestinationYaw, HubName, /*bLogFallback*/ true);
+	bool bPointAppliesFracture = true;
+	ResolveRespawnDestination(Destination, DestinationYaw, HubName, /*bLogFallback*/ true, &bPointAppliesFracture);
 	ReturnToLife(Destination, DestinationYaw, RespawnHealthPercent);
 
 	// Phase 11G: the price of going home. EVERY party member is fractured (living partners too); a partner revive never gets here.
-	const int32 Fractured = UBH_FractureLibrary::ApplyFractureToParty(this);
-	UE_LOG(LogBHCombat, Log, TEXT("%s: hub respawn, %d party member(s) fractured."), *GetNameSafe(GetOwner()), Fractured);
+	// Phase 12F: a point with bAppliesFracture false (the Wreck Camp) is free: nobody can repair Fracture on the beach yet.
+	if (bPointAppliesFracture)
+	{
+		const int32 Fractured = UBH_FractureLibrary::ApplyFractureToParty(this);
+		UE_LOG(LogBHCombat, Log, TEXT("%s: hub respawn, %d party member(s) fractured."), *GetNameSafe(GetOwner()), Fractured);
+	}
+	else
+	{
+		UE_LOG(LogBHCombat, Log, TEXT("%s: hub respawn at '%s', no Fracture (the point does not apply it)."), *GetNameSafe(GetOwner()), *HubName.ToString());
+	}
 }
 
 void UBH_PlayerDeathComponent::ServerWaitForRevive_Implementation()
@@ -735,8 +744,12 @@ void UBH_PlayerDeathComponent::ServerWaitForRevive_Implementation()
 	CommitState();
 }
 
-bool UBH_PlayerDeathComponent::ResolveRespawnDestination(FVector& OutLocation, float& OutYaw, FName& OutHubName, bool bLogFallback) const
+bool UBH_PlayerDeathComponent::ResolveRespawnDestination(FVector& OutLocation, float& OutYaw, FName& OutHubName, bool bLogFallback, bool* OutAppliesFracture) const
 {
+	if (OutAppliesFracture)
+	{
+		*OutAppliesFracture = true; // fallbacks (no respawn point) keep the pre-12F price
+	}
 	const AActor* OwnerActor = GetOwner();
 	const UWorld* World = GetWorld();
 	const float HalfHeight = GetCapsuleHalfHeight();
@@ -752,14 +765,19 @@ bool UBH_PlayerDeathComponent::ResolveRespawnDestination(FVector& OutLocation, f
 		}
 	}
 
-	// 1) The nearest hub respawn point.
+	// 1) The nearest hub respawn point this player attuned (Phase 12F; with none attuned: the nearest of any, as before).
 	if (const UBH_RespawnPointSubsystem* Registry = UBH_RespawnPointSubsystem::Get(this))
 	{
-		if (const ABH_RespawnPoint* Point = Registry->FindNearest(From))
+		const APawn* OwnerPawn = Cast<APawn>(OwnerActor);
+		if (const ABH_RespawnPoint* Point = Registry->FindNearestForPlayer(From, OwnerPawn ? OwnerPawn->GetPlayerState() : nullptr))
 		{
 			OutLocation = Point->ComputeSpawnLocation(HalfHeight, SlotIndex);
 			OutYaw = Point->GetSpawnRotation().Yaw;
 			OutHubName = Point->HubName;
+			if (OutAppliesFracture)
+			{
+				*OutAppliesFracture = Point->bAppliesFracture;
+			}
 			return true;
 		}
 	}

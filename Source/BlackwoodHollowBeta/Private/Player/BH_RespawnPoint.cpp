@@ -3,14 +3,18 @@
 #include "Player/BH_RespawnPoint.h"
 #include "AbilitySystem/StatusEffects/BH_FractureEffects.h"
 #include "Loot/BH_LootLibrary.h"
+#include "Player/BH_PlayerDeathComponent.h"
+#include "Player/BH_PlayerState.h"
 #include "NarrativeItem.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "Components/ArrowComponent.h"
 #include "Components/SceneComponent.h"
 #include "CollisionQueryParams.h"
 #include "Engine/EngineTypes.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
 
 ABH_RespawnPoint::ABH_RespawnPoint()
 {
@@ -44,6 +48,12 @@ ABH_RespawnPoint::ABH_RespawnPoint()
 bool ABH_RespawnPoint::BH_CanInteract(const APawn* InteractingPawn, FText& OutDenyReason) const
 {
 	OutDenyReason = FText::GetEmpty();
+
+	// Phase 12F: a point that does not fracture (the Wreck Camp) has nothing to repair either.
+	if (!bAppliesFracture)
+	{
+		return false;
+	}
 
 	// Hidden entirely unless this player is Fractured.
 	if (!InteractingPawn || !UBH_FractureLibrary::IsActorFractured(InteractingPawn))
@@ -102,6 +112,16 @@ void ABH_RespawnPoint::BH_OnInteractionCompleted(APawn* InteractingPawn)
 	UBH_FractureLibrary::RemoveFracture(UBH_FractureLibrary::ResolveASC(InteractingPawn));
 }
 
+bool ABH_RespawnPoint::IsAttunedFor(const APlayerState* PlayerState) const
+{
+	const ABH_PlayerState* BHState = Cast<ABH_PlayerState>(PlayerState);
+	if (!BHState)
+	{
+		return false;
+	}
+	return bAttunedByDefault ? !BHState->AreStarterPointsRetired() : BHState->IsHubAttuned(HubName);
+}
+
 void ABH_RespawnPoint::BeginPlay()
 {
 	Super::BeginPlay();
@@ -109,15 +129,47 @@ void ABH_RespawnPoint::BeginPlay()
 	{
 		Registry->RegisterPoint(this);
 	}
+
+	// Attunement is server business (this actor is not replicated, so a client copy also reports HasAuthority: use the net mode).
+	if (GetNetMode() != NM_Client && !bAttunedByDefault)
+	{
+		GetWorldTimerManager().SetTimer(AttuneTimer, this, &ABH_RespawnPoint::PollAttunement, 0.5f, true);
+	}
 }
 
 void ABH_RespawnPoint::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	GetWorldTimerManager().ClearTimer(AttuneTimer);
 	if (UBH_RespawnPointSubsystem* Registry = UBH_RespawnPointSubsystem::Get(this))
 	{
 		Registry->UnregisterPoint(this);
 	}
 	Super::EndPlay(EndPlayReason);
+}
+
+void ABH_RespawnPoint::PollAttunement()
+{
+	const UWorld* PointWorld = GetWorld();
+	if (!PointWorld)
+	{
+		return;
+	}
+	const double RadiusSq = FMath::Square(static_cast<double>(AttuneRadius));
+	for (FConstPlayerControllerIterator It = PointWorld->GetPlayerControllerIterator(); It; ++It)
+	{
+		const APlayerController* Controller = It->Get();
+		const APawn* ControlledPawn = Controller ? Controller->GetPawn() : nullptr;
+		ABH_PlayerState* BHState = Controller ? Controller->GetPlayerState<ABH_PlayerState>() : nullptr;
+		if (!ControlledPawn || !BHState || !UBH_PlayerDeathComponent::IsLivingPlayer(ControlledPawn))
+		{
+			continue;
+		}
+		if (FVector::DistSquared(ControlledPawn->GetActorLocation(), GetActorLocation()) <= RadiusSq)
+		{
+			// A regular point also retires the starter camp for this player.
+			BHState->AttuneHub(HubName, /*bRetireStarterPoints*/ true);
+		}
+	}
 }
 
 FVector ABH_RespawnPoint::ComputeSpawnLocation(float CapsuleHalfHeight, int32 SlotIndex) const
@@ -180,6 +232,27 @@ void UBH_RespawnPointSubsystem::RegisterPoint(ABH_RespawnPoint* Point)
 void UBH_RespawnPointSubsystem::UnregisterPoint(ABH_RespawnPoint* Point)
 {
 	Points.Remove(Point);
+}
+
+ABH_RespawnPoint* UBH_RespawnPointSubsystem::FindNearestForPlayer(const FVector& Location, const APlayerState* PlayerState) const
+{
+	ABH_RespawnPoint* BestAttuned = nullptr;
+	double BestAttunedDistSq = TNumericLimits<double>::Max();
+	for (const TWeakObjectPtr<ABH_RespawnPoint>& Weak : Points)
+	{
+		ABH_RespawnPoint* Point = Weak.Get();
+		if (!Point || !Point->IsAttunedFor(PlayerState))
+		{
+			continue;
+		}
+		const double DistSq = FVector::DistSquared(Point->GetActorLocation(), Location);
+		if (DistSq < BestAttunedDistSq)
+		{
+			BestAttunedDistSq = DistSq;
+			BestAttuned = Point;
+		}
+	}
+	return BestAttuned ? BestAttuned : FindNearest(Location);
 }
 
 ABH_RespawnPoint* UBH_RespawnPointSubsystem::FindNearest(const FVector& Location) const

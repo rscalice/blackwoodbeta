@@ -17,10 +17,13 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Engine/TimerHandle.h"
 #include "Interaction/BH_InteractableComponent.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "BH_RespawnPoint.generated.h"
 
+class ABH_PlayerState;
+class APlayerState;
 class UArrowComponent;
 class USceneComponent;
 
@@ -54,6 +57,28 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|Respawn")
 	FRotator GetSpawnRotation() const { return FRotator(0.f, GetActorRotation().Yaw, 0.f); }
 
+	// -- Phase 12F: attunement and Fracture ---------------------------------------------------------
+	// A dead player respawns at the nearest point THEY have attuned (touched; the server polls living players within AttuneRadius every
+	// 0.5 s). With no attuned point at all (PrototypeBlockout's single point before anybody touched it) the nearest point of any kind is
+	// used, exactly as before 12F. A point with bAttunedByDefault (the Wreck Camp) counts as attuned for everybody until they attune a
+	// regular point, which retires it for that player.
+
+	/** false: respawning at this point does NOT fracture the party and the Fracture repair prompt is not offered here (the Wreck Camp). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Respawn|Attunement")
+	bool bAppliesFracture = true;
+
+	/** true: attuned for every player from the start, until that player attunes a regular point (the Wreck Camp). Such a point is never attuned by touching. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Respawn|Attunement")
+	bool bAttunedByDefault = false;
+
+	/** A living player this close (cm, 3D) to the point attunes it. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Respawn|Attunement", meta = (ClampMin = "50.0", ForceUnits = "cm"))
+	float AttuneRadius = 300.f;
+
+	/** Any machine (the attuned list replicates on the PlayerState). True if a player respawning from PlayerState may use this point. */
+	UFUNCTION(BlueprintPure, Category = "BH|Respawn|Attunement")
+	bool IsAttunedFor(const APlayerState* PlayerState) const;
+
 	/** Corrupted Coral Shards the Fracture repair costs (balance.md: 3). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Respawn|Repair", meta = (ClampMin = "1"))
 	int32 RepairShardCost = 3;
@@ -66,6 +91,11 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	/** Server: attunes this point for every living player standing within AttuneRadius. */
+	void PollAttunement();
+
+	FTimerHandle AttuneTimer;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Respawn")
 	TObjectPtr<USceneComponent> SceneRoot;
@@ -95,6 +125,12 @@ public:
 
 	/** The registered point nearest to Location (3D distance), or nullptr when none is registered. */
 	ABH_RespawnPoint* FindNearest(const FVector& Location) const;
+
+	/**
+	 * Phase 12F. The registered point nearest to Location among those PlayerState has attuned (ABH_RespawnPoint::IsAttunedFor). When the
+	 * player has no attuned point at all (or PlayerState is null) this is FindNearest, i.e. the pre-12F behaviour.
+	 */
+	ABH_RespawnPoint* FindNearestForPlayer(const FVector& Location, const APlayerState* PlayerState) const;
 
 	int32 GetNumPoints() const { return Points.Num(); }
 

@@ -29,6 +29,7 @@ class UUserWidget;
 class UBH_HUDWidget;
 class UBH_BossHealthBarWidget;
 class UBH_CombatIdentityComponent;
+class ABH_EnemyBase;
 class UAbilitySystemComponent;
 class UWorld;
 class SWidget;
@@ -96,6 +97,8 @@ private:
 	void StartBossWatch();
 	void StopBossWatch();
 	void OnAnyAggroChanged(UBH_CombatIdentityComponent* Source, AActor* NewTarget);
+	/** Phase 12G: the same event for ABH_EnemyBase enemies (the Elite crab). */
+	void OnAnyEnemyAggroSeen(ABH_EnemyBase* Enemy, AActor* NewTarget);
 	/** Picks the nearest living boss aggroed on the local pawn and shows / schedules the hide of the bar accordingly. */
 	void EvaluateBoss();
 	void ShowBossBar(AActor* Boss);
@@ -109,6 +112,7 @@ private:
 	FTimerHandle BossScanTimer;
 	FTimerHandle BossHideTimer;
 	FDelegateHandle AggroHandle;
+	FDelegateHandle EnemyAggroHandle;
 	TWeakObjectPtr<UWorld> WatchWorld;
 
 	/** The "no BossBarSlot" warning is logged once. */

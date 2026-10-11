@@ -4,6 +4,9 @@
 #include "UI/BH_HUDWidget.h"
 #include "UI/BH_BossHealthBarWidget.h"
 #include "AI/BH_AIController.h"
+#include "AI/BH_CrabAIController.h"
+#include "Characters/BH_EnemyBase.h"
+#include "Combat/BH_EnemyRank.h"
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
@@ -52,6 +55,18 @@ namespace
 			if (const ABH_AIController* Defaults = Cast<ABH_AIController>(Boss->AIControllerClass->GetDefaultObject()))
 			{
 				return Defaults->AggroRange;
+			}
+		}
+		// Phase 12G: the crab brain (Elite rank crab).
+		if (const ABH_CrabAIController* CrabBrain = Cast<ABH_CrabAIController>(Boss->GetController()))
+		{
+			return CrabBrain->AggroRange;
+		}
+		if (Boss->AIControllerClass && Boss->AIControllerClass->IsChildOf(ABH_CrabAIController::StaticClass()))
+		{
+			if (const ABH_CrabAIController* CrabDefaults = Cast<ABH_CrabAIController>(Boss->AIControllerClass->GetDefaultObject()))
+			{
+				return CrabDefaults->AggroRange;
 			}
 		}
 		return 0.f;
@@ -165,6 +180,10 @@ void UBH_HUDSubsystem::StartBossWatch()
 	{
 		AggroHandle = UBH_CombatIdentityComponent::OnAnyAggroTargetChanged().AddUObject(this, &UBH_HUDSubsystem::OnAnyAggroChanged);
 	}
+	if (!EnemyAggroHandle.IsValid())
+	{
+		EnemyAggroHandle = ABH_EnemyBase::OnAnyEnemyAggroSeen.AddUObject(this, &UBH_HUDSubsystem::OnAnyEnemyAggroSeen);
+	}
 
 	// The fallback scan lives on the current world's timer manager (a LocalPlayer outlives level travel; the world does not).
 	UWorld* World = GetLocalPlayer() ? GetLocalPlayer()->GetWorld() : nullptr;
@@ -191,6 +210,11 @@ void UBH_HUDSubsystem::StopBossWatch()
 		UBH_CombatIdentityComponent::OnAnyAggroTargetChanged().Remove(AggroHandle);
 		AggroHandle.Reset();
 	}
+	if (EnemyAggroHandle.IsValid())
+	{
+		ABH_EnemyBase::OnAnyEnemyAggroSeen.Remove(EnemyAggroHandle);
+		EnemyAggroHandle.Reset();
+	}
 	if (UWorld* World = WatchWorld.Get())
 	{
 		World->GetTimerManager().ClearTimer(BossScanTimer);
@@ -208,6 +232,14 @@ void UBH_HUDSubsystem::OnAnyAggroChanged(UBH_CombatIdentityComponent* Source, AA
 {
 	// The delegate is process-wide (every PIE world): only react to bosses in this player's world.
 	if (Source && GetLocalPlayer() && Source->GetWorld() == GetLocalPlayer()->GetWorld())
+	{
+		EvaluateBoss();
+	}
+}
+
+void UBH_HUDSubsystem::OnAnyEnemyAggroSeen(ABH_EnemyBase* Enemy, AActor* /*NewTarget*/)
+{
+	if (Enemy && GetLocalPlayer() && Enemy->GetWorld() == GetLocalPlayer()->GetWorld())
 	{
 		EvaluateBoss();
 	}
@@ -233,9 +265,9 @@ void UBH_HUDSubsystem::EvaluateBoss()
 		for (TActorIterator<APawn> It(World); It; ++It)
 		{
 			APawn* Candidate = *It;
-			const UBH_CombatIdentityComponent* Identity = UBH_CombatIdentityComponent::Find(Candidate);
 			// Engaged = the boss AI has a target (AggroTarget is replicated and cleared when the boss loses aggro).
-			if (!Identity || !Identity->bIsBoss || !Identity->GetAggroTarget() || IsBossDead(Candidate))
+			// Phase 12G: a boss is an identity bIsBoss character OR any enemy whose rank presents as a boss (Elite crab).
+			if (!UBH_EnemyRankLibrary::IsBossPresented(Candidate) || !UBH_EnemyRankLibrary::GetAggroTarget(Candidate) || IsBossDead(Candidate))
 			{
 				continue;
 			}

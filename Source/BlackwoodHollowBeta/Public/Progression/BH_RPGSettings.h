@@ -17,9 +17,11 @@
 #include "Engine/CurveTable.h"
 #include "Items/BH_EquipmentTypes.h"
 #include "Items/BH_ArmorVisualTypes.h"
+#include "Combat/BH_EnemyRank.h"
 #include "BH_RPGSettings.generated.h"
 
 class UBH_FootstepSet;
+class APawn;
 
 /** Curve table row names (plain constexpr literals: no static-init-order globals). */
 namespace BH_ScalingRows
@@ -71,6 +73,35 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "XP", meta = (ClampMin = "0.0", ForceUnits = "cm"))
 	float XPShareRadius = 5000.f;
 
+	// -- Enemy ranks (Phase 12G) ---------------------------------------------------------------
+
+	/** Common rank multipliers (all 1: the level curve as is). */
+	UPROPERTY(Config, EditAnywhere, Category = "Enemy Ranks")
+	FBH_EnemyRankMultipliers CommonRank;
+
+	/** Veteran: tougher and worth more XP. */
+	UPROPERTY(Config, EditAnywhere, Category = "Enemy Ranks")
+	FBH_EnemyRankMultipliers VeteranRank;
+
+	/** Elite: a mini-boss. */
+	UPROPERTY(Config, EditAnywhere, Category = "Enemy Ranks")
+	FBH_EnemyRankMultipliers EliteRank;
+
+	/** Boss rank (the arena boss uses its own identity data today; reserved for the next boss pass). */
+	UPROPERTY(Config, EditAnywhere, Category = "Enemy Ranks")
+	FBH_EnemyRankMultipliers BossRank;
+
+	/** Elite-rank enemies use the big boss health bar (and no overhead bar) while they fight the local player. Boss rank always does. */
+	UPROPERTY(Config, EditAnywhere, Category = "Enemy Ranks")
+	bool bEliteUsesBossBar = true;
+
+	/** Short names for bh.Enemy.Spawn <ShortName> [Rank] [Level] (debug builds only) -> enemy Blueprint class. Case-insensitive. */
+	UPROPERTY(Config, EditAnywhere, Category = "Enemy Ranks|Debug")
+	TMap<FName, TSoftClassPtr<APawn>> DebugEnemyClasses;
+
+	/** The multipliers of Rank. */
+	FBH_EnemyRankMultipliers GetRankMultipliers(EBH_EnemyRank Rank) const;
+
 	// -- Armor weight class (the heaviest equipped piece decides) --------------------------------
 
 	UPROPERTY(Config, EditAnywhere, Category = "Armor Weight|Light", meta = (ClampMin = "0.05"))
@@ -100,8 +131,8 @@ public:
 	// -- Armor visuals (Phase 11E) ----------------------------------------------------------------
 
 	/**
-	 * Cosmetic starting outfit: shown in any slot with no armor equipped (or whose equipped piece has no visual). Head and Arms are empty on
-	 * purpose (no helm, no gloves). Defaults: the BasicCloth chest / pants / boots.
+	 * Cosmetic starting outfit: shown in any slot with no armor equipped (or whose equipped piece has no visual). Head is empty on
+	 * purpose (no helm). Defaults: the BasicCloth MaleNormal chest / gloves / pants / boots.
 	 */
 	UPROPERTY(Config, EditAnywhere, Category = "Armor Visuals")
 	TArray<FBH_StartingOutfitPiece> StartingOutfit;

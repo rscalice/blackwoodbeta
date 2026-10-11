@@ -3,6 +3,7 @@
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "Combat/BH_StanceWatcherComponent.h"
 #include "Combat/BH_StanceComponent.h"
+#include "Combat/BH_EnemyRank.h"
 #include "Characters/BH_EnemyResetComponent.h"
 #include "Characters/BH_CharacterBase.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
@@ -38,6 +39,33 @@ void UBH_CombatIdentityComponent::GetLifetimeReplicatedProps(TArray<FLifetimePro
 	DOREPLIFETIME(UBH_CombatIdentityComponent, CombatTeam);
 	DOREPLIFETIME(UBH_CombatIdentityComponent, AggroTarget);
 	DOREPLIFETIME(UBH_CombatIdentityComponent, bDead);
+	DOREPLIFETIME(UBH_CombatIdentityComponent, Rank);
+	DOREPLIFETIME(UBH_CombatIdentityComponent, EnemyLevel);
+	DOREPLIFETIME(UBH_CombatIdentityComponent, Archetype);
+}
+
+namespace BH_CombatIdentityPrivate
+{
+	/** A parked bh.Enemy.Spawn / wave-spawner request (see SetPendingSpawn). One at a time: set and consumed inside one FinishSpawning call. */
+	struct FPendingSpawn
+	{
+		TWeakObjectPtr<const AActor> Actor;
+		int32 RankOverride = -1;
+		int32 LevelOverride = 0;
+	};
+	static FPendingSpawn GPendingSpawn;
+}
+
+void UBH_CombatIdentityComponent::SetPendingSpawn(const AActor* Actor, int32 RankOverride, int32 LevelOverride)
+{
+	BH_CombatIdentityPrivate::GPendingSpawn.Actor = Actor;
+	BH_CombatIdentityPrivate::GPendingSpawn.RankOverride = RankOverride;
+	BH_CombatIdentityPrivate::GPendingSpawn.LevelOverride = LevelOverride;
+}
+
+int32 UBH_CombatIdentityComponent::GetXPReward() const
+{
+	return UBH_EnemyRankLibrary::ComputeXPReward(ScalingRowPrefix, EnemyLevel, XPReward, Rank);
 }
 
 FBH_OnAnyAggroTargetChanged& UBH_CombatIdentityComponent::OnAnyAggroTargetChanged()
@@ -73,7 +101,8 @@ UBH_CombatIdentityComponent* UBH_CombatIdentityComponent::Find(const AActor* Act
 float UBH_CombatIdentityComponent::GetOutgoingCombatMultiplier(const AActor* Actor)
 {
 	const UBH_CombatIdentityComponent* Identity = Find(Actor);
-	return Identity ? Identity->OutgoingCombatMultiplier : 1.f;
+	const float Base = Identity ? Identity->OutgoingCombatMultiplier : 1.f;
+	return Base * UBH_EnemyRankLibrary::GetDamageMultiplier(Actor);
 }
 
 UAbilitySystemComponent* UBH_CombatIdentityComponent::ResolveASC() const
@@ -139,6 +168,20 @@ void UBH_CombatIdentityComponent::BeginPlay()
 
 	if (Owner->HasAuthority())
 	{
+		// A parked spawn request for THIS actor (bh.Enemy.Spawn / wave spawner) overrides the Blueprint's rank / level.
+		BH_CombatIdentityPrivate::FPendingSpawn& Pending = BH_CombatIdentityPrivate::GPendingSpawn;
+		if (Pending.Actor.Get() == Owner)
+		{
+			if (Pending.RankOverride >= 0)
+			{
+				Rank = static_cast<EBH_EnemyRank>(FMath::Clamp(Pending.RankOverride, 0, 3));
+			}
+			if (Pending.LevelOverride > 0)
+			{
+				EnemyLevel = Pending.LevelOverride;
+			}
+			Pending = BH_CombatIdentityPrivate::FPendingSpawn();
+		}
 		InitServer();
 		// Phase 11F: remembers the spawn transform and resets this enemy on a party wipe (no Blueprint edit needed).
 		UBH_EnemyResetComponent::EnsureOn(Owner);
@@ -267,6 +310,9 @@ void UBH_CombatIdentityComponent::InitServer()
 	// A null OverloadBurst class is safe (SetupCombatCharacter only grants it when set).
 	UBH_CombatFunctionLibrary::SetupCombatCharacter(Owner, nullptr);
 	ApplyInitialStats(ASC);
+	// Phase 12G: level curve rows (when a prefix is set), then the rank multipliers on top.
+	UBH_EnemyRankLibrary::ApplyLevelScalingToASC(ASC, ScalingRowPrefix, EnemyLevel);
+	UBH_EnemyRankLibrary::ApplyRankToStats(ASC, Rank);
 	ApplyCollision();
 	UBH_CombatFunctionLibrary::GrantCombatAbilities(Owner, DefaultAbilities);
 
@@ -351,7 +397,7 @@ void UBH_CombatIdentityComponent::HandleHealthZero(AActor* Killer)
 
 	if (!bWasDead)
 	{
-		UBH_ProgressionComponent::GrantKillXP(OwnerActor, XPReward); // positions are read now, before the body ragdolls / despawns
+		UBH_ProgressionComponent::GrantKillXP(OwnerActor, GetXPReward()); // positions are read now, before the body ragdolls / despawns
 		UBH_LootLibrary::GrantEnemyDrops(OwnerActor, DropTable); // Phase 11C
 
 		// The server (and a listen-server host) gets no RepNotify: ragdoll here; clients do it in OnRep_Dead.

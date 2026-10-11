@@ -3,6 +3,7 @@
 #include "AI/BT/BTDecorator_BH_CrabConditions.h"
 #include "AI/BH_CrabAIController.h"
 #include "Characters/BH_EnemyCrab.h"
+#include "AbilitySystem/Abilities/AH_GA_CrabAbilities.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemBlueprintLibrary.h"
@@ -203,3 +204,37 @@ bool UBTDecorator_BH_HasTarget::CalculateRawConditionValue(UBehaviorTreeComponen
 	const ABH_CrabAIController* Controller = Cast<ABH_CrabAIController>(OwnerComp.GetAIOwner());
 	return Controller && Controller->GetCrabTarget();
 }
+
+// ============================================================================
+// Slam Gate (Phase 12G)
+// ============================================================================
+
+UBTDecorator_BH_SlamGate::UBTDecorator_BH_SlamGate(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	NodeName = TEXT("BH Slam Gate");
+	FlowAbortMode = EBTFlowAbortMode::None;
+}
+
+FString UBTDecorator_BH_SlamGate::GetStaticDescription() const
+{
+	return FString::Printf(TEXT("Has the slam ability, %.1f s cooldown"), Cooldown);
+}
+
+bool UBTDecorator_BH_SlamGate::CalculateRawConditionValue(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) const
+{
+	const ABH_CrabAIController* Controller = Cast<ABH_CrabAIController>(OwnerComp.GetAIOwner());
+	const ABH_EnemyCrab* Crab = Controller ? Cast<ABH_EnemyCrab>(Controller->GetPawn()) : nullptr;
+	if (!Crab || !Controller->GetCrabTarget() || Crab->GetSecondsSinceLastSlam() < Cooldown)
+	{
+		return false;
+	}
+	UAbilitySystemComponent* ASC = Crab->GetAbilitySystemComponent();
+	if (!ASC || !ASC->FindAbilitySpecFromClass(UAH_GA_CrabSlam::StaticClass()))
+	{
+		return false; // ordinary crabs never slam
+	}
+	return !(ASC->HasMatchingGameplayTag(TAG_State_Combat_Attacking) || ASC->HasMatchingGameplayTag(TAG_State_Combat_Staggered)
+		|| ASC->HasMatchingGameplayTag(TAG_State_Combat_PostureBroken) || ASC->HasMatchingGameplayTag(TAG_State_Combat_Dead));
+}
+

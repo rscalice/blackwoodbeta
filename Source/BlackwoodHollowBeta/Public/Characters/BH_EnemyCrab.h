@@ -66,7 +66,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Crab")
 	void MarkSidestepUsed();
 
+	// -- Slam bookkeeping (server, Phase 12G: the Elite's heavy ground slam) ---------------------
+
+	/** Seconds since the last ground slam started (a huge number if it never slammed). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Crab")
+	float GetSecondsSinceLastSlam() const;
+
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Crab")
+	void MarkSlamUsed();
+
 	// -- Tunables -----------------------------------------------------------------------------
+
+	/** Multiplies every telegraph duration of this crab's attacks (Pinch, Slam). 1 = as authored; the Elite uses 1.4 for longer, more readable wind-ups. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BlackwoodHollow|Crab|AI", meta = (ClampMin = "0.25"))
+	float TelegraphTimeScale = 1.f;
 
 	/** Behavior tree run by ABH_CrabAIController (it falls back to its own DefaultBehaviorTree when empty). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BlackwoodHollow|Crab|AI")
@@ -140,6 +153,7 @@ private:
 	bool bDeadFlag = false;
 	bool bRagdolling = false;
 	double LastSidestepTime = -1.0e9;
+	double LastSlamTime = -1.0e9;
 
 	FDelegateHandle PostureBrokenHandle;
 	FDelegateHandle StaggeredHandle;

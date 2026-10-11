@@ -28,6 +28,9 @@ class UBH_PartyComponent;
 class UNarrativeComponent;
 class APlayerController;
 
+/** Phase 12F. A world flag was set or cleared (any machine: the flag list replicates). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnWorldFlagChanged, FName, Flag, bool, bIsSet);
+
 UCLASS()
 class BLACKWOODHOLLOWBETA_API ABH_GameState : public AGameStateBase
 {
@@ -55,12 +58,41 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|Party")
 	APlayerState* GetPartyLeaderState() const;
 
+	// -- World flags (Phase 12F) -----------------------------------------------------------------
+	// A tiny server-owned set of named progress flags ("Island1.SpanGateOpen"). World progress lives on the game state, so it survives a party
+	// wipe and reaches late joiners. Phase 14 quests set flags through SetWorldFlag; ABH_WorldGate listens to OnWorldFlagChanged.
+
+	/** The Span Gate flag: "Island1.SpanGateOpen". */
+	static FName SpanGateOpenFlag() { return FName(TEXT("Island1.SpanGateOpen")); }
+
+	/** The game state of Context's world as an ABH_GameState, or null. */
+	static ABH_GameState* Get(const UObject* WorldContext);
+
+	/** SERVER. Sets (or, with bValue false, clears) a world flag. No-op on a client. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "BH|World")
+	void SetWorldFlag(FName Flag, bool bValue = true);
+
+	/** Any machine. True if the flag is currently set. */
+	UFUNCTION(BlueprintPure, Category = "BH|World")
+	bool HasWorldFlag(FName Flag) const { return WorldFlags.Contains(Flag); }
+
+	/** Any machine, after the flag list changed (the server fires it from SetWorldFlag, clients from the RepNotify). */
+	UPROPERTY(BlueprintAssignable, Category = "BH|World")
+	FBH_OnWorldFlagChanged OnWorldFlagChanged;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Party")
 	TObjectPtr<UBH_PartyComponent> PartyComponent;
+
+	/** The set flags. Replicated. */
+	UPROPERTY(ReplicatedUsing = OnRep_WorldFlags)
+	TArray<FName> WorldFlags;
+
+	UFUNCTION()
+	void OnRep_WorldFlags();
 
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "BH|Party")
 	bool bPartyInCombat = false;
@@ -90,4 +122,7 @@ private:
 	};
 	TArray<FPendingRegistration> PendingRegistrations;
 	FTimerHandle RegistrationTimer;
+
+	/** Client: the flag list the last broadcast was computed against (to turn a replicated array into per-flag events). */
+	TArray<FName> LastBroadcastFlags;
 };

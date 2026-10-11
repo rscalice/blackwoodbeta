@@ -37,6 +37,7 @@ namespace BH_EnemyBasePrivate
 }
 
 FBH_OnEnemyAggroChanged ABH_EnemyBase::OnAnyEnemyAggroChanged;
+FBH_OnEnemyAggroChanged ABH_EnemyBase::OnAnyEnemyAggroSeen;
 
 ABH_EnemyBase::ABH_EnemyBase()
 {
@@ -67,6 +68,10 @@ void ABH_EnemyBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(ABH_EnemyBase, bDead);
 	DOREPLIFETIME(ABH_EnemyBase, CombatTeam);
+	DOREPLIFETIME(ABH_EnemyBase, Rank);
+	DOREPLIFETIME(ABH_EnemyBase, EnemyLevel);
+	DOREPLIFETIME(ABH_EnemyBase, Archetype);
+	DOREPLIFETIME(ABH_EnemyBase, AggroTarget);
 }
 
 void ABH_EnemyBase::InitAbilitySystem()
@@ -249,17 +254,25 @@ const AActor* ABH_EnemyBase::ResolveFaceTarget()
 
 void ABH_EnemyBase::SetAggroTarget(AActor* NewTarget)
 {
-	if (!HasAuthority() || AggroTarget.Get() == NewTarget)
+	if (!HasAuthority() || AggroTarget == NewTarget)
 	{
 		return;
 	}
 	AggroTarget = NewTarget;
 	OnAnyEnemyAggroChanged.Broadcast(this, NewTarget);
+	OnAnyEnemyAggroSeen.Broadcast(this, NewTarget); // the server / listen-server host never gets the OnRep
+}
+
+void ABH_EnemyBase::OnRep_AggroTarget()
+{
+	OnAnyEnemyAggroSeen.Broadcast(this, AggroTarget);
 }
 
 void ABH_EnemyBase::InitializeServerStats()
 {
 	ApplyLevelScaling();
+	// Phase 12G: rank multipliers on top of the level curve (once; every init path ends here).
+	UBH_EnemyRankLibrary::ApplyRankToStats(AbilitySystemComponent, Rank);
 }
 
 void ABH_EnemyBase::ApplyLevelScaling()
@@ -268,47 +281,12 @@ void ABH_EnemyBase::ApplyLevelScaling()
 	{
 		return;
 	}
-
-	const int32 Lvl = FMath::Max(1, EnemyLevel);
-	AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetLevelAttribute(), static_cast<float>(Lvl));
-
-	const UBH_RPGSettings* Settings = UBH_RPGSettings::Get();
-	if (!Settings || ScalingRowPrefix.IsNone())
-	{
-		return;
-	}
-
-	float Value = 0.f;
-	// Max first, then the current value (the attribute set clamps current to max).
-	if (Settings->GetEnemyStat(ScalingRowPrefix, FName(BH_ScalingRows::MaxHealth), Lvl, Value))
-	{
-		AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetMaxHealthAttribute(), Value);
-		AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetHealthAttribute(), Value);
-	}
-	if (Settings->GetEnemyStat(ScalingRowPrefix, FName(BH_ScalingRows::MaxPosture), Lvl, Value))
-	{
-		AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetMaxPostureAttribute(), Value);
-		AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetPostureAttribute(), Value);
-	}
-	if (Settings->GetEnemyStat(ScalingRowPrefix, FName(BH_ScalingRows::AttackPower), Lvl, Value))
-	{
-		AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetAttackPowerAttribute(), Value);
-	}
-	if (Settings->GetEnemyStat(ScalingRowPrefix, FName(BH_ScalingRows::Defense), Lvl, Value))
-	{
-		AbilitySystemComponent->SetNumericAttributeBase(UAH_AttributeSet::GetDefenseAttribute(), Value);
-	}
+	UBH_EnemyRankLibrary::ApplyLevelScalingToASC(AbilitySystemComponent, ScalingRowPrefix, EnemyLevel);
 }
 
 int32 ABH_EnemyBase::GetXPReward() const
 {
-	float Value = 0.f;
-	const UBH_RPGSettings* Settings = UBH_RPGSettings::Get();
-	if (Settings && Settings->GetEnemyStat(ScalingRowPrefix, FName(BH_ScalingRows::XPReward), FMath::Max(1, EnemyLevel), Value))
-	{
-		return FMath::Max(0, FMath::RoundToInt(Value));
-	}
-	return FMath::Max(0, XPRewardOverride);
+	return UBH_EnemyRankLibrary::ComputeXPReward(ScalingRowPrefix, EnemyLevel, XPRewardOverride, Rank);
 }
 
 float ABH_EnemyBase::GetHealth() const

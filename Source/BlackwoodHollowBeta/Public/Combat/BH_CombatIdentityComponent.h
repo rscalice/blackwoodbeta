@@ -25,6 +25,7 @@
 #include "Components/ActorComponent.h"
 #include "Engine/TimerHandle.h"
 #include "Combat/BH_CombatTeam.h"
+#include "Combat/BH_EnemyRank.h"
 #include "Loot/BH_LootTypes.h"
 #include "BH_CombatIdentityComponent.generated.h"
 
@@ -54,9 +55,37 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Combat")
 	static UBH_CombatIdentityComponent* Find(const AActor* Actor);
 
-	/** The owner's OutgoingCombatMultiplier, or 1 when the actor has no identity component (e.g. the player). */
+	/** The owner's OutgoingCombatMultiplier times its rank damage multiplier (Phase 12G; works for ABH_EnemyBase too), or 1 for anything else (e.g. the player). */
 	UFUNCTION(BlueprintPure, Category = "BH|Combat")
 	static float GetOutgoingCombatMultiplier(const AActor* Actor);
+
+	// -- Rank / archetype / level (Phase 12G) -----------------------------------------------
+	// Same data as ABH_EnemyBase (see BH_EnemyRank.h). The server applies the level curve rows "<ScalingRowPrefix>.*" and then the rank multipliers
+	// once in InitServer, after the per-archetype overrides above (a table row wins over an override of the same stat).
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "BH|Rank")
+	EBH_EnemyRank Rank = EBH_EnemyRank::Common;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "BH|Rank")
+	EBH_EnemyArchetype Archetype = EBH_EnemyArchetype::Soldier;
+
+	/** Enemy level for the scaling table (and the Level attribute). Set per placed instance, or by the wave spawner / bh.Enemy.Spawn through UBH_EnemyRankLibrary::PrepareSpawn. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "BH|Rank", meta = (ClampMin = "1"))
+	int32 EnemyLevel = 1;
+
+	/** Row prefix in the enemy scaling table ("CorruptedVanguard" -> "CorruptedVanguard.MaxHealth", ...). None = the Stats overrides / constructor defaults are used as they are. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Rank")
+	FName ScalingRowPrefix;
+
+	/** XP granted on death: the table's "<Prefix>.XPReward" at EnemyLevel, else XPReward; times the rank XP multiplier. */
+	UFUNCTION(BlueprintPure, Category = "BH|Rank")
+	int32 GetXPReward() const;
+
+	/**
+	 * Parks a spawn request for Actor (a deferred-spawned identity character, BEFORE FinishSpawning): its identity component takes the rank
+	 * (RankOverride < 0 = keep) and level (LevelOverride <= 0 = keep) in its own BeginPlay. Use UBH_EnemyRankLibrary::PrepareSpawn.
+	 */
+	static void SetPendingSpawn(const AActor* Actor, int32 RankOverride, int32 LevelOverride);
 
 	/** Name shown on the lock-on target vitals. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "BH|Identity")
@@ -129,7 +158,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Stats", meta = (ClampMin = "0"))
 	float OutgoingCombatMultiplier = 1.f;
 
-	/** Phase 9: XP granted to every living player within UBH_RPGSettings::XPShareRadius when this character dies (no scaling-table rows here; ABH_EnemyBase uses the enemy curve table). */
+	/** Phase 9: XP granted to every living player within UBH_RPGSettings::XPShareRadius when this character dies. Used as is when ScalingRowPrefix is None or has no XPReward row. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Stats", meta = (ClampMin = "0"))
 	int32 XPReward = 10;
 
