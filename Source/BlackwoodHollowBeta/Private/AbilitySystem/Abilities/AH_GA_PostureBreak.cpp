@@ -31,6 +31,7 @@ UAH_GA_PostureBreak::UAH_GA_PostureBreak()
 	CancelAbilitiesWithTag.AddTag(TAG_Ability_Combat_Parry);
 	CancelAbilitiesWithTag.AddTag(TAG_Ability_Combat_Block);
 	CancelAbilitiesWithTag.AddTag(TAG_Ability_Combat_HitReaction);
+	CancelAbilitiesWithTag.AddTag(TAG_Ability_Consumable_Use); // Phase 11D: a posture break ends a running consumable use (UBH_GA_UseConsumable refunds the item)
 
 	ActivationOwnedTags.AddTag(TAG_State_Combat_MovementLocked);
 

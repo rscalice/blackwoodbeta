@@ -1,6 +1,11 @@
 // Blackwood Hollow - hub respawn points (implementation)
 
 #include "Player/BH_RespawnPoint.h"
+#include "AbilitySystem/StatusEffects/BH_FractureEffects.h"
+#include "Loot/BH_LootLibrary.h"
+#include "NarrativeItem.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerState.h"
 #include "Components/ArrowComponent.h"
 #include "Components/SceneComponent.h"
 #include "CollisionQueryParams.h"
@@ -22,6 +27,79 @@ ABH_RespawnPoint::ABH_RespawnPoint()
 	FacingArrow->ArrowSize = 2.f;
 	FacingArrow->ArrowColor = FColor(80, 200, 255);
 	FacingArrow->SetHiddenInGame(true);
+
+	// Fracture repair (Phase 11G). No meshes on this actor, so no outline; the prompt is the whole feedback.
+	RepairInteractable = CreateDefaultSubobject<UBH_InteractableComponent>(TEXT("RepairInteractable"));
+	RepairInteractable->PromptName = NSLOCTEXT("BlackwoodHollow", "FractureRepairName", "Heart Fragment");
+	RepairInteractable->PromptAction = NSLOCTEXT("BlackwoodHollow", "FractureRepairAction", "Repair Fracture");
+	RepairInteractable->HoldSeconds = 1.5f;
+	RepairInteractable->InteractRange = 300.f;
+	RepairInteractable->bOutlineWhenFocused = false;
+}
+
+// ============================================================================
+// Fracture repair
+// ============================================================================
+
+bool ABH_RespawnPoint::BH_CanInteract(const APawn* InteractingPawn, FText& OutDenyReason) const
+{
+	OutDenyReason = FText::GetEmpty();
+
+	// Hidden entirely unless this player is Fractured.
+	if (!InteractingPawn || !UBH_FractureLibrary::IsActorFractured(InteractingPawn))
+	{
+		return false;
+	}
+
+	const TSubclassOf<UNarrativeItem> ShardClass = UBH_LootLibrary::ResolveItemClass(TEXT("shard"));
+	const int32 Owned = ShardClass ? UBH_LootLibrary::GetItemCount(InteractingPawn->GetPlayerState(), ShardClass) : 0;
+	if (Owned < RepairShardCost)
+	{
+		OutDenyReason = NSLOCTEXT("BlackwoodHollow", "FractureRepairNotEnough", "Not enough shards");
+		return false;
+	}
+	return true;
+}
+
+FText ABH_RespawnPoint::BH_GetPromptAction(const APawn* InteractingPawn) const
+{
+	const FText ShardName = UBH_LootLibrary::GetItemDisplayName(UBH_LootLibrary::ResolveItemClass(TEXT("shard")));
+	return FText::Format(NSLOCTEXT("BlackwoodHollow", "FractureRepairPrompt", "Repair Fracture ({0} x {1})"),
+		FText::AsNumber(RepairShardCost), ShardName);
+}
+
+void ABH_RespawnPoint::BH_OnInteractionCompleted(APawn* InteractingPawn)
+{
+	// Server only (the interactor calls this on the authority). Re-validate everything: the client only ever saw a replicated view.
+	if (!InteractingPawn || !InteractingPawn->HasAuthority())
+	{
+		return;
+	}
+	FText Reason;
+	if (!BH_CanInteract(InteractingPawn, Reason))
+	{
+		return;
+	}
+
+	APlayerState* const PlayerState = InteractingPawn->GetPlayerState();
+	const TSubclassOf<UNarrativeItem> ShardClass = UBH_LootLibrary::ResolveItemClass(TEXT("shard"));
+	if (!PlayerState || !ShardClass)
+	{
+		return;
+	}
+
+	const int32 Removed = UBH_LootLibrary::RemoveItemFromPlayer(PlayerState, ShardClass, RepairShardCost);
+	if (Removed < RepairShardCost)
+	{
+		// Could not take the full price (a race with another consumer): give back what was taken, repair nothing.
+		if (Removed > 0)
+		{
+			UBH_LootLibrary::GrantItem(PlayerState, ShardClass, Removed, /*bNotifyPlayer*/ false);
+		}
+		return;
+	}
+
+	UBH_FractureLibrary::RemoveFracture(UBH_FractureLibrary::ResolveASC(InteractingPawn));
 }
 
 void ABH_RespawnPoint::BeginPlay()

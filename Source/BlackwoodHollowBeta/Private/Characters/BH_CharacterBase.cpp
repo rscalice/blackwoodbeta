@@ -6,7 +6,10 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Combat/BH_StanceComponent.h"
 #include "Player/BH_PlayerDeathComponent.h"
+#include "Interaction/BH_InteractorComponent.h"
+#include "Items/BH_ArmorVisualComponent.h"
 #include "Combat/BH_CombatFeel.h"
+#include "Consumables/BH_GA_UseConsumable.h"
 #include "Characters/BH_StanceMovementProfile.h"
 #include "AbilitySystemComponent.h"
 #include "AIController.h"
@@ -17,7 +20,17 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "HAL/IConsoleManager.h"
 #include "Net/UnrealNetwork.h"
+
+namespace BH_CharacterBase_Private
+{
+	static TAutoConsoleVariable<int32> CVarRagdollDebugCamera(
+		TEXT("bh.Ragdoll.DebugCamera"),
+		0,
+		TEXT("1 = when a ragdoll starts, log every component of the pawn and of its attached actors that still responds to the Camera channel (Phase 11A-1 diagnostics)."),
+		ECVF_Default);
+}
 
 ABH_CharacterBase::ABH_CharacterBase(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -29,6 +42,8 @@ ABH_CharacterBase::ABH_CharacterBase(const FObjectInitializer& ObjectInitializer
 	AttributeSet = CreateDefaultSubobject<UAH_AttributeSet>(TEXT("AttributeSet"));
 	StanceComponent = CreateDefaultSubobject<UBH_StanceComponent>(TEXT("StanceComponent"));
 	DeathComponent = CreateDefaultSubobject<UBH_PlayerDeathComponent>(TEXT("DeathComponent"));
+	InteractorComponent = CreateDefaultSubobject<UBH_InteractorComponent>(TEXT("InteractorComponent"));
+	ArmorVisualComponent = CreateDefaultSubobject<UBH_ArmorVisualComponent>(TEXT("ArmorVisualComponent"));
 
 	// Attack telegraph decals must not tint the character itself.
 	if (USkeletalMeshComponent* SkelMesh = GetMesh())
@@ -86,16 +101,27 @@ void ABH_CharacterBase::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	// Hold-to-revive: bound here (local player only, every possession) so the Blueprint needs no input nodes.
-	if (!ReviveInputAction || !DeathComponent)
+	// IA_Interact (ReviveInputAction): hold-to-revive (death component) and interact / hold-to-harvest (Phase 11C interactor) share the one
+	// action; bound here (local player only, every possession) so the Blueprint needs no input nodes. Each handler ignores the press when the
+	// other one owns it (a downed party member in range = revive, else the focused interactable).
+	if (!ReviveInputAction)
 	{
 		return;
 	}
 	if (UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(PlayerInputComponent))
 	{
-		EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Started, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputPressed);
-		EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Completed, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputReleased);
-		EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Canceled, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputReleased);
+		if (DeathComponent)
+		{
+			EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Started, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputPressed);
+			EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Completed, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputReleased);
+			EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Canceled, DeathComponent.Get(), &UBH_PlayerDeathComponent::OnReviveInputReleased);
+		}
+		if (InteractorComponent)
+		{
+			EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Started, InteractorComponent.Get(), &UBH_InteractorComponent::OnInteractInputPressed);
+			EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Completed, InteractorComponent.Get(), &UBH_InteractorComponent::OnInteractInputReleased);
+			EnhancedInput->BindAction(ReviveInputAction, ETriggerEvent::Canceled, InteractorComponent.Get(), &UBH_InteractorComponent::OnInteractInputReleased);
+		}
 	}
 }
 
@@ -114,6 +140,12 @@ void ABH_CharacterBase::GrantDefaultAbilities()
 		return;
 	}
 	UBH_CombatFunctionLibrary::GrantCombatAbilities(this, DefaultAbilities);
+
+	// Phase 11D: every pawn can use consumables. The native ability needs no Blueprint (skipped when a child is already in DefaultAbilities).
+	if (AbilitySystemComponent && !AbilitySystemComponent->FindAbilitySpecFromClass(UBH_GA_UseConsumable::StaticClass()))
+	{
+		AbilitySystemComponent->GiveAbility(FGameplayAbilitySpec(UBH_GA_UseConsumable::StaticClass(), 1, INDEX_NONE, this));
+	}
 	bAbilitiesGranted = true;
 }
 
@@ -302,6 +334,12 @@ void ABH_CharacterBase::StartRagdollLocal(const FVector& InheritVelocity)
 	UCapsuleComponent* Capsule = GetCapsuleComponent();
 	UCharacterMovementComponent* MoveComp = GetCharacterMovement();
 
+	// Diagnostics (bh.Ragdoll.DebugCamera): what would still block the camera probe if nothing were disabled. Needs the mesh on the capsule.
+	if (BH_CharacterBase_Private::CVarRagdollDebugCamera.GetValueOnGameThread() != 0)
+	{
+		LogRagdollCameraBlockers();
+	}
+
 	// Weapons, shields and every other collider first: attached actors can only be found while the mesh is still on the capsule.
 	DisableRagdollInterferingCollision();
 
@@ -345,11 +383,57 @@ void ABH_CharacterBase::StartRagdollLocal(const FVector& InheritVelocity)
 	bRagdollMeshDetached = true;
 
 	SkelMesh->SetCollisionProfileName(RagdollCollisionProfile);
+	// The camera must never collide with the body it is looking at: the Gameplay Cameras CollisionPush node and the spring arm both probe
+	// ECC_Camera. The Ragdoll profile already ignores it (DefaultEngine.ini EditProfiles); this makes it independent of the profile data.
+	// StopRagdollLocal restores the exact saved responses.
+	SkelMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 	SkelMesh->SetAllBodiesSimulatePhysics(true);
 	SkelMesh->SetSimulatePhysics(true);
 	SkelMesh->SetAllBodiesPhysicsBlendWeight(1.f);
 	SkelMesh->WakeAllRigidBodies();
 	SkelMesh->SetAllPhysicsLinearVelocity(InheritVelocity.GetClampedToMaxSize(FMath::Max(0.f, RagdollMaxInheritSpeed))); // keep the momentum of the fall / run
+}
+
+void ABH_CharacterBase::LogRagdollCameraBlockers() const
+{
+	TArray<const AActor*> ScanActors;
+	ScanActors.Add(this);
+	TArray<AActor*> CarriedActors;
+	GetAttachedActors(CarriedActors, /*bResetArray*/ true, /*bRecursivelyIncludeAttachedActors*/ true);
+	for (const AActor* CarriedActor : CarriedActors)
+	{
+		ScanActors.Add(CarriedActor);
+	}
+
+	int32 BlockerCount = 0;
+	for (const AActor* ScanActor : ScanActors)
+	{
+		if (!ScanActor)
+		{
+			continue;
+		}
+		TArray<UPrimitiveComponent*> ScanComps;
+		ScanActor->GetComponents<UPrimitiveComponent>(ScanComps);
+		for (const UPrimitiveComponent* ScanComp : ScanComps)
+		{
+			if (!ScanComp)
+			{
+				continue;
+			}
+			const ECollisionEnabled::Type CollisionMode = ScanComp->GetCollisionEnabled();
+			if (CollisionMode == ECollisionEnabled::NoCollision || CollisionMode == ECollisionEnabled::PhysicsOnly)
+			{
+				continue; // not part of any trace
+			}
+			if (ScanComp->GetCollisionResponseToChannel(ECC_Camera) == ECR_Ignore)
+			{
+				continue;
+			}
+			++BlockerCount;
+			UE_LOG(LogBHCombat, Warning, TEXT("%s: ragdoll camera check - %s.%s responds to the Camera channel."), *GetNameSafe(this), *GetNameSafe(ScanActor), *GetNameSafe(ScanComp));
+		}
+	}
+	UE_LOG(LogBHCombat, Log, TEXT("%s: ragdoll camera check - %d component(s) of the pawn and its attached actors respond to the Camera channel (the ragdoll then switches them off or sets them to Ignore)."), *GetNameSafe(this), BlockerCount);
 }
 
 void ABH_CharacterBase::StopRagdollLocal(const FTransform* ActorTransformAfterStop)

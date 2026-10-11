@@ -14,14 +14,19 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
 #include "GameplayTagContainer.h"
+#include "Consumables/BH_ConsumableTypes.h"
 #include "BH_PlayerState.generated.h"
 
 class UNarrativeInventoryComponent;
+class UNarrativeItem;
 class UAH_GA_FragmentBase;
 class UBH_ProgressionComponent;
 
 /** Broadcast (server and owning client) when a fragment slot changes. SlotIndex -1 = several / unknown slots changed. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnFragmentSlotsChanged, int32, SlotIndex);
+
+/** Broadcast on the OWNING player's machine when a consumable use was refused (nothing consumed). Wire a toast / sound to it. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnConsumableUseRefused, TSubclassOf<UNarrativeItem>, ItemClass, EBH_ConsumableRefusal, Reason);
 
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API ABH_PlayerState : public APlayerState
@@ -39,6 +44,15 @@ public:
 	UBH_ProgressionComponent* GetProgression() const { return Progression; }
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	// -- Consumable refusal feedback (Phase 11E) -------------------------------------------------
+
+	/** Fires on the owning player's machine when a consumable use is refused (Sap at full health, none left, ability busy). */
+	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|Consumable")
+	FBH_OnConsumableUseRefused OnConsumableUseRefused;
+
+	/** Any machine. Shows a dev toast + broadcasts OnConsumableUseRefused here when this is the local player's state, else sends a client RPC to the owner. */
+	void NotifyConsumableUseRefused(TSubclassOf<UNarrativeItem> ItemClass, EBH_ConsumableRefusal Reason);
 
 	// -- Heart-Fragment slots (Phase 8B) -------------------------------------------------------
 
@@ -132,7 +146,14 @@ protected:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerEquipFragment(int32 Slot, TSubclassOf<UAH_GA_FragmentBase> FragmentClass);
 
+	/** Owner only: the server refused a consumable use. */
+	UFUNCTION(Client, Unreliable)
+	void ClientConsumableUseRefused(TSubclassOf<UNarrativeItem> ItemClass, EBH_ConsumableRefusal Reason);
+
 private:
 	/** Server: validates (except for null = unequip), writes the slot, notifies the UI and pushes the change to the pawn. */
 	bool ApplyFragmentSlot(int32 Slot, TSubclassOf<UAH_GA_FragmentBase> FragmentClass);
+
+	/** Local machine: dev toast + broadcast. */
+	void PresentConsumableRefusal(TSubclassOf<UNarrativeItem> ItemClass, EBH_ConsumableRefusal Reason);
 };

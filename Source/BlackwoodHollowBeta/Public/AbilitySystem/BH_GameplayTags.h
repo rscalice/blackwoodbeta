@@ -150,6 +150,20 @@ BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Blight_RotStamin
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Blight_SaturationPercent);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Event_Combat_BlightSaturated);
 
+// Phase 11D: consumables (Heartwood Sap, Warden's Incense)
+//   State.Action.Consuming        granted by UBH_GA_UseConsumable while the use animation runs; attack / dodge / block / parry / shield bash / hit reaction refuse to start while it is present.
+//   Ability.Consumable.Use        asset tag of UBH_GA_UseConsumable (posture break cancels abilities carrying it).
+//   Event.Consumable.Use          gameplay event that activates UBH_GA_UseConsumable; payload OptionalObject = the item class to use.
+//   State.Status.HeartwoodSap / WardenSanctuary   status tags of the two consumable effects (UBH_GE_StatusEffect).
+//   Data.Consumable.*             SetByCaller keys of the consumable effects.
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Action_Consuming);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Ability_Consumable_Use);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Event_Consumable_Use);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Status_HeartwoodSap);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Status_WardenSanctuary);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Consumable_HealFractionPerTick);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Data_Consumable_PostureRegenMult);
+
 // Weapon drawn / sheathed (UBH_StanceComponent::bWeaponDrawn, replicated; mirrored as loose tags on every machine, exactly one present)
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Weapon_Drawn);
 BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_State_Weapon_Sheathed);

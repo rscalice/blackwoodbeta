@@ -9,15 +9,21 @@
 //   bh.Level.Set N            set every player's level to N (XP resets, stats and Health/Posture/Stamina are re-applied)
 //   bh.Player.Kill           (Phase 10B part 2) kill the LOCAL player's pawn: starts the death / ragdoll / revive-window flow
 //   bh.Player.Revive         revive the LOCAL player's downed pawn in place right now (UBH_PlayerDeathComponent debug RPCs, so they work from a client window too)
+//   bh.Move.StopTrace [0|1]  (Phase 11A-2) LOCAL, no server involved: toggles a trace that logs / prints the stop after the move input is released
 
 #include "AI/BH_EnemyWaveSpawner.h"
 #include "Player/BH_PlayerState.h"
 #include "Player/BH_PlayerDeathComponent.h"
 #include "Progression/BH_ProgressionComponent.h"
 #include "AbilitySystem/BH_GameplayTags.h"
+#include "Characters/BH_CharacterBase.h"
+#include "Characters/BH_StanceMovementProfile.h"
+#include "Containers/Ticker.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
 
@@ -234,6 +240,231 @@ namespace BH_RPGDebugCommands_Private
 			if (UBH_PlayerDeathComponent* Comp = ResolveLocalDeathComponent(World, TEXT("bh.Player.Revive")))
 			{
 				Comp->ServerDebugRevive();
+			}
+		}));
+
+	// ------------------------------------------------------------------------------------------------------------------------
+	// bh.Move.StopTrace (Phase 11A-2): how long and how far does the local pawn slide after the move input is released?
+	// Purely local and read-only (it never touches movement), so it needs no server routing.
+	// ------------------------------------------------------------------------------------------------------------------------
+
+	static const TCHAR* StopTraceGaitName(EBH_Gait Gait)
+	{
+		switch (Gait)
+		{
+		case EBH_Gait::Walk:
+			return TEXT("Walk");
+		case EBH_Gait::Sprint:
+			return TEXT("Sprint");
+		default:
+			return TEXT("Run");
+		}
+	}
+
+	/** Core-ticker sampler (game thread). One world at a time: running the command in another window moves the trace there. */
+	class FMoveStopTracer
+	{
+	public:
+		bool IsActiveIn(const UWorld* InWorld) const
+		{
+			return TickHandle.IsValid() && TracedWorld.Get() == InWorld;
+		}
+
+		void Start(UWorld* InWorld)
+		{
+			Stop();
+			TracedWorld = InWorld;
+			TickHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(this, &FMoveStopTracer::Tick), 0.f);
+		}
+
+		void Stop()
+		{
+			if (TickHandle.IsValid())
+			{
+				FTSTicker::GetCoreTicker().RemoveTicker(TickHandle);
+				TickHandle.Reset();
+			}
+			bHadInput = false;
+			bTracking = false;
+		}
+
+	private:
+		bool Tick(float /*DeltaTime*/)
+		{
+			UWorld* TraceWorld = TracedWorld.Get();
+			if (!TraceWorld)
+			{
+				TickHandle.Reset(); // returning false removes the ticker
+				return false;
+			}
+
+			const APlayerController* LocalPC = TraceWorld->GetFirstPlayerController();
+			const ACharacter* Char = LocalPC ? Cast<ACharacter>(LocalPC->GetPawn()) : nullptr;
+			const UCharacterMovementComponent* Move = Char ? Char->GetCharacterMovement() : nullptr;
+			if (!Move)
+			{
+				bHadInput = false;
+				bTracking = false;
+				return true;
+			}
+
+			const FVector Velocity2D(Move->Velocity.X, Move->Velocity.Y, 0.0);
+			const float Speed = static_cast<float>(Velocity2D.Size());
+			const bool bInput = Move->GetCurrentAcceleration().SizeSquared2D() > 1.0;
+			const double Now = TraceWorld->GetTimeSeconds();
+			const FVector Location = Char->GetActorLocation();
+			const ABH_CharacterBase* Base = Cast<ABH_CharacterBase>(Char);
+
+			if (bInput)
+			{
+				// What the player was doing while holding the key (the gait flips to Walk on release, so remember it now).
+				if (Base)
+				{
+					HeldGait = Base->GetGait();
+					HeldStance = Base->GetWeaponStance().ToString();
+					bHeldStrafe = Base->GetRotationMode() == EBH_RotationMode::Strafe;
+				}
+				bHeldCrouch = Char->bIsCrouched;
+				if (bTracking)
+				{
+					UE_LOG(LogBHCombat, Log, TEXT("bh.Move.StopTrace: input resumed after %.2f s, trace dropped."), Now - StartTime);
+					bTracking = false;
+				}
+			}
+			else if (bTracking)
+			{
+				PathLength += static_cast<float>(FVector::Dist2D(Location, LastLocation));
+				LastLocation = Location;
+				if (SlowSeconds < 0.f && Speed < SlowThreshold)
+				{
+					SlowSeconds = static_cast<float>(Now - StartTime);
+					SlowDistance = static_cast<float>(FVector::Dist2D(Location, StartLocation));
+				}
+				if (Speed < FullStopSpeed)
+				{
+					Report(Char, Move, Location, Now, /*bTimedOut*/ false);
+					bTracking = false;
+				}
+				else if (Now - StartTime > MaxTraceSeconds)
+				{
+					Report(Char, Move, Location, Now, /*bTimedOut*/ true);
+					bTracking = false;
+				}
+			}
+			else if (bHadInput && Speed > StartMinSpeed)
+			{
+				// Input released while moving: start measuring.
+				bTracking = true;
+				StartTime = Now;
+				StartLocation = Location;
+				LastLocation = Location;
+				PathLength = 0.f;
+				StartSpeed = Speed;
+				SlowSeconds = -1.f;
+				SlowDistance = 0.f;
+				SlowThreshold = 20.f;
+				PlannedDecel = -1.f;
+				PlannedBand = TEXT("-");
+
+				ReleaseFacing = Char->GetActorForwardVector().GetSafeNormal2D();
+				ReleaseForwardDot = static_cast<float>(FVector::DotProduct(Velocity2D.GetSafeNormal(), ReleaseFacing));
+
+				if (const UBH_StanceMovementProfile* Profile = Base ? Base->GetMovementProfile() : nullptr)
+				{
+					const EBH_Gait Band = Profile->GetBrakingBandForSpeed(Speed);
+					PlannedBand = StopTraceGaitName(Band);
+					PlannedDecel = Profile->GetGaitSettings(Band).BrakingDecelerationNoInput;
+					SlowThreshold = Profile->WalkStopSpeedThreshold;
+				}
+			}
+
+			bHadInput = bInput;
+			return true;
+		}
+
+		void Report(const ACharacter* Char, const UCharacterMovementComponent* Move, const FVector& EndLocation, double Now, bool bTimedOut) const
+		{
+			const FVector Displacement(EndLocation.X - StartLocation.X, EndLocation.Y - StartLocation.Y, 0.0);
+			const FVector ReleaseRight(-ReleaseFacing.Y, ReleaseFacing.X, 0.0);
+			const float Forward = static_cast<float>(FVector::DotProduct(Displacement, ReleaseFacing));
+			const float Lateral = static_cast<float>(FVector::DotProduct(Displacement, ReleaseRight));
+			const TCHAR* Direction = ReleaseForwardDot > 0.7f ? TEXT("forward") : (ReleaseForwardDot < -0.7f ? TEXT("backward") : TEXT("lateral/diagonal"));
+			const float ExpectedDistance = PlannedDecel > 0.f ? (StartSpeed * StartSpeed) / (2.f * PlannedDecel) : -1.f;
+
+			const FString Message = FString::Printf(
+				TEXT("StopTrace%s | %s %s%s%s | %s (dot %.2f) | start %.0f cm/s | <%.0f cm/s after %.2f s / %.0f cm | full stop %.2f s / %.0f cm (path %.0f, fwd %.0f, lat %.0f) | planned brake %.0f (%s band) -> ~%.0f cm | CMC brakeDecel %.0f, groundFriction %.1f, brakingFrictionFactor %.2f, separateBrakingFriction %d"),
+				bTimedOut ? TEXT(" [TIMED OUT, still moving]") : TEXT(""),
+				*HeldStance, StopTraceGaitName(HeldGait), bHeldCrouch ? TEXT(" crouch") : TEXT(""), bHeldStrafe ? TEXT(" strafe") : TEXT(""),
+				Direction, ReleaseForwardDot,
+				StartSpeed,
+				SlowThreshold, SlowSeconds, SlowDistance,
+				static_cast<float>(Now - StartTime), static_cast<float>(Displacement.Size()), PathLength, Forward, Lateral,
+				PlannedDecel, PlannedBand, ExpectedDistance,
+				Move->BrakingDecelerationWalking, Move->GroundFriction, Move->BrakingFrictionFactor, Move->bUseSeparateBrakingFriction ? 1 : 0);
+
+			UE_LOG(LogBHCombat, Log, TEXT("%s: %s"), *GetNameSafe(Char), *Message);
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 12.f, bTimedOut ? FColor::Orange : FColor::Cyan, Message);
+			}
+		}
+
+		static constexpr float StartMinSpeed = 20.f;      // cm/s: slower releases are not a slide worth measuring
+		static constexpr float FullStopSpeed = 1.f;       // cm/s: below this the pawn counts as stopped
+		static constexpr double MaxTraceSeconds = 6.0;    // give up on a stop that never ends
+
+		TWeakObjectPtr<UWorld> TracedWorld;
+		FTSTicker::FDelegateHandle TickHandle;
+
+		bool bHadInput = false;
+		bool bTracking = false;
+
+		// Captured while the key is held.
+		EBH_Gait HeldGait = EBH_Gait::Run;
+		FString HeldStance;
+		bool bHeldStrafe = false;
+		bool bHeldCrouch = false;
+
+		// Captured at release.
+		double StartTime = 0.0;
+		FVector StartLocation = FVector::ZeroVector;
+		FVector LastLocation = FVector::ZeroVector;
+		FVector ReleaseFacing = FVector::ForwardVector;
+		float ReleaseForwardDot = 1.f;
+		float StartSpeed = 0.f;
+		float PathLength = 0.f;
+		float SlowThreshold = 20.f;
+		float SlowSeconds = -1.f;
+		float SlowDistance = 0.f;
+		float PlannedDecel = -1.f;
+		const TCHAR* PlannedBand = TEXT("-");
+	};
+
+	static FMoveStopTracer GMoveStopTracer;
+
+	static FAutoConsoleCommandWithWorldAndArgs CmdMoveStopTrace(
+		TEXT("bh.Move.StopTrace"),
+		TEXT("bh.Move.StopTrace [0|1] - local trace: when the move input is released while moving, logs and prints stance / gait, start speed, time and distance to a full stop (forward vs lateral). No argument toggles it. Run it in the window you are playing in."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			if (!World)
+			{
+				return;
+			}
+			const bool bWantOn = Args.IsEmpty() ? !GMoveStopTracer.IsActiveIn(World) : (FCString::Atoi(*Args[0]) != 0);
+			if (bWantOn)
+			{
+				GMoveStopTracer.Start(World);
+			}
+			else
+			{
+				GMoveStopTracer.Stop();
+			}
+			const FString Message = FString::Printf(TEXT("bh.Move.StopTrace: %s. Release the move key while moving to get a reading."), bWantOn ? TEXT("ON") : TEXT("OFF"));
+			UE_LOG(LogBHCombat, Log, TEXT("%s"), *Message);
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 4.f, FColor::Cyan, Message);
 			}
 		}));
 }

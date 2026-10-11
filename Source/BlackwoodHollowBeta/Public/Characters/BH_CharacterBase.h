@@ -31,6 +31,8 @@ class UAH_AttributeSet;
 class UBH_StanceComponent;
 class UBH_StanceMovementProfile;
 class UBH_PlayerDeathComponent;
+class UBH_InteractorComponent;
+class UBH_ArmorVisualComponent;
 class UGameplayAbility;
 class UInputAction;
 class UInputMappingContext;
@@ -62,6 +64,14 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "BH|Death")
 	UBH_PlayerDeathComponent* GetDeathComponent() const { return DeathComponent; }
+
+	/** Phase 11C: the player's side of interaction (focus scan, prompt, hold RPCs). Only does anything on a locally controlled player pawn. */
+	UFUNCTION(BlueprintPure, Category = "BH|Interaction")
+	UBH_InteractorComponent* GetInteractorComponent() const { return InteractorComponent; }
+
+	/** Phase 11E: builds the equipped armor (or the starting outfit) on the MetaHuman visual body, locally on every machine. Cosmetic only. */
+	UFUNCTION(BlueprintPure, Category = "BH|Armor")
+	UBH_ArmorVisualComponent* GetArmorVisualComponent() const { return ArmorVisualComponent; }
 
 	// -- IGenericTeamAgentInterface (replicated so clients resolve teams without a controller) --
 	virtual FGenericTeamId GetGenericTeamId() const override { return BH_CombatTeam::ToGenericTeamId(CombatTeam); }
@@ -244,6 +254,12 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Death")
 	TObjectPtr<UBH_PlayerDeathComponent> DeathComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Interaction")
+	TObjectPtr<UBH_InteractorComponent> InteractorComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Armor")
+	TObjectPtr<UBH_ArmorVisualComponent> ArmorVisualComponent;
+
 private:
 	/** Idempotent. */
 	void InitAbilitySystem();
@@ -260,6 +276,9 @@ private:
 	// -- Ragdoll state ---------------------------------------------------------------------------------------------
 	void DisableRagdollInterferingCollision();
 	void RestoreRagdollInterferingCollision();
+
+	/** Diagnostics for bh.Ragdoll.DebugCamera: logs the pawn's / attached actors' components that currently respond to the Camera channel (call while the mesh is still on the capsule). */
+	void LogRagdollCameraBlockers() const;
 
 	bool bRagdollActive = false;
 	bool bRagdollMeshDetached = false;

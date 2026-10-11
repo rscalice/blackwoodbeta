@@ -161,7 +161,7 @@ public:
 
 	/**
 	 * The heaviest WeightClass among the equipped (active) armor pieces. @return false when no armor is equipped
-	 * (OutWeight is then Cloth). Works on any machine (reads the replicated inventory).
+	 * (OutWeight is then Light). Works on any machine (reads the replicated inventory).
 	 */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Loadout")
 	bool GetEquippedArmorWeight(EBH_ArmorWeightClass& OutWeight) const;

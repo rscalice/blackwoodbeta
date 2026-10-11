@@ -34,6 +34,7 @@ UAH_GA_Block::UAH_GA_Block()
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Staggered);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_PostureBroken);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Dead);
+	ActivationBlockedTags.AddTag(TAG_State_Action_Consuming); // Phase 11D: cannot start while drinking / placing a consumable
 
 	// Raising the guard cancels your swing; you can't swing while guarding.
 	CancelAbilitiesWithTag.AddTag(TAG_Ability_Combat_MeleeAttack);

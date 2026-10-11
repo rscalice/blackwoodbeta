@@ -35,6 +35,7 @@ UAH_GA_MeleeAttack_Base::UAH_GA_MeleeAttack_Base()
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Staggered);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_PostureBroken);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Dead);
+	ActivationBlockedTags.AddTag(TAG_State_Action_Consuming); // Phase 11D: cannot start while drinking / placing a consumable
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Parrying);
 
 	// Souls feel: a swing may start on a sliver of stamina (it floors at 0), but the combo won't advance on empty.

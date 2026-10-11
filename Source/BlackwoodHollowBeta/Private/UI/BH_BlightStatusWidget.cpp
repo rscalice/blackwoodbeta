@@ -1,6 +1,7 @@
 // Blackwood Hollow - Blight status widget (implementation)
 
 #include "UI/BH_BlightStatusWidget.h"
+#include "UI/BH_RotVignetteWidget.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/StatusEffects/BH_StatusEffect.h"
@@ -43,6 +44,14 @@ void UBH_BlightStatusWidget::NativeDestruct()
 	}
 	BindTimerInterval = 0.f;
 	Unbind();
+
+	if (RotVignette)
+	{
+		RotVignette->RemoveFromParent();
+		RotVignette = nullptr;
+	}
+	RotIntensity = 0.f;
+
 	Super::NativeDestruct();
 }
 
@@ -65,6 +74,10 @@ void UBH_BlightStatusWidget::TryBind()
 		else
 		{
 			Unbind();
+			if (bRotActive)
+			{
+				SetRotActive(false, /*bInitial*/ false); // the pawn is gone (death / respawn swap): a stale Rot must not keep the vignette up
+			}
 		}
 	}
 
@@ -255,4 +268,56 @@ void UBH_BlightStatusWidget::NativeTick(const FGeometry& MyGeometry, float InDel
 	{
 		RefreshRotVisuals();
 	}
+
+	UpdateRotIntensity(InDeltaTime);
+}
+
+UBH_RotVignetteWidget* UBH_BlightStatusWidget::EnsureRotVignette()
+{
+	if (RotVignette)
+	{
+		return RotVignette;
+	}
+	APlayerController* PC = GetOwningPlayer();
+	if (!RotVignetteWidgetClass || !PC || !PC->IsLocalController())
+	{
+		return nullptr;
+	}
+
+	UBH_RotVignetteWidget* Created = CreateWidget<UBH_RotVignetteWidget>(PC, RotVignetteWidgetClass);
+	if (Created)
+	{
+		Created->AddToPlayerScreen(RotVignetteZOrder);
+		RotVignette = Created;
+	}
+	return RotVignette;
+}
+
+void UBH_BlightStatusWidget::UpdateRotIntensity(float DeltaTime)
+{
+	const float Target = bRotActive ? FMath::Clamp(RotVignetteMaxIntensity, 0.f, 1.f) : 0.f;
+	if (FMath::IsNearlyEqual(RotIntensity, Target, 0.0001f))
+	{
+		return;
+	}
+
+	// Linear ease: a full 0 -> 1 swing takes FadeSeconds, so a lower max is reached proportionally sooner.
+	const float FadeSeconds = Target > RotIntensity ? RotFadeInSeconds : RotFadeOutSeconds;
+	if (FadeSeconds > KINDA_SMALL_NUMBER)
+	{
+		RotIntensity = FMath::FInterpConstantTo(RotIntensity, Target, DeltaTime, 1.f / FadeSeconds);
+	}
+	else
+	{
+		RotIntensity = Target;
+	}
+
+	if (Target > 0.f || RotVignette)
+	{
+		if (UBH_RotVignetteWidget* Vignette = EnsureRotVignette())
+		{
+			Vignette->SetIntensity(RotIntensity);
+		}
+	}
+	OnRotIntensityChanged(RotIntensity);
 }

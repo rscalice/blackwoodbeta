@@ -6,8 +6,10 @@
 #include "AbilitySystem/Abilities/AH_GA_OverloadBurst.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Components/BPC_HeartFragment.h"
+#include "Consumables/BH_ConsumableLibrary.h"
 #include "Progression/BH_ProgressionComponent.h"
 #include "AI/BH_EnemyWaveSpawner.h"
+#include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
@@ -45,6 +47,40 @@ void ABH_PlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(ABH_PlayerState, FragmentSlots);
+}
+
+// ============================================================================
+// Consumable refusal feedback (Phase 11E)
+// ============================================================================
+
+void ABH_PlayerState::NotifyConsumableUseRefused(TSubclassOf<UNarrativeItem> ItemClass, EBH_ConsumableRefusal Reason)
+{
+	const APlayerController* OwningController = GetPlayerController();
+	if (!HasAuthority() || (OwningController && OwningController->IsLocalController()))
+	{
+		// A client (it only gets here from its own local pre-check), or the listen-server host's own state.
+		PresentConsumableRefusal(ItemClass, Reason);
+		return;
+	}
+	// The server refusing on behalf of a remote client: tell that client.
+	ClientConsumableUseRefused(ItemClass, Reason);
+}
+
+void ABH_PlayerState::ClientConsumableUseRefused_Implementation(TSubclassOf<UNarrativeItem> ItemClass, EBH_ConsumableRefusal Reason)
+{
+	PresentConsumableRefusal(ItemClass, Reason);
+}
+
+void ABH_PlayerState::PresentConsumableRefusal(TSubclassOf<UNarrativeItem> ItemClass, EBH_ConsumableRefusal Reason)
+{
+#if !UE_BUILD_SHIPPING
+	// Works with no widget: a short on-screen line for the local player (a UMG toast bound to OnConsumableUseRefused replaces it).
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(static_cast<uint64>(0xB11C0150), 2.f, FColor::Orange, UBH_ConsumableLibrary::GetRefusalText(Reason).ToString());
+	}
+#endif
+	OnConsumableUseRefused.Broadcast(ItemClass, Reason);
 }
 
 // ============================================================================

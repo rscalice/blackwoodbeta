@@ -39,6 +39,7 @@ UAH_GA_Dodge::UAH_GA_Dodge()
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Staggered);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_PostureBroken);
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Dead);
+	ActivationBlockedTags.AddTag(TAG_State_Action_Consuming); // Phase 11D: cannot start while drinking / placing a consumable
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Dodging); // tiny re-dodge lockout: no spamming mid-roll
 
 	// Souls-style: a dodge interrupts swings, guard and parry, and none of them can start mid-roll.
@@ -174,7 +175,7 @@ void UAH_GA_Dodge::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 		}
 
 		// Armor weight shortens the roll (State.Armor.Weight.* is granted by UBH_LoadoutComponent's weight effect).
-		EBH_ArmorWeightClass ArmorWeight = EBH_ArmorWeightClass::Cloth;
+		EBH_ArmorWeightClass ArmorWeight = EBH_ArmorWeightClass::Light;
 		if (const UAbilitySystemComponent* OwnerASC = GetAbilitySystemComponentFromActorInfo())
 		{
 			if (OwnerASC->HasMatchingGameplayTag(TAG_State_Armor_Weight_Heavy))

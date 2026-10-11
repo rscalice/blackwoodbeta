@@ -13,6 +13,10 @@
 // level scaling (ApplyLevelScaling at BeginPlay) sees it. Entries that are not ABH_EnemyBase ignore the level.
 // Debug (server): DebugSkipToWave / DebugSpawnBoss (console: bh.Arena.SkipToWave N, bh.Arena.SpawnBoss). The boss class is found by
 // inspecting the entry classes for a UBH_CombatIdentityComponent template with bIsBoss.
+// Phase 11F (party wipe): the spawner remembers the roster of the CURRENT wave (class, level, spawn transform, the pawn). When the party wipes
+// (UBH_PartyStateSubsystem::OnPartyWiped) the enemies that are still alive are reset by their own UBH_EnemyResetComponent, the ones that are
+// dead or gone respawn in their original slot at full strength, and enemies not spawned yet simply keep spawning. A wave that was already cleared
+// stays cleared (nothing respawns while the next wave is on its NextWaveDelay timer, nor after the last wave).
 // Note: the original brief called the wave struct FEnemyWave; project naming uses the BH_ prefix. A wave holds a list of
 // entries (class + count) so a wave can mix archetypes.
 
@@ -51,6 +55,15 @@ struct FBH_PendingWaveSpawn
 {
 	TSubclassOf<APawn> EnemyClass;
 	int32 EnemyLevel = 1;
+};
+
+/** One enemy of the running wave (server bookkeeping for the party-wipe restart). */
+struct FBH_WaveRosterSlot
+{
+	TSubclassOf<APawn> EnemyClass;
+	int32 EnemyLevel = 1;
+	FTransform SpawnTransform = FTransform::Identity;
+	TWeakObjectPtr<APawn> Pawn;
 };
 
 /** One wave: its entries are spawned in order, SpawnDelay apart. */
@@ -158,6 +171,13 @@ private:
 	void BeginWave(int32 WaveIndex);
 	void SpawnNext();
 	APawn* SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 SpawnIndex, int32 EnemyLevel);
+
+	/** Spawns and tracks one enemy at SpawnTransform (shared by the normal spawn and the party-wipe respawn). */
+	APawn* SpawnEnemyAt(TSubclassOf<APawn> EnemyClass, const FTransform& SpawnTransform, int32 EnemyLevel);
+
+	/** Party wiped: respawn the dead enemies of the current wave in their original slots (the living ones are reset by their own components). */
+	UFUNCTION()
+	void HandlePartyWiped();
 	FVector ResolveSpawnLocation(TSubclassOf<APawn> EnemyClass, int32 SpawnIndex, FRotator& OutRotation) const;
 	void CheckWaveCleared();
 	void AdvanceAfterClear();
@@ -189,6 +209,9 @@ private:
 
 	/** Enemies still to spawn in the current wave (flattened entries). */
 	TArray<FBH_PendingWaveSpawn> PendingSpawns;
+
+	/** Every enemy spawned in the current wave, with the slot it spawned in (cleared by BeginWave). */
+	TArray<FBH_WaveRosterSlot> Roster;
 
 	int32 CurrentWaveIndex = -1;
 	int32 SpawnedInWave = 0;

@@ -26,6 +26,7 @@
 #include "AbilitySystemInterface.h"
 #include "GenericTeamAgentInterface.h"
 #include "Combat/BH_CombatTeam.h"
+#include "Loot/BH_LootTypes.h"
 #include "BH_EnemyBase.generated.h"
 
 class UAbilitySystemComponent;
@@ -36,6 +37,9 @@ class ABH_EnemyBase;
 
 /** Server: this enemy's health reached zero (fires after the death hooks and the XP grant). */
 DECLARE_MULTICAST_DELEGATE_TwoParams(FBH_OnEnemyDeath, ABH_EnemyBase* /*Enemy*/, AActor* /*Killer*/);
+
+/** Server: an ABH_EnemyBase's aggro target changed (Target is null when it dropped aggro). */
+DECLARE_MULTICAST_DELEGATE_TwoParams(FBH_OnEnemyAggroChanged, ABH_EnemyBase* /*Enemy*/, AActor* /*Target*/);
 
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API ABH_EnemyBase : public ACharacter, public IAbilitySystemInterface, public IGenericTeamAgentInterface
@@ -100,6 +104,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Enemy|Scaling", meta = (ClampMin = "0"))
 	int32 XPRewardOverride = 10;
 
+	/** Phase 11C: per-player drops rolled when this enemy dies (server). Each entry rolls independently for every living player within the XP share radius; items go straight into their inventory. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Enemy|Loot")
+	FBH_DropTable DropTable;
+
 	/**
 	 * SERVER. Writes EnemyLevel into the Level attribute and, for every row that exists in the enemy scaling table, sets the BASE
 	 * MaxHealth (refilling Health), MaxPosture (refilling Posture), AttackPower and Defense. Missing rows leave the current value alone.
@@ -117,6 +125,19 @@ public:
 
 	/** Server only: fires when this enemy dies (the wave spawner listens to it). */
 	FBH_OnEnemyDeath OnEnemyDeath;
+
+	// -- Aggro (Phase 11F, GitHub #21) -----------------------------------------------------
+	// Enemies WITHOUT a UBH_CombatIdentityComponent (the crab) report who they fight here instead, so the party-in-combat state
+	// (UBH_PartyStateSubsystem) counts them too. The AI controllers call SetAggroTarget only when the pawn has no identity component.
+
+	/** Server only: any ABH_EnemyBase's aggro target changed. UBH_PartyStateSubsystem listens to this. */
+	static FBH_OnEnemyAggroChanged OnAnyEnemyAggroChanged;
+
+	/** SERVER. Who this enemy is fighting (null = nobody). Broadcasts OnAnyEnemyAggroChanged when it changes. */
+	void SetAggroTarget(AActor* NewTarget);
+
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Enemy")
+	AActor* GetAggroTarget() const { return AggroTarget.Get(); }
 
 	// -- Test behaviour ------------------------------------------------------
 
@@ -188,6 +209,9 @@ private:
 	static constexpr float FaceTargetSearchInterval = 0.25f;
 
 	TWeakObjectPtr<const AActor> CachedFaceTarget;
+
+	/** Server-side aggro target (see SetAggroTarget). Not replicated: only the server's party-combat evaluation reads it. */
+	TWeakObjectPtr<AActor> AggroTarget;
 	double NextFaceTargetSearchTime = 0.0;
 
 	FTimerHandle AutoAttackTimerHandle;

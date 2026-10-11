@@ -142,7 +142,7 @@ public:
 
 /**
  * Phase 9: armor weight class. Infinite; StaminaRegenRate Multiplicative by SetByCaller(Data.Equip.StaminaRegenMult).
- * This base class is the Cloth effect (no tag); UAH_GE_ArmorWeight_Medium / _Heavy add State.Armor.Weight.Medium / .Heavy.
+ * This base class is the Light effect (no tag); UAH_GE_ArmorWeight_Medium / _Heavy add State.Armor.Weight.Medium / .Heavy.
  * Applied (one at a time, the heaviest equipped class) by UBH_LoadoutComponent::RefreshArmorStatMods.
  */
 UCLASS()

@@ -119,6 +119,15 @@ public:
 	/** Switches target (null clears). Releases the old target's token. */
 	void SetCrabTarget(AActor* NewTarget);
 
+	/** SERVER (Phase 11F party-wipe reset). Drops the target and token, stops moving and restarts the behavior tree from its root. */
+	void ResetAI();
+
+	/** SERVER. true = ResetAI, then no target scans until false (the reset component walks the pawn home). */
+	void SetResetHold(bool bHold);
+
+	UFUNCTION(BlueprintPure, Category = "BH|CrabAI")
+	bool IsResetHeld() const { return bResetHold; }
+
 protected:
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void OnUnPossess() override;
@@ -146,6 +155,9 @@ private:
 	double LastTargetAttackStartTime = -1.0;
 
 	bool bHoldingToken = false;
+
+	/** Party-wipe reset in progress: ScanForTarget does nothing. */
+	bool bResetHold = false;
 
 	/** The corrupted-tree error has been logged for this controller. */
 	bool bLoggedCorruptTree = false;

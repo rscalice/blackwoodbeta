@@ -6,6 +6,7 @@
 #include "AbilitySystem/Abilities/AH_GA_FragmentBase.h"
 #include "AbilitySystem/Abilities/AH_GA_OverloadBurst.h"
 #include "AbilitySystem/StatusEffects/BH_BlightEffects.h"
+#include "AbilitySystem/StatusEffects/BH_FractureEffects.h"
 #include "Player/BH_PlayerState.h"
 #include "GameFramework/Pawn.h"
 #include "AbilitySystemComponent.h"
@@ -142,7 +143,9 @@ float UBPC_HeartFragment::GetShieldingFraction() const
 		return 0.f;
 	}
 	const int32 Index = FMath::Clamp(ShieldingLevel, 0, ShieldingByLevel.Num() - 1);
-	return FMath::Clamp(ShieldingByLevel[Index], 0.f, 1.f);
+	// Phase 11G: Fracture weakens the shielding (x0.75: 15% -> 11.25%). 1.0 when not fractured.
+	const float Efficiency = UBH_FractureLibrary::GetShieldingEfficiencyMultiplier(GetOwnerASC());
+	return FMath::Clamp(ShieldingByLevel[Index] * Efficiency, 0.f, 1.f);
 }
 
 void UBPC_HeartFragment::SetShieldingLevel(int32 NewLevel)
@@ -182,7 +185,100 @@ float UBPC_HeartFragment::ComputeMitigatedBuildup(float RawAmount) const
 	const float Resistance = AttributeSet ? FMath::Max(AttributeSet->GetBlightResistance(), 0.f) : 0.f;
 	const float Shielding = FMath::Clamp(GetShieldingFraction(), 0.f, 1.f);
 	const float Aegis = FMath::Clamp(GetAegisReduction(), 0.f, 1.f);
-	return RawAmount * 100.f / (100.f + Resistance) * (1.f - Shielding) * (1.f - Aegis);
+	const float Other = GetOtherBlightReduction(); // Phase 11D: Warden sanctuary etc.
+	return RawAmount * 100.f / (100.f + Resistance) * (1.f - Shielding) * (1.f - Aegis) * (1.f - Other);
+}
+
+void UBPC_HeartFragment::AddBlightReductionSource(const UObject* Source, float Fraction)
+{
+	if (!Source)
+	{
+		return;
+	}
+	OtherBlightReductions.Add(TWeakObjectPtr<const UObject>(Source), FMath::Clamp(Fraction, 0.f, 1.f));
+}
+
+void UBPC_HeartFragment::RemoveBlightReductionSource(const UObject* Source)
+{
+	if (!Source)
+	{
+		return;
+	}
+	OtherBlightReductions.Remove(TWeakObjectPtr<const UObject>(Source));
+	// Drop sources that were destroyed without unregistering.
+	for (auto It = OtherBlightReductions.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+}
+
+float UBPC_HeartFragment::GetOtherBlightReduction() const
+{
+	float Remaining = 1.f;
+	for (const TPair<TWeakObjectPtr<const UObject>, float>& Pair : OtherBlightReductions)
+	{
+		if (Pair.Key.IsValid())
+		{
+			Remaining *= (1.f - FMath::Clamp(Pair.Value, 0.f, 1.f));
+		}
+	}
+	return FMath::Clamp(1.f - Remaining, 0.f, 1.f);
+}
+
+float UBPC_HeartFragment::ReduceBlightBuildup(float Amount)
+{
+	const AActor* OwnerActor = GetOwner();
+	if (!OwnerActor || !OwnerActor->HasAuthority() || Amount <= 0.f || bSaturating)
+	{
+		return 0.f;
+	}
+	if (!EnsureAbilitySystemCached() || CachedASC->HasMatchingGameplayTag(TAG_State_Combat_Dead))
+	{
+		return 0.f;
+	}
+	const float Current = CachedAttributeSet->GetBlightBuildup();
+	const float NewValue = FMath::Max(Current - Amount, 0.f);
+	if (NewValue >= Current)
+	{
+		return 0.f;
+	}
+	SetBlightBuildupValue(NewValue);
+	return Current - NewValue;
+}
+
+void UBPC_HeartFragment::DebugSetBlightBuildup(float Value)
+{
+#if !UE_BUILD_SHIPPING
+	const AActor* OwnerActor = GetOwner();
+	if (!OwnerActor || !OwnerActor->HasAuthority() || bSaturating || !EnsureAbilitySystemCached())
+	{
+		return;
+	}
+	const float Clamped = FMath::Clamp(Value, 0.f, UAH_AttributeSet::MaxBlightBuildup);
+	if (Clamped >= UAH_AttributeSet::MaxBlightBuildup - KINDA_SMALL_NUMBER)
+	{
+		SaturateBlightMeter(nullptr);
+		return;
+	}
+	if (const UWorld* World = GetWorld())
+	{
+		LastBlightGainTime = World->GetTimeSeconds(); // a fresh decay delay, like a real gain
+	}
+	SetBlightBuildupValue(Clamped);
+	if (Clamped > 0.f)
+	{
+		EnsureBlightDecayTimer();
+	}
+	else
+	{
+		StopBlightDecayTimer();
+	}
+#else
+	(void)Value;
+#endif
 }
 
 float UBPC_HeartFragment::GetBlightBuildup() const

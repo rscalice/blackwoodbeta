@@ -11,6 +11,11 @@
 // short timer, then listens to the BlightBuildup attribute and the State.Status.BlightRot tag count on that ASC. The attribute is
 // replicated owner-only, which is exactly who owns this widget. Blueprint events fire on stack change, Rot start and Rot end so the
 // widget blueprint can play animations. Place it in WBP_HUD_Main (VitalsCluster) near the vitals bars.
+//
+// Rot vignette (Phase 11B, local player only): RotIntensity eases 0 -> RotVignetteMaxIntensity over RotFadeInSeconds when the Rot starts and back
+// to 0 over RotFadeOutSeconds when it ends. OnBlightRotStarted / OnBlightRotEnded / OnRotIntensityChanged expose it to the widget blueprint, and
+// when RotVignetteWidgetClass (WBP_RotVignette, parent UBH_RotVignetteWidget) is set the widget creates that full-screen vignette itself
+// (added to the player's screen behind the HUD) and drives it with RotIntensity.
 
 #pragma once
 
@@ -21,6 +26,7 @@
 #include "BH_BlightStatusWidget.generated.h"
 
 class UAbilitySystemComponent;
+class UBH_RotVignetteWidget;
 class UImage;
 class UTextBlock;
 class UTexture2D;
@@ -47,6 +53,39 @@ public:
 	/** Rot icon used when the active Rot status effect carries none. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Blight")
 	TObjectPtr<UTexture2D> FallbackRotIcon;
+
+	// -- Rot vignette (local player only) ---------------------------------------------------------------
+
+	/** Full-screen vignette widget created on demand (WBP_RotVignette). Empty = no vignette from C++; the Blueprint can still use RotIntensity. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Blight|Rot")
+	TSubclassOf<UBH_RotVignetteWidget> RotVignetteWidgetClass;
+
+	/** Z-order of the vignette on the player's screen. Below 0 keeps it behind the HUD. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Blight|Rot")
+	int32 RotVignetteZOrder = -1;
+
+	/** Intensity the vignette reaches while the Rot is active (0..1). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Blight|Rot", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float RotVignetteMaxIntensity = 1.f;
+
+	/** Seconds for the vignette to go from 0 to full when the Rot starts. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Blight|Rot", meta = (ClampMin = "0.0", ForceUnits = "s"))
+	float RotFadeInSeconds = 0.4f;
+
+	/** Seconds for the vignette to go from full to 0 when the Rot ends. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|Blight|Rot", meta = (ClampMin = "0.0", ForceUnits = "s"))
+	float RotFadeOutSeconds = 0.8f;
+
+	/** Current eased Rot intensity, 0..1. */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|Blight|Rot")
+	float RotIntensity = 0.f;
+
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Blight|Rot")
+	float GetRotIntensity() const { return RotIntensity; }
+
+	/** RotIntensity changed (fires every frame while it fades, not while it holds). */
+	UFUNCTION(BlueprintImplementableEvent, Category = "BlackwoodHollow|Blight|Rot")
+	void OnRotIntensityChanged(float NewIntensity);
 
 	/** Looks for the owning pawn's ASC right now and (re)binds if it differs from the bound one. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Blight")
@@ -98,6 +137,11 @@ private:
 	void SetStacksFromBuildup(float Buildup, bool bInitial);
 	void SetRotActive(bool bActive, bool bInitial);
 	void RefreshRotVisuals();
+	void UpdateRotIntensity(float DeltaTime);
+	UBH_RotVignetteWidget* EnsureRotVignette();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UBH_RotVignetteWidget> RotVignette;
 
 	TWeakObjectPtr<UAbilitySystemComponent> BoundASC;
 	FDelegateHandle BuildupHandle;

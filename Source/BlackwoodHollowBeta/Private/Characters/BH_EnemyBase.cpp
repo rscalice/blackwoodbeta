@@ -6,8 +6,10 @@
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "Progression/BH_ProgressionComponent.h"
 #include "Progression/BH_RPGSettings.h"
+#include "Loot/BH_LootLibrary.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
 #include "Combat/BH_CombatIdentityComponent.h"
+#include "Characters/BH_EnemyResetComponent.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "Abilities/GameplayAbility.h"
@@ -33,6 +35,8 @@ namespace BH_EnemyBasePrivate
 			|| ASC->GetNumericAttribute(UAH_AttributeSet::GetHealthAttribute()) > 0.f;
 	}
 }
+
+FBH_OnEnemyAggroChanged ABH_EnemyBase::OnAnyEnemyAggroChanged;
 
 ABH_EnemyBase::ABH_EnemyBase()
 {
@@ -109,6 +113,12 @@ void ABH_EnemyBase::BeginPlay()
 	if (AttributeSet && HasAuthority())
 	{
 		AttributeSet->OnHealthZero.AddUObject(this, &ABH_EnemyBase::HandleHealthZero);
+	}
+
+	// Phase 11F: remembers the spawn transform and resets this enemy on a party wipe.
+	if (HasAuthority())
+	{
+		UBH_EnemyResetComponent::EnsureOn(this);
 	}
 
 	// After the Initial* values / identity setup: the scaling table has the last word.
@@ -204,6 +214,14 @@ const AActor* ABH_EnemyBase::ResolveFaceTarget()
 			return Aggro;
 		}
 	}
+	else if (const AActor* EnemyAggro = AggroTarget.Get())
+	{
+		if (EnemyAggro != this && BH_EnemyBasePrivate::IsLiving(EnemyAggro))
+		{
+			CachedFaceTarget = EnemyAggro;
+			return EnemyAggro;
+		}
+	}
 
 	// Otherwise the nearest living player pawn.
 	const AActor* Best = nullptr;
@@ -227,6 +245,16 @@ const AActor* ABH_EnemyBase::ResolveFaceTarget()
 
 	CachedFaceTarget = Best;
 	return Best;
+}
+
+void ABH_EnemyBase::SetAggroTarget(AActor* NewTarget)
+{
+	if (!HasAuthority() || AggroTarget.Get() == NewTarget)
+	{
+		return;
+	}
+	AggroTarget = NewTarget;
+	OnAnyEnemyAggroChanged.Broadcast(this, NewTarget);
 }
 
 void ABH_EnemyBase::InitializeServerStats()
@@ -321,6 +349,7 @@ void ABH_EnemyBase::HandleHealthZero(AActor* Killer)
 		return; // the attribute set can report zero more than once: one death, one XP grant
 	}
 	bDead = true;
+	SetAggroTarget(nullptr); // a dead enemy never keeps the party in combat
 
 	if (UWorld* World = GetWorld())
 	{
@@ -338,6 +367,7 @@ void ABH_EnemyBase::HandleHealthZero(AActor* Killer)
 
 	// XP first (positions are read now, before a subclass ragdolls / despawns the body).
 	UBH_ProgressionComponent::GrantKillXP(this, GetXPReward());
+	UBH_LootLibrary::GrantEnemyDrops(this, DropTable); // Phase 11C: same living-player-in-range rule as the XP
 
 	OnDeathNative(Killer);
 	K2_OnDeath(Killer);

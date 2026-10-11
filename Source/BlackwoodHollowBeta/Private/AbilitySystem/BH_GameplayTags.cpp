@@ -117,6 +117,13 @@ UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Blight_RotDamagePercent, "Data.Blight.Ro
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Blight_RotStaminaRegenMult, "Data.Blight.RotStaminaRegenMult", "SetByCaller key: multiplier on StaminaRegenRate while Blight Rot is active (0.75 = -25%), read by UAH_GE_BlightRotStaminaPenalty.");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Blight_SaturationPercent, "Data.Blight.SaturationPercent", "SetByCaller key: saturation damage as a fraction of the target's MaxHealth (0.15 = 15%), read by UAH_MMC_BlightSaturation.");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Event_Combat_BlightSaturated, "Event.Combat.BlightSaturated", "Sent (server) to a victim whose Blight meter just saturated, after the saturation damage and before Blight Rot is applied. EventMagnitude = saturation damage dealt.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Action_Consuming, "State.Action.Consuming", "The user is drinking / placing a consumable (UBH_GA_UseConsumable). Attack, dodge, block, parry, shield bash and hit reactions refuse to start meanwhile.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Ability_Consumable_Use, "Ability.Consumable.Use", "Identifies UBH_GA_UseConsumable.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Event_Consumable_Use, "Event.Consumable.Use", "Gameplay event that activates UBH_GA_UseConsumable. Payload OptionalObject = the Narrative item class to use.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Status_HeartwoodSap, "State.Status.HeartwoodSap", "Heartwood Sap heal-over-time is running (UBH_GE_HeartwoodSapHeal).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Status_WardenSanctuary, "State.Status.WardenSanctuary", "Standing inside a Warden's Incense sanctuary (UBH_GE_WardenSanctuaryBuff).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Consumable_HealFractionPerTick, "Data.Consumable.HealFractionPerTick", "SetByCaller key: Heartwood Sap heal per period as a fraction of the target's MaxHealth.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Data_Consumable_PostureRegenMult, "Data.Consumable.PostureRegenMult", "SetByCaller key: multiplier on PostureRegenRate while in a Warden sanctuary (1.5 = +50%).");
 
 // Weapon drawn / sheathed
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Weapon_Drawn, "State.Weapon.Drawn", "Weapon is drawn: combat locomotion / hold pose (UBH_StanceComponent).");
