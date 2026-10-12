@@ -21,10 +21,12 @@ ARMOR_ROOT = EQUIPMENT_ROOT + "/Armor"
 BODY_TYPES_ROOT = "/Game/BlackwoodHollow/Characters/BodyTypes"
 
 CANONICAL_SKELETON = (
-    "/Game/Skeletons/MetaHuman/Built/Common/Female/Medium/NormalWeight/Body/metahuman_base_skel"
+    "/Game/MetaHumans/Common/Female/Medium/NormalWeight/Body/metahuman_base_skel"
 )
-COMMON_FOLDER = "/Game/Skeletons/MetaHuman/Built/Common"
-FORBIDDEN_ROOT = "/Game/MetaHumans"
+# MetaHuman Creator's default common folder is the single canonical copy (2026-10-12, #108).
+COMMON_FOLDER = "/Game/MetaHumans/Common"
+# The retired duplicate location; a build must never recreate it.
+FORBIDDEN_ROOT = "/Game/Skeletons/MetaHuman"
 
 DT_BODY_TYPES = ARMOR_FIT_ROOT + "/DT_BH_BodyTypes"
 DT_ARMOR_PIECES = ARMOR_FIT_ROOT + "/DT_BH_ArmorPieces"
