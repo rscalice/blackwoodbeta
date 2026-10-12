@@ -10,6 +10,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/EngineTypes.h"
+#include "Items/BH_EquipmentTypes.h"
 #include "BH_LootTypes.generated.h"
 
 class UNarrativeItem;
@@ -41,6 +42,29 @@ struct BLACKWOODHOLLOWBETA_API FBH_DropEntry
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drop", meta = (ClampMin = "1"))
 	int32 MaxQuantity = 1;
+
+	/**
+	 * Phase 13-0b. When true, the granted item is equipped into AutoEquipSlot on the receiving player's loadout right after the grant
+	 * (server, via UBH_LoadoutComponent::EquipWeaponToSlot). Only meaningful for UBH_WeaponItem classes; an invalid equip (wrong grip type,
+	 * locked set, no loadout on the pawn) is logged and leaves the item in the inventory.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drop|Equip")
+	bool bAutoEquip = false;
+
+	/** Slot used when bAutoEquip is set (e.g. Weapon_Off_A for a shield). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drop|Equip", meta = (EditCondition = "bAutoEquip"))
+	EBH_EquipSlot AutoEquipSlot = EBH_EquipSlot::Weapon_Off_A;
+
+	/**
+	 * Phase 13-0b. When true, this entry is rolled ONCE for the whole party (UBH_PartyLibrary) instead of per living player in XP range:
+	 * every party member receives it regardless of distance or whether they are dead. Chance is still respected (one roll for the party).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drop|Party")
+	bool bGrantToWholeParty = false;
+
+	/** Phase 13-0b. When true, a player who already owns at least one of ItemClass (UBH_LootLibrary::GetItemCount) is skipped. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Drop")
+	bool bOncePerPlayer = false;
 };
 
 /** Independent-chance list: every entry rolls on its own (a kill can drop several things, or nothing). */
