@@ -20,7 +20,7 @@
 		},
 		{
 			"Name": "NwiroIntegrationKit",
-			"Enabled": true
+			"Enabled": false
 		},
 		{
 			"Name": "BetaFolderColors",
@@ -145,6 +145,14 @@
 		},
 		{
 			"Name": "NiagaraToolsets",
+			"Enabled": true
+		},
+		{
+			"Name": "ModelContextProtocol",
+			"Enabled": true
+		},
+		{
+			"Name": "AllToolsets",
 			"Enabled": true
 		}
 	]
