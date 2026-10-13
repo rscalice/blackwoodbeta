@@ -97,23 +97,30 @@ def build_font(family, weights):
         font = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
             family, FONT_DIR, unreal.Font, factory)
     font.set_editor_property("font_cache_type", unreal.FontCacheType.RUNTIME)
-    comp = font.get_editor_property("composite_font")
-    typeface = comp.get_editor_property("default_typeface")
-    entries = []
-    for weight, p in faces:
-        face = eal.load_asset(p)
-        fd = unreal.FontData()
-        fd.set_editor_property("font_face_asset", face)
-        entry = unreal.TypefaceEntry()
-        entry.set_editor_property("name", weight)
-        entry.set_editor_property("font", fd)
-        entries.append(entry)
-    typeface.set_editor_property("fonts", entries)
-    comp.set_editor_property("default_typeface", typeface)
-    font.set_editor_property("composite_font", comp)
     eal.save_asset(font_path)
     touched.append(font_path)
-    log("Built %s with %d typefaces: %s" % (family, len(entries), [w for w, _ in faces]))
+    # UE 5.8 does not expose FCompositeFont's typeface list to Python, so the typeface entries
+    # are added by hand in the Font editor (one-time, see the MANUAL STEP log line below).
+    try:
+        comp = font.get_editor_property("composite_font")
+        typeface = comp.get_editor_property("default_typeface")
+        entries = []
+        for weight, p in faces:
+            fd = unreal.FontData()
+            fd.set_editor_property("font_face_asset", eal.load_asset(p))
+            entry = unreal.TypefaceEntry()
+            entry.set_editor_property("name", weight)
+            entry.set_editor_property("font", fd)
+            entries.append(entry)
+        typeface.set_editor_property("fonts", entries)
+        comp.set_editor_property("default_typeface", typeface)
+        font.set_editor_property("composite_font", comp)
+        eal.save_asset(font_path)
+        log("Built %s with %d typefaces: %s" % (family, len(entries), [w for w, _ in faces]))
+    except Exception:
+        warn("MANUAL STEP: open %s, Default Font Family > add one entry per weight %s, "
+             "set each entry's Name to the weight and its Font to the matching FF_ face, then Save."
+             % (font_path, [w for w, _ in faces]))
     return font_path
 
 
