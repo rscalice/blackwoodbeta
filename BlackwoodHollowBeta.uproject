@@ -8,6 +8,11 @@
 			"Name": "BlackwoodHollowBeta",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "BlackwoodHollowBetaEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
 		}
 	],
 	"Plugins": [
