@@ -252,3 +252,9 @@ void FBH_GameplayTags::AddAllTags()
 	AddTag(State_Weapon_Drawn, "State.Weapon.Drawn", "Weapon is drawn (combat locomotion).");
 	AddTag(State_Weapon_Sheathed, "State.Weapon.Sheathed", "Weapon is sheathed (relaxed locomotion).");
 }
+
+// UI.Layer.* (Phase 13B)
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_UI_Layer_Game, "UI.Layer.Game", "Non-activatable HUD layer of the primary layout (AddHUDWidget).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_UI_Layer_GameMenu, "UI.Layer.GameMenu", "Activatable stack for in-game overlays above the HUD.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_UI_Layer_Menu, "UI.Layer.Menu", "Activatable stack for full menus (player menu).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_UI_Layer_Modal, "UI.Layer.Modal", "Activatable stack for confirmations and popups; always on top.");

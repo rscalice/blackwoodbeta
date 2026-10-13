@@ -275,3 +275,11 @@ protected:
 private:
 	static FBH_GameplayTags GameplayTags;
 };
+
+// ---------------------------------------------------------------------------
+// UI.Layer.*  -- Phase 13B: layers of UBH_PrimaryLayoutWidget (UBH_UILayoutSubsystem::PushWidgetToLayer)
+// ---------------------------------------------------------------------------
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_UI_Layer_Game);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_UI_Layer_GameMenu);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_UI_Layer_Menu);
+BLACKWOODHOLLOWBETA_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_UI_Layer_Modal);

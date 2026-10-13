@@ -21,6 +21,7 @@ public class BlackwoodHollowBeta : ModuleRules
 			"AssetRegistry",     // editor-only profile asset creation (UBH_StanceMovementProfile::CreateProfileAsset)
 			"UMG",               // HUD widgets (UBH_HUDWidget)
 			"CommonInput",       // Phase 13B: ECommonInputType (UBH_UIFunctionLibrary::GetKeyForInputAction)
+			"CommonUI",          // Phase 13B: primary layout / activatable menu widgets (UBH_PrimaryLayoutWidget, UBH_MenuActivatableWidget)
 			"AIModule",          // IGenericTeamAgentInterface / FGenericTeamId (combat team filtering)
 			"LevelSequence",
 			"MovieScene",
