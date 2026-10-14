@@ -415,6 +415,7 @@ UBH_HUDWidget::UBH_HUDWidget(const FObjectInitializer& ObjectInitializer)
 		{ FName(TEXT("VitalsCluster/Box_Stamina")), EBH_QuietRule::StaminaNotFull },
 		{ FName(TEXT("VitalsCluster/Box_Health")), EBH_QuietRule::HealthNotFull },
 		{ FName(TEXT("FragmentBar")), EBH_QuietRule::FragmentsBusy },
+		{ FName(TEXT("QuestTracker")), EBH_QuietRule::HiddenInCombat },
 	};
 }
 
@@ -547,10 +548,16 @@ void UBH_HUDWidget::TickQuietHUD(float DeltaTime)
 			continue;
 		}
 
-		const bool bShow = !bEnabled || bHUDInCombat || EvaluateQuietRule(QuietGroups[Index].Rule, Target);
-		if (!bEnabled || bCombatStarted)
+		const bool bHiddenInCombat = QuietGroups[Index].Rule == EBH_QuietRule::HiddenInCombat;
+		const bool bShow = !bEnabled
+			|| (bHiddenInCombat ? !bHUDInCombat : (bHUDInCombat || EvaluateQuietRule(QuietGroups[Index].Rule, Target)));
+		if (!bEnabled || (bCombatStarted && !bHiddenInCombat))
 		{
 			Runtime.Alpha = 1.f; // instant
+		}
+		else if (bHiddenInCombat && !bShow)
+		{
+			Runtime.Alpha = FMath::Max(0.f, Runtime.Alpha - DeltaTime / 0.12f); // fast out when combat starts
 		}
 		else if (bShow)
 		{

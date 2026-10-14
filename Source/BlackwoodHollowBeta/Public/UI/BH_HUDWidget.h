@@ -52,6 +52,8 @@ enum class EBH_QuietRule : uint8
 	StaminaNotFull,
 	/** Also while a Heart-Fragment slot is cooling down (and briefly after one becomes ready). The widget must be a UBH_FragmentBarWidget. */
 	FragmentsBusy,
+	/** Inverse of CombatOnly: shown out of combat, fades out quickly while engaged and returns after the out-of-combat delay. */
+	HiddenInCombat,
 };
 
 /** One element the quiet HUD fades. WidgetPath names a widget in this HUD's tree, or "Child/Grandchild" through a nested user widget. */
