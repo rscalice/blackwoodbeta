@@ -244,15 +244,18 @@ void UBH_BeatNavigationComponent::RefreshObjective(const APlayerController* Play
 			bWantScreen = Distance > Limit;
 		}
 
-		if (bIsCurrent != Entry.bOnCompass || bWantScreen != Entry.bOnScreen)
+		const bool bTextChanged = bIsCurrent && !Entry.DisplayText.EqualTo(Info.ObjectiveText);
+		if (bIsCurrent != Entry.bOnCompass || bWantScreen != Entry.bOnScreen || bTextChanged)
 		{
+			if (bIsCurrent)
+			{
+				// Name first: the Navigator builds the marker widgets at (re-)registration, so the text must already be right.
+				Marker->SetLocationDisplayName(Info.ObjectiveText);
+				Entry.DisplayText = Info.ObjectiveText;
+			}
 			Marker->SetDomain(MakeDomain(bIsCurrent, bWantScreen));
 			Entry.bOnCompass = bIsCurrent;
 			Entry.bOnScreen = bWantScreen;
-		}
-		if (bIsCurrent && !Info.ObjectiveText.EqualTo(LastObjectiveText))
-		{
-			Marker->SetLocationDisplayName(Info.ObjectiveText);
 		}
 	}
 	if (bHasObjective)

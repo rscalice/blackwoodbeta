@@ -78,6 +78,8 @@ private:
 		TWeakObjectPtr<UNavigationMarkerComponent> Marker;
 		bool bOnCompass = false;
 		bool bOnScreen = false;
+		/** The text the marker was last registered with (the widget is built at registration). */
+		FText DisplayText;
 	};
 
 	struct FPartnerProxy
