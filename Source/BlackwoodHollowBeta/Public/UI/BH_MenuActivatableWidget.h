@@ -13,6 +13,7 @@
 #include "CoreMinimal.h"
 #include "CommonActivatableWidget.h"
 #include "Input/UIActionBindingHandle.h"
+#include "InputCoreTypes.h"
 #include "BH_MenuActivatableWidget.generated.h"
 
 class UInputMappingContext;
@@ -30,7 +31,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|UI|Menu")
 	int32 MenuMappingPriority = 100;
 
+	UBH_MenuActivatableWidget(const FObjectInitializer& ObjectInitializer);
+
+	/** Keys that close this menu while it is active (handled by an input pre-processor, so Slate focus navigation / CommonUI cannot swallow them). Esc is left to CommonUI Back. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|UI|Menu")
+	TArray<FKey> CloseKeys;
+
 	virtual TOptional<FUIInputConfig> GetDesiredInputConfig() const override;
+
+	/** Called by the close pre-processor. */
+	bool TryCloseFromKey(const FKeyEvent& KeyEvent);
 
 protected:
 	virtual void NativeOnActivated() override;
@@ -40,6 +50,13 @@ protected:
 private:
 	void AddMenuContext();
 	void RemoveMenuContext();
+	void RegisterCloseProcessor();
+	void UnregisterCloseProcessor();
+
+	/** Put the owning player back into game input (no cursor, GameOnly) once no menu remains open. */
+	static void RestoreGameInputIfNoMenu(APlayerController* PC);
+
+	TSharedPtr<class IInputProcessor> CloseProcessor;
 
 	/** True while the context is added by this widget (guards double add / remove). */
 	bool bContextAdded = false;
