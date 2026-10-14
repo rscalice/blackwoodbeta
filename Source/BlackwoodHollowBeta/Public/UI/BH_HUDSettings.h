@@ -46,10 +46,18 @@ public:
 	float QuietFadeIn = 0.15f;
 
 	UPROPERTY(Config, EditAnywhere, Category = "Notifications", meta = (ClampMin = "0.01", ForceUnits = "s"))
-	float NotificationFadeIn = 0.15f;
+	float NotificationFadeIn = 0.2f;
+
+	/** How far off to the right (px) the toast starts its slide-in (ease-out). */
+	UPROPERTY(Config, EditAnywhere, Category = "Notifications", meta = (ClampMin = "0.0", ForceUnits = "px"))
+	float NotificationSlideDistance = 480.f;
+
+	/** How far to the right (px) the toast drifts while it fades out. */
+	UPROPERTY(Config, EditAnywhere, Category = "Notifications", meta = (ClampMin = "0.0", ForceUnits = "px"))
+	float NotificationDriftDistance = 40.f;
 
 	UPROPERTY(Config, EditAnywhere, Category = "Notifications", meta = (ClampMin = "0.01", ForceUnits = "s"))
-	float NotificationFadeOut = 0.25f;
+	float NotificationFadeOut = 0.3f;
 
 	/** Pause between two toasts so they never touch. */
 	UPROPERTY(Config, EditAnywhere, Category = "Notifications", meta = (ClampMin = "0.0", ForceUnits = "s"))

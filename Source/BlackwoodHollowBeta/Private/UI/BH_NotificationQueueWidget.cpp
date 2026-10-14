@@ -65,8 +65,20 @@ void UBH_NotificationQueueWidget::ApplyVisual(float InAlpha)
 {
 	if (Panel_Toast)
 	{
-		Panel_Toast->SetRenderOpacity(InAlpha);
-		Panel_Toast->SetRenderTranslation(FVector2D(0.0, (1.f - InAlpha) * 12.0));
+		const UBH_HUDSettings* S = UBH_HUDSettings::Get();
+		if (bFadingOut)
+		{
+			// Fade out while drifting a little to the right.
+			Panel_Toast->SetRenderOpacity(InAlpha);
+			Panel_Toast->SetRenderTranslation(FVector2D((1.f - InAlpha) * S->NotificationDriftDistance, 0.0));
+		}
+		else
+		{
+			// Slide in from off-screen right with a cubic ease-out.
+			const float Eased = 1.f - FMath::Pow(1.f - FMath::Clamp(InAlpha, 0.f, 1.f), 3.f);
+			Panel_Toast->SetRenderOpacity(FMath::Clamp(Eased * 2.f, 0.f, 1.f));
+			Panel_Toast->SetRenderTranslation(FVector2D((1.f - Eased) * S->NotificationSlideDistance, 0.0));
+		}
 	}
 }
 
