@@ -1,4 +1,4 @@
-﻿// Blackwood Hollow - editor-only Blueprint comment helpers
+// Blackwood Hollow - editor-only Blueprint comment helpers
 
 #include "BH_BlueprintCommentLibrary.h"
 
@@ -10,6 +10,10 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "FileHelpers.h"
 #include "Editor.h"
+#include "K2Node_CallFunction.h"
+#include "K2Node_Variable.h"
+#include "K2Node_Event.h"
+#include "K2Node_CustomEvent.h"
 
 namespace BH_CommentLib
 {
@@ -152,6 +156,69 @@ TArray<FString> UBH_BlueprintCommentLibrary::ListGraphNodes(UBlueprint* Blueprin
 			Title.ReplaceInline(TEXT("\n"), TEXT(" "));
 			const FString Prefix = GraphName.IsNone() ? FString::Printf(TEXT("[%s] "), *G->GetName()) : FString();
 			Lines.Add(FString::Printf(TEXT("%s%s | %s | %d,%d"), *Prefix, *N->GetName(), *Title, N->NodePosX, N->NodePosY));
+		}
+	}
+	return Lines;
+}
+
+TArray<FString> UBH_BlueprintCommentLibrary::GetGraphNames(UBlueprint* Blueprint)
+{
+	TArray<FString> Names;
+	if (!Blueprint) { return Names; }
+	TArray<UEdGraph*> Graphs;
+	BH_CommentLib::GatherGraphs(Blueprint, Graphs);
+	for (const UEdGraph* G : Graphs)
+	{
+		if (G) { Names.Add(G->GetName()); }
+	}
+	return Names;
+}
+
+TArray<FString> UBH_BlueprintCommentLibrary::ListGraphNodesEx(UBlueprint* Blueprint, FName GraphName)
+{
+	TArray<FString> Lines;
+	if (!Blueprint) { return Lines; }
+
+	TArray<UEdGraph*> Graphs;
+	if (GraphName.IsNone())
+	{
+		BH_CommentLib::GatherGraphs(Blueprint, Graphs);
+	}
+	else if (UEdGraph* G = BH_CommentLib::FindGraph(Blueprint, GraphName))
+	{
+		Graphs.Add(G);
+	}
+
+	for (const UEdGraph* G : Graphs)
+	{
+		if (!G) { continue; }
+		for (const UEdGraphNode* N : G->Nodes)
+		{
+			if (!N) { continue; }
+			FString Title = N->GetNodeTitle(ENodeTitleType::ListView).ToString();
+			Title.ReplaceInline(TEXT("\r"), TEXT(" "));
+			Title.ReplaceInline(TEXT("\n"), TEXT(" "));
+
+			FString Member;
+			if (const UK2Node_CallFunction* Call = Cast<UK2Node_CallFunction>(N))
+			{
+				Member = Call->FunctionReference.GetMemberName().ToString();
+			}
+			else if (const UK2Node_Variable* Var = Cast<UK2Node_Variable>(N))
+			{
+				Member = Var->VariableReference.GetMemberName().ToString();
+			}
+			else if (const UK2Node_CustomEvent* Custom = Cast<UK2Node_CustomEvent>(N))
+			{
+				Member = Custom->CustomFunctionName.ToString();
+			}
+			else if (const UK2Node_Event* Event = Cast<UK2Node_Event>(N))
+			{
+				Member = Event->EventReference.GetMemberName().ToString();
+			}
+
+			const FString Prefix = GraphName.IsNone() ? FString::Printf(TEXT("[%s] "), *G->GetName()) : FString();
+			Lines.Add(FString::Printf(TEXT("%s%s | %s | %d,%d | %s"), *Prefix, *N->GetName(), *Title, N->NodePosX, N->NodePosY, *Member));
 		}
 	}
 	return Lines;

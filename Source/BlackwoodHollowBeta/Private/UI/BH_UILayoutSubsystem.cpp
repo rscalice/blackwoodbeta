@@ -50,6 +50,16 @@ bool UBH_UILayoutSubsystem::IsAnyMenuOpen() const
 	return Layout && Layout->IsAnyMenuOpen();
 }
 
+void UBH_UILayoutSubsystem::NotifyMenuStateChanged()
+{
+	const bool bOpen = IsAnyMenuOpen();
+	if (bOpen != bLastAnyMenuOpen)
+	{
+		bLastAnyMenuOpen = bOpen;
+		OnMenuStateChanged.Broadcast(bOpen);
+	}
+}
+
 void UBH_UILayoutSubsystem::Deinitialize()
 {
 	if (Layout)

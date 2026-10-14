@@ -19,6 +19,8 @@ class UBH_PrimaryLayoutWidget;
 class UCommonActivatableWidget;
 class UUserWidget;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnMenuStateChanged, bool, bAnyMenuOpen);
+
 UCLASS()
 class BLACKWOODHOLLOWBETA_API UBH_UILayoutSubsystem : public ULocalPlayerSubsystem
 {
@@ -44,6 +46,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|UI|Layout")
 	bool IsAnyMenuOpen() const;
 
+	/** Fires when the open/closed state of the menus changes (true = at least one menu open). Local per player; HUDs bind instead of polling. */
+	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|UI|Layout")
+	FBH_OnMenuStateChanged OnMenuStateChanged;
+
+	/** Called by menus on activate / deactivate: re-evaluates IsAnyMenuOpen and broadcasts OnMenuStateChanged if it changed. */
+	void NotifyMenuStateChanged();
+
 	/** Index of the player menu tab that was showing when it last closed, so it reopens there. Session only (not saved). */
 	UPROPERTY(BlueprintReadWrite, Category = "BlackwoodHollow|UI|Layout")
 	int32 LastPlayerMenuTab = 0;
@@ -57,4 +66,6 @@ public:
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<UBH_PrimaryLayoutWidget> Layout;
+
+	bool bLastAnyMenuOpen = false;
 };

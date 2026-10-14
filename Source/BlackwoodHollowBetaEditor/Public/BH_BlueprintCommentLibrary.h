@@ -28,6 +28,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Editor")
 	static TArray<FString> ListGraphNodes(UBlueprint* Blueprint, FName GraphName);
 
+	/** Like ListGraphNodes, plus a 4th field: the member name (called function, variable, event or custom event name) and the names of all graphs via GetGraphNames. Format: "Name | Title | X,Y | Member". */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Editor")
+	static TArray<FString> ListGraphNodesEx(UBlueprint* Blueprint, FName GraphName);
+
+	/** Names of every graph the Blueprint owns (event graphs, functions, macros, delegate signatures). */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Editor")
+	static TArray<FString> GetGraphNames(UBlueprint* Blueprint);
+
 	/** Compile the Blueprint (widget Blueprints included). Returns true if it compiled without errors. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Editor")
 	static bool CompileBlueprint(UBlueprint* Blueprint);

@@ -7,7 +7,8 @@ Run in the editor: Tools > Execute Python Script > Content/Python/bh_comment_13b
 (or Output Log, Python mode:  py "Content/Python/bh_comment_13b.py")
 Logs are prefixed [BH_Comment]. See README_comments.md for the reusable pattern.
 
-How it finds nodes: it calls ListGraphNodes() and matches on the node TITLE (case-insensitive substring),
+How it finds nodes: it calls ListGraphNodesEx() and matches a pattern against the node TITLE or its MEMBER name
+(called function / variable / event, case-insensitive substring; spaces ignored, so 'Is Any Menu Open' matches IsAnyMenuOpen),
 so it does not depend on K2Node_* names. Reorder/rename-safe; unmatched patterns are reported, not fatal.
 """
 import unreal
@@ -116,14 +117,23 @@ PLAN = {
 }
 
 
+def norm(s):
+    return "".join(str(s).lower().split())
+
+
 def parse(lines):
-    """'Name | Title | X,Y' -> [(name, title)] ; comment nodes are skipped."""
+    """'Name | Title | X,Y | Member' -> [(name, title, member)] ; comment nodes are skipped."""
     out = []
     for line in lines:
         parts = [p.strip() for p in str(line).split("|")]
         if len(parts) >= 3 and not parts[0].startswith("EdGraphNode_Comment"):
-            out.append((parts[0], parts[1]))
+            member = parts[3] if len(parts) > 3 else ""
+            out.append((parts[0], parts[1], member))
     return out
+
+
+def has_comment_box(lines):
+    return any(str(l).split("|")[0].strip().startswith("EdGraphNode_Comment") for l in lines)
 
 
 def process(bp_path, plan):
@@ -132,21 +142,27 @@ def process(bp_path, plan):
         unreal.log_warning("%s missing blueprint %s" % (TAG, bp_path))
         return 0, 0, False
     boxes = notes = 0
+    graph_names = [str(g) for g in LIB.get_graph_names(bp)]
     for graph, spec in plan.items():
-        nodes = parse(LIB.list_graph_nodes(bp, graph))
+        if graph not in graph_names:
+            unreal.log_warning("%s %s: graph '%s' not found. Graphs: %s" % (TAG, bp_path.split("/")[-1], graph, graph_names))
+            continue
+        raw = LIB.list_graph_nodes_ex(bp, graph)
+        nodes = parse(raw)
         if not nodes:
-            unreal.log_warning("%s %s: graph '%s' not found or empty" % (TAG, bp_path.split("/")[-1], graph))
+            unreal.log_warning("%s %s: graph '%s' is empty" % (TAG, bp_path.split("/")[-1], graph))
             continue
         box = spec.get("box")
-        existing = [str(l) for l in LIB.list_graph_nodes(bp, graph) if "EdGraphNode_Comment" in str(l) or "Comment" in str(l).split("|")[0]]
-        if box and not existing:
-            name = LIB.add_comment_box(bp, graph, [n for n, _ in nodes], box[0], box[1], 40)
+        # Re-runs must not duplicate boxes: any existing comment node in the graph means the box was already added.
+        if box and not has_comment_box(raw):
+            name = LIB.add_comment_box(bp, graph, [n for n, _, _ in nodes], box[0], box[1], 40)
             if name:
                 boxes += 1
         for pattern, text in spec.get("notes", []):
-            hit = next((n for n, t in nodes if pattern.lower() in t.lower()), None)
+            p = norm(pattern)
+            hit = next((n for n, t, m in nodes if p in norm(t) or (m and p in norm(m))), None)
             if hit is None:
-                unreal.log_warning("%s %s/%s: no node titled like '%s'" % (TAG, bp_path.split("/")[-1], graph, pattern))
+                unreal.log_warning("%s %s/%s: no node titled or named like '%s'" % (TAG, bp_path.split("/")[-1], graph, pattern))
                 continue
             if LIB.set_node_comment(bp, graph, hit, text, True):
                 notes += 1
@@ -154,7 +170,6 @@ def process(bp_path, plan):
     saved = LIB.save_blueprint(bp)
     unreal.log("%s %s: %d boxes, %d notes, compiled=%s saved=%s" % (TAG, bp_path.split("/")[-1], boxes, notes, ok, saved))
     return boxes, notes, ok and saved
-
 
 def main():
     tb = tn = 0
