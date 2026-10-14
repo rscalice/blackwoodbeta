@@ -41,6 +41,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Notifications")
 	void PushLoot(FText ItemName, int32 Quantity);
 
+	/** Low-priority "+N XP" toast; gains inside the batch window and while it shows add up into one line. */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Notifications")
+	void PushExperience(int32 Amount);
+
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Notifications")
 	void PushNotice(FText Title, FText Body, bool bWarning);
 

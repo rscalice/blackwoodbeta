@@ -17,9 +17,11 @@ enum class EBH_NotificationKind : uint8
 	Loot,
 	/** "Inventory full", refused consumables. Ranks with Loot, never batched. */
 	Notice,
+	/** "+45 XP". Lowest priority, batched like loot (one running total). */
+	Experience,
 };
 
-/** Lower number = shows first. Notice ranks with Loot. */
+/** Lower number = shows first. Notice ranks with Loot; Experience ranks last. */
 inline int32 BH_NotificationPriority(EBH_NotificationKind Kind)
 {
 	return Kind == EBH_NotificationKind::Notice ? static_cast<int32>(EBH_NotificationKind::Loot) : static_cast<int32>(Kind);

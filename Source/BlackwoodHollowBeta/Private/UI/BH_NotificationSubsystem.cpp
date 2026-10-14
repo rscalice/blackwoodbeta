@@ -43,7 +43,8 @@ float UBH_NotificationSubsystem::GetHoldFor(const FBH_Notification& Notification
 	case EBH_NotificationKind::LevelUp: return S->LevelUpHoldSeconds;
 	case EBH_NotificationKind::Quest: return S->QuestHoldSeconds;
 	case EBH_NotificationKind::Discovery: return S->DiscoveryHoldSeconds;
-	case EBH_NotificationKind::Loot: return S->LootHoldSeconds;
+	case EBH_NotificationKind::Loot:
+	case EBH_NotificationKind::Experience: return S->LootHoldSeconds;
 	default: return S->NoticeHoldSeconds;
 	}
 }
@@ -107,10 +108,11 @@ void UBH_NotificationSubsystem::Enqueue(const FBH_Notification& Notification)
 		GapRemaining = 0.f;
 	}
 
-	if (Notification.Kind == EBH_NotificationKind::Loot)
+	const bool bBatched = Notification.Kind == EBH_NotificationKind::Loot || Notification.Kind == EBH_NotificationKind::Experience;
+	if (bBatched)
 	{
 		// 1. Merge into the toast that is showing and still absorbing.
-		if (bHasCurrent && Current.Kind == EBH_NotificationKind::Loot && !bEnding && CurrentAge < S->LootMaxMergeAge
+		if (bHasCurrent && Current.Kind == Notification.Kind && !bEnding && CurrentAge < S->LootMaxMergeAge
 			&& MergeLootLines(Current, Notification.LootLines, S->LootMaxLines))
 		{
 			CurrentElapsed = FMath::Min(CurrentElapsed, S->NotificationFadeIn); // hold restarts
@@ -120,7 +122,7 @@ void UBH_NotificationSubsystem::Enqueue(const FBH_Notification& Notification)
 		// 2. Merge into a loot toast that is still waiting.
 		for (FPending& Entry : Pending)
 		{
-			if (Entry.Notification.Kind == EBH_NotificationKind::Loot && MergeLootLines(Entry.Notification, Notification.LootLines, S->LootMaxLines))
+			if (Entry.Notification.Kind == Notification.Kind && MergeLootLines(Entry.Notification, Notification.LootLines, S->LootMaxLines))
 			{
 				return;
 			}
@@ -142,7 +144,7 @@ void UBH_NotificationSubsystem::Enqueue(const FBH_Notification& Notification)
 	FPending Entry;
 	Entry.Notification = Notification;
 	Entry.Sequence = NextSequence++;
-	Entry.ReadyTime = Clock + (Notification.Kind == EBH_NotificationKind::Loot ? S->LootBatchWindow : 0.0);
+	Entry.ReadyTime = Clock + (bBatched ? S->LootBatchWindow : 0.0);
 	Pending.Add(MoveTemp(Entry));
 }
 
@@ -157,6 +159,22 @@ void UBH_NotificationSubsystem::PushLoot(FText ItemName, int32 Quantity)
 	FBH_LootLine Line;
 	Line.ItemName = ItemName;
 	Line.Quantity = Quantity;
+	N.LootLines.Add(Line);
+	RebuildLootBody(N);
+	Enqueue(N);
+}
+
+void UBH_NotificationSubsystem::PushExperience(int32 Amount)
+{
+	if (Amount <= 0)
+	{
+		return;
+	}
+	FBH_Notification N;
+	N.Kind = EBH_NotificationKind::Experience;
+	FBH_LootLine Line;
+	Line.ItemName = NSLOCTEXT("BlackwoodHollow", "XPLabel", "XP");
+	Line.Quantity = Amount;
 	N.LootLines.Add(Line);
 	RebuildLootBody(N);
 	Enqueue(N);
