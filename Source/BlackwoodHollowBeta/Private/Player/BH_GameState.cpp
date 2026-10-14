@@ -3,6 +3,7 @@
 #include "Player/BH_GameState.h"
 #include "Player/BH_PartyComponent.h"
 #include "Beats/BH_BeatTrackerComponent.h"
+#include "Beats/BH_BeatNavigationComponent.h"
 #include "NarrativeComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -17,6 +18,7 @@ ABH_GameState::ABH_GameState()
 	// AGameStateBase is replicated and always relevant, so the party component (and its replicated member list) reaches every client.
 	PartyComponent = CreateDefaultSubobject<UBH_PartyComponent>(TEXT("PartyComponent"));
 	BeatTracker = CreateDefaultSubobject<UBH_BeatTrackerComponent>(TEXT("BeatTracker"));
+	BeatNavigation = CreateDefaultSubobject<UBH_BeatNavigationComponent>(TEXT("BeatNavigation"));
 }
 
 void ABH_GameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

@@ -2,6 +2,7 @@
 
 #include "UI/BH_HUDSubsystem.h"
 #include "UI/BH_HUDWidget.h"
+#include "Beats/BH_BeatNavigationComponent.h"
 #include "UI/BH_BossHealthBarWidget.h"
 #include "AI/BH_AIController.h"
 #include "AI/BH_CrabAIController.h"
@@ -97,6 +98,9 @@ bool UBH_HUDSubsystem::SetupHUD(APawn* Pawn, TSubclassOf<UBH_HUDWidget> MainHUDC
 	{
 		return false;
 	}
+
+	// The compass widget looks the Narrative Navigator component up when it is created, so it must exist first (Phase 13B+).
+	UBH_BeatNavigationComponent::EnsureNavigationComponent(PC);
 
 	if (!MainHUD && MainHUDClass)
 	{

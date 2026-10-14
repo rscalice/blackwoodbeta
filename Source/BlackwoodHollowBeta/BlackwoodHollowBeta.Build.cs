@@ -28,6 +28,7 @@ public class BlackwoodHollowBeta : ModuleRules
 			"MovieSceneTracks",
 			"Niagara",           // GameplayCue shatter VFX (UBH_GCN_PostureBroken)
 			"EngineCameras",     // code-only camera shakes (UWaveOscillatorCameraShakePattern)
+			"NarrativeNavigator", // Phase 13B+: compass and markers (UNavigationMarkerComponent, UNarrativeNavigationComponent)
 			"NarrativeInventory", // Phase 8C: player inventory (UNarrativeInventoryComponent on the PlayerState)
 			"NarrativeEquipment", // Phase 8C: UEquipmentComponent / UEquippableItem (UBH_WeaponItem)
 			"RadialSelector",     // Phase 8C: stance radial menu (UBH_StanceRadialComponent)

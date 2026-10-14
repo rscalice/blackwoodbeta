@@ -26,6 +26,7 @@
 
 class UBH_PartyComponent;
 class UBH_BeatTrackerComponent;
+class UBH_BeatNavigationComponent;
 class UNarrativeComponent;
 class APlayerController;
 
@@ -94,6 +95,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Beat")
 	TObjectPtr<UBH_BeatTrackerComponent> BeatTracker;
+
+	/** Local-only bridge from the beat state to Narrative Navigator markers (Phase 13B+). Does nothing on a dedicated server. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Beat")
+	TObjectPtr<UBH_BeatNavigationComponent> BeatNavigation;
 
 	/** The set flags. Replicated. */
 	UPROPERTY(ReplicatedUsing = OnRep_WorldFlags)
