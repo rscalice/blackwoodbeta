@@ -21,6 +21,7 @@
 #include "Player/BH_GameState.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "GameFramework/GameStateBase.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
@@ -61,6 +62,38 @@ void ABH_PlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(ABH_PlayerState, bOverloadBurstLearned);
 	DOREPLIFETIME(ABH_PlayerState, AttunedHubs);
 	DOREPLIFETIME(ABH_PlayerState, bStarterPointsRetired);
+	DOREPLIFETIME(ABH_PlayerState, PlayerSlot);
+}
+
+void ABH_PlayerState::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// Server only: hand out the lowest free party slot (1..MaxPlayerSlots) among the players currently in the game.
+	if (HasAuthority() && PlayerSlot == 0)
+	{
+		TSet<int32> Taken;
+		if (const AGameStateBase* GS = GetWorld() ? GetWorld()->GetGameState() : nullptr)
+		{
+			for (const APlayerState* Other : GS->PlayerArray)
+			{
+				if (const ABH_PlayerState* BHOther = Cast<ABH_PlayerState>(Other))
+				{
+					if (BHOther != this && BHOther->PlayerSlot > 0)
+					{
+						Taken.Add(BHOther->PlayerSlot);
+					}
+				}
+			}
+		}
+		int32 Slot = 1;
+		while (Slot < MaxPlayerSlots && Taken.Contains(Slot))
+		{
+			++Slot;
+		}
+		PlayerSlot = Slot;
+		ForceNetUpdate();
+	}
 }
 
 // ============================================================================

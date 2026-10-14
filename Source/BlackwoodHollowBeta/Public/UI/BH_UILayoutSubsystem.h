@@ -21,7 +21,7 @@ class UUserWidget;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnMenuStateChanged, bool, bAnyMenuOpen);
 
-UCLASS()
+UCLASS(BlueprintType)
 class BLACKWOODHOLLOWBETA_API UBH_UILayoutSubsystem : public ULocalPlayerSubsystem
 {
 	GENERATED_BODY()
@@ -60,9 +60,9 @@ public:
 	UPROPERTY(BlueprintReadWrite, Category = "BlackwoodHollow|UI|Layout")
 	int32 LastPlayerMenuTab = 0;
 
-	/** Screen z-order of the layout. */
+	/** Screen z-order of the layout. Well above the legacy HUD (z 0/1), so a menu always draws over the HUD. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|UI|Layout")
-	int32 LayoutZOrder = 10;
+	int32 LayoutZOrder = 100;
 
 	virtual void Deinitialize() override;
 

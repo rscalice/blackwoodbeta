@@ -48,6 +48,20 @@ public:
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
+	// -- Player slot (Phase 13B+) ------------------------------------------------------------------------------
+	/**
+	 * Stable party slot, 1..4 (0 = not assigned yet). The SERVER assigns the lowest free slot when the PlayerState begins play; it replicates
+	 * to every machine, so a player has the same slot (and the same compass colour: P1 Blue, P2 Yellow, P3 Green, P4 Red) for everyone.
+	 * Frees up when the player leaves, so the next joiner takes the lowest free slot.
+	 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "BlackwoodHollow|Party")
+	int32 PlayerSlot = 0;
+
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Party")
+	int32 GetPlayerSlot() const { return PlayerSlot; }
+
+	static constexpr int32 MaxPlayerSlots = 4;
+
 	// -- Consumable refusal feedback (Phase 11E) -------------------------------------------------
 
 	/** Fires on the owning player's machine when a consumable use is refused (Sap at full health, none left, ability busy). */
@@ -186,6 +200,8 @@ public:
 	void ServerDebugKillAllEnemies(float RadiusCm);
 
 protected:
+	virtual void BeginPlay() override;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Inventory")
 	TObjectPtr<UNarrativeInventoryComponent> Inventory;
 

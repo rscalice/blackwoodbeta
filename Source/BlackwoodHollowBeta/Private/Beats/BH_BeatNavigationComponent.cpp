@@ -6,6 +6,7 @@
 #include "Beats/BH_BeatTypes.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/SceneComponent.h"
+#include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
@@ -15,6 +16,7 @@
 #include "GameplayTagContainer.h"
 #include "NarrativeNavigationComponent.h"
 #include "NavigationMarkerComponent.h"
+#include "Player/BH_PlayerState.h"
 
 namespace
 {
@@ -58,6 +60,14 @@ UBH_BeatNavigationComponent::UBH_BeatNavigationComponent()
 	PrimaryComponentTick.bStartWithTickEnabled = true;
 	SetIsReplicatedByDefault(false);
 	PalettePath = FSoftObjectPath(TEXT("/Game/BlackwoodHollow/UI/Style/DA_UI_Palette.DA_UI_Palette"));
+	ObjectiveIcon = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/UI/Compass/Markers/YellowQuestMarker.YellowQuestMarker")));
+	// Slot 1 Blue, 2 Yellow, 3 Green, 4 Red.
+	SlotIcons = {
+		TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/UI/Compass/Markers/BlueMarker.BlueMarker"))),
+		TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/UI/Compass/Markers/YellowMarker.YellowMarker"))),
+		TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/UI/Compass/Markers/GreenMarker.GreenMarker"))),
+		TSoftObjectPtr<UTexture2D>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/UI/Compass/Markers/RedMarker.RedMarker")))
+	};
 }
 
 UNarrativeNavigationComponent* UBH_BeatNavigationComponent::EnsureNavigationComponent(APlayerController* PlayerController)
@@ -127,6 +137,25 @@ void UBH_BeatNavigationComponent::TickComponent(float DeltaTime, ELevelTick Tick
 		}
 	}
 
+	// A downed partner's marker pulses (the tint is re-applied about 20 times a second).
+	PulseClock += DeltaTime;
+	TimeSincePulseApply += DeltaTime;
+	if (TimeSincePulseApply >= 0.05f)
+	{
+		TimeSincePulseApply = 0.f;
+		for (TPair<TWeakObjectPtr<APlayerState>, FPartnerProxy>& Pair : Partners)
+		{
+			if (Pair.Value.Phase == 1)
+			{
+				if (UNavigationMarkerComponent* Marker = Pair.Value.Marker.Get())
+				{
+					Marker->SetIconTint(GetPartnerTint(Pair.Value.Slot, 1));
+					Marker->RefreshMarker();
+				}
+			}
+		}
+	}
+
 	TimeSinceRefresh += DeltaTime;
 	if (TimeSinceRefresh >= RefreshInterval)
 	{
@@ -170,25 +199,71 @@ FLinearColor UBH_BeatNavigationComponent::GetPaletteColor(const FName Token, con
 	return Fallback;
 }
 
-FLinearColor UBH_BeatNavigationComponent::GetPartnerColor(const uint8 DeathPhase) const
+FLinearColor UBH_BeatNavigationComponent::GetSlotColor(const int32 Slot) const
 {
+	// Fallbacks match the PlayerSlot1..4 tokens in the style guide: P1 Blue, P2 Yellow, P3 Green, P4 Red.
+	static const TCHAR* const Hex[4] = { TEXT("5FA8E8"), TEXT("E8C46A"), TEXT("7FB77E"), TEXT("D9534F") };
+	const int32 Index = FMath::Clamp(Slot, 1, 4) - 1;
+	const FName Token(*FString::Printf(TEXT("PlayerSlot%d"), Index + 1));
+	return GetPaletteColor(Token, FLinearColor::FromSRGBColor(FColor::FromHex(Hex[Index])));
+}
+
+TSoftObjectPtr<UTexture2D> UBH_BeatNavigationComponent::GetSlotIcon(const int32 Slot) const
+{
+	const int32 Index = FMath::Clamp(Slot, 1, 4) - 1;
+	return SlotIcons.IsValidIndex(Index) ? SlotIcons[Index] : TSoftObjectPtr<UTexture2D>();
+}
+
+FLinearColor UBH_BeatNavigationComponent::GetPartnerTint(const int32 Slot, const uint8 DeathPhase) const
+{
+	// The slot icons are already coloured, so they are drawn untinted; without an icon the slot colour tints the stock marker.
+	const FLinearColor Base = GetSlotIcon(Slot).IsNull() ? GetSlotColor(Slot) : FLinearColor::White;
 	switch (DeathPhase)
 	{
 	case 0:
-		return GetPaletteColor(TEXT("Ally"), FLinearColor(0.114f, 0.451f, 0.694f));
+		// Alive: solid.
+		return Base;
 	case 1:
-		// Down, waiting for the party to leave combat.
-		return GetPaletteColor(TEXT("Crimson"), FLinearColor(0.552f, 0.037f, 0.042f));
+		{
+			// Downed: pulsing.
+			const float Pulse = 0.5f + 0.5f * FMath::Sin(PulseClock * DownedPulseSpeed);
+			return FLinearColor(Base.R, Base.G, Base.B, FMath::Lerp(0.35f, 1.f, Pulse));
+		}
 	default:
-		// The revive window is open or the player is waiting for a revive.
-		return GetPaletteColor(TEXT("Muted"), FLinearColor(0.202f, 0.195f, 0.178f));
+		// Dead or waiting for a revive: greyed, 40% opacity.
+		return FLinearColor(Base.R * 0.45f, Base.G * 0.45f, Base.B * 0.45f, 0.4f);
 	}
 }
 
-UNavigationMarkerComponent* UBH_BeatNavigationComponent::CreateMarker(AActor* Owner, const FText& Name, const FLinearColor& Tint) const
+void UBH_BeatNavigationComponent::ApplyPartnerLook(FPartnerProxy& Proxy, const int32 Slot, const uint8 DeathPhase)
+{
+	UNavigationMarkerComponent* Marker = Proxy.Marker.Get();
+	if (!Marker)
+	{
+		return;
+	}
+	Proxy.Slot = Slot;
+	Proxy.Phase = DeathPhase;
+	const TSoftObjectPtr<UTexture2D> Icon = GetSlotIcon(Slot);
+	if (!Icon.IsNull())
+	{
+		Marker->DefaultMarkerSettings.bOverride_LocationIcon = true;
+		Marker->DefaultMarkerSettings.LocationIcon = Icon;
+	}
+	Marker->DefaultMarkerSettings.bOverride_IconTint = true;
+	Marker->SetIconTint(GetPartnerTint(Slot, DeathPhase));
+	Marker->RefreshMarker();
+}
+UNavigationMarkerComponent* UBH_BeatNavigationComponent::CreateMarker(AActor* Owner, const FText& Name, const FLinearColor& Tint, const TSoftObjectPtr<UTexture2D>& Icon) const
 {
 	UNavigationMarkerComponent* Marker = NewObject<UNavigationMarkerComponent>(Owner, NAME_None, RF_Transient);
 	Marker->DefaultMarkerSettings.LocationDisplayName = Name;
+	if (!Icon.IsNull())
+	{
+		Marker->DefaultMarkerSettings.bOverride_LocationIcon = true;
+		Marker->DefaultMarkerSettings.LocationIcon = Icon;
+	}
+	Marker->DefaultMarkerSettings.bOverride_IconTint = true;
 	Marker->DefaultMarkerSettings.IconTint = Tint;
 	SetFloatProperty(Marker, TEXT("MarkerStartFadeOutDistance"), MarkerFadeStartDistance);
 	SetFloatProperty(Marker, TEXT("MarkerStartFadeInDistance"), MarkerFadeEndDistance);
@@ -219,7 +294,8 @@ void UBH_BeatNavigationComponent::RefreshObjective(const APlayerController* Play
 		FTargetMarker& Entry = TargetMarkers.FindOrAdd(Target);
 		if (!Entry.Marker.IsValid())
 		{
-			Entry.Marker = CreateMarker(Target, Info.ObjectiveText, GetPaletteColor(TEXT("Bone"), FLinearColor(0.791f, 0.716f, 0.578f)));
+			// The quest icon is already coloured (yellow), so it is drawn untinted; without it the stock marker is tinted Bone.
+			Entry.Marker = CreateMarker(Target, Info.ObjectiveText, ObjectiveIcon.IsNull() ? GetPaletteColor(TEXT("Bone"), FLinearColor(0.791f, 0.716f, 0.578f)) : FLinearColor::White, ObjectiveIcon);
 			if (UNavigationMarkerComponent* Created = Entry.Marker.Get())
 			{
 				Created->SetDomain(MakeDomain(false, false));
@@ -298,16 +374,20 @@ void UBH_BeatNavigationComponent::RefreshPartners(const APlayerController* Playe
 			Spawned->SetActorLocation(Location);
 			Spawned->SetActorEnableCollision(false);
 			Proxy.Actor = Spawned;
-			Proxy.Marker = CreateMarker(Spawned, FText::FromString(Player->GetPlayerName()), GetPartnerColor(Ping.DeathPhase));
+			// PlayerSlot replicates with the PlayerState; 0 until it arrives (the look is refreshed once it does).
+			const ABH_PlayerState* BHPlayer = Cast<ABH_PlayerState>(Player);
+			const int32 Slot = BHPlayer ? BHPlayer->GetPlayerSlot() : 0;
+			Proxy.Slot = Slot;
 			Proxy.Phase = Ping.DeathPhase;
+			Proxy.Marker = CreateMarker(Spawned, FText::FromString(Player->GetPlayerName()), GetPartnerTint(Slot, Ping.DeathPhase), GetSlotIcon(Slot));
 		}
-		else if (Proxy.Phase != static_cast<int32>(Ping.DeathPhase))
+		else
 		{
-			Proxy.Phase = Ping.DeathPhase;
-			if (UNavigationMarkerComponent* Marker = Proxy.Marker.Get())
+			const ABH_PlayerState* BHPlayer = Cast<ABH_PlayerState>(Player);
+			const int32 Slot = BHPlayer ? BHPlayer->GetPlayerSlot() : 0;
+			if (Proxy.Phase != static_cast<int32>(Ping.DeathPhase) || Proxy.Slot != Slot)
 			{
-				Marker->SetIconTint(GetPartnerColor(Ping.DeathPhase));
-				Marker->RefreshMarker();
+				ApplyPartnerLook(Proxy, Slot, Ping.DeathPhase);
 			}
 		}
 	}
