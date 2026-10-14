@@ -46,12 +46,16 @@ void ABH_WorldPickup::BH_OnInteractionCompleted(APawn* InteractingPawn)
 	}
 	if (UClass* LoadedClass = ItemClass.LoadSynchronous())
 	{
-		// Inventory full: the pickup stays in the world for someone with room.
-		if (UBH_LootLibrary::GrantItemToPawn(InteractingPawn, LoadedClass, FMath::Max(1, Quantity)) <= 0)
+		// Inventory full: the rest stays in the world for someone with room (GrantItem shows "Inventory full" to the player).
+		const int32 Wanted = RemainingQuantity > 0 ? RemainingQuantity : FMath::Max(1, Quantity);
+		const int32 Given = UBH_LootLibrary::GrantItemToPawn(InteractingPawn, LoadedClass, Wanted);
+		if (Given < Wanted)
 		{
+			RemainingQuantity = Wanted - Given;
 			return;
 		}
 	}
+	RemainingQuantity = 0;
 	bCollected = true;
 	OnRep_Collected(); // the server does not get the OnRep call
 	ForceNetUpdate();
@@ -59,6 +63,7 @@ void ABH_WorldPickup::BH_OnInteractionCompleted(APawn* InteractingPawn)
 
 void ABH_WorldPickup::BH_DebugReset()
 {
+	RemainingQuantity = 0;
 	if (HasAuthority() && bCollected)
 	{
 		bCollected = false;

@@ -7,6 +7,12 @@
 #include "UI/BH_LevelUpBannerWidget.h"
 #include "UI/BH_BossHealthBarWidget.h"
 #include "UI/BH_HUDElements.h"
+#include "UI/BH_HUDSettings.h"
+#include "UI/BH_FragmentBarWidget.h"
+#include "UI/BH_NotificationQueueWidget.h"
+#include "UI/BH_QuestTrackerWidget.h"
+#include "Player/BH_GameState.h"
+#include "Engine/World.h"
 #include "Components/PanelWidget.h"
 #include "Components/OverlaySlot.h"
 #include "Components/VerticalBoxSlot.h"
@@ -202,7 +208,7 @@ bool UBH_HUDWidget::HasLevelUpBanner() const
 
 void UBH_HUDWidget::HandleLevelUpDetailed(const FBH_LevelUpInfo& Info)
 {
-	if (LevelUpBanner)
+	if (LevelUpBanner && !UsesQueueForLevelUp())
 	{
 		LevelUpBanner->ShowLevelUp(Info);
 	}
@@ -360,6 +366,11 @@ void UBH_HUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 			PollStance();
 		}
 	}
+
+	if (!bIsNestedHUD)
+	{
+		TickQuietHUD(InDeltaTime);
+	}
 }
 
 void UBH_HUDWidget::UnbindFromASC()
@@ -388,4 +399,180 @@ void UBH_HUDWidget::NativeDestruct()
 {
 	UnbindFromASC();
 	Super::NativeDestruct();
+}
+
+// ----------------------------------------------------------------------------
+// Quiet HUD (Phase 13C)
+// ----------------------------------------------------------------------------
+
+UBH_HUDWidget::UBH_HUDWidget(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	// Names of the WBP_HUD_Main elements. A path that does not exist in a given HUD is skipped, so nested HUDs ignore these.
+	QuietGroups = {
+		{ FName(TEXT("ContextualPosture")), EBH_QuietRule::CombatOnly },
+		{ FName(TEXT("TargetVitals")), EBH_QuietRule::CombatOnly },
+		{ FName(TEXT("VitalsCluster/Box_Stamina")), EBH_QuietRule::StaminaNotFull },
+		{ FName(TEXT("VitalsCluster/Box_Health")), EBH_QuietRule::HealthNotFull },
+		{ FName(TEXT("FragmentBar")), EBH_QuietRule::FragmentsBusy },
+	};
+}
+
+UWidget* UBH_HUDWidget::ResolveWidgetPath(FName Path) const
+{
+	TArray<FString> Parts;
+	Path.ToString().ParseIntoArray(Parts, TEXT("/"));
+	const UWidgetTree* Tree = WidgetTree;
+	UWidget* Found = nullptr;
+	for (int32 Index = 0; Index < Parts.Num(); ++Index)
+	{
+		if (!Tree)
+		{
+			return nullptr;
+		}
+		Found = Tree->FindWidget(FName(*Parts[Index]));
+		if (!Found)
+		{
+			return nullptr;
+		}
+		const UUserWidget* Nested = Cast<UUserWidget>(Found);
+		Tree = Nested ? Nested->WidgetTree.Get() : nullptr;
+	}
+	return Found;
+}
+
+bool UBH_HUDWidget::ComputeEngaged() const
+{
+	const UAbilitySystemComponent* ASC = BoundASC.Get();
+	if (!ASC)
+	{
+		return false;
+	}
+	static const FGameplayTagContainer CombatTags = []()
+	{
+		FGameplayTagContainer Tags;
+		Tags.AddTag(TAG_State_Combat_InCombat.GetTag());
+		Tags.AddTag(TAG_State_Combat_Blocking.GetTag());
+		Tags.AddTag(TAG_State_Combat_Parrying.GetTag());
+		Tags.AddTag(TAG_State_Combat_Staggered.GetTag());
+		Tags.AddTag(TAG_State_Combat_PostureBroken.GetTag());
+		Tags.AddTag(TAG_State_Combat_Overloading.GetTag());
+		Tags.AddTag(TAG_State_Combat_Attacking.GetTag());
+		Tags.AddTag(TAG_State_Combat_Dodging.GetTag());
+		Tags.AddTag(TAG_State_Combat_Dead.GetTag());
+		return Tags;
+	}();
+	if (ASC->HasAnyMatchingGameplayTags(CombatTags) || LockedTarget.IsValid())
+	{
+		return true;
+	}
+	// Someone in the party is fighting (replicated on the game state).
+	const UWorld* World = GetWorld();
+	const ABH_GameState* GameState = World ? World->GetGameState<ABH_GameState>() : nullptr;
+	return GameState && GameState->IsPartyInCombat();
+}
+
+bool UBH_HUDWidget::EvaluateQuietRule(EBH_QuietRule Rule, UWidget* Widget) const
+{
+	switch (Rule)
+	{
+	case EBH_QuietRule::HealthNotFull:
+		return GetMaxHealth() > 0.f && GetHealth() < GetMaxHealth() - 0.5f;
+	case EBH_QuietRule::StaminaNotFull:
+		return GetMaxStamina() > 0.f && GetStamina() < GetMaxStamina() - 0.5f;
+	case EBH_QuietRule::FragmentsBusy:
+		{
+			const UBH_FragmentBarWidget* Bar = Cast<UBH_FragmentBarWidget>(Widget);
+			return Bar && Bar->IsBusy();
+		}
+	default:
+		return false;
+	}
+}
+
+void UBH_HUDWidget::TickQuietHUD(float DeltaTime)
+{
+	const UBH_HUDSettings* Settings = UBH_HUDSettings::Get();
+	if (!Settings || !BoundASC.IsValid() || QuietGroups.IsEmpty())
+	{
+		return;
+	}
+	if (QuietRuntime.Num() != QuietGroups.Num())
+	{
+		QuietRuntime.Reset();
+		QuietRuntime.SetNum(QuietGroups.Num());
+	}
+
+	const bool bEnabled = Settings->bQuietHUD;
+	bool bCombatStarted = false;
+	if (bEnabled)
+	{
+		if (ComputeEngaged())
+		{
+			OutOfCombatTimer = Settings->OutOfCombatDelay;
+			if (!bHUDInCombat)
+			{
+				bHUDInCombat = true;
+				bCombatStarted = true;
+				K2_OnHUDCombatChanged(true);
+			}
+		}
+		else if (bHUDInCombat)
+		{
+			OutOfCombatTimer -= DeltaTime;
+			if (OutOfCombatTimer <= 0.f)
+			{
+				bHUDInCombat = false;
+				K2_OnHUDCombatChanged(false);
+			}
+		}
+	}
+
+	for (int32 Index = 0; Index < QuietGroups.Num(); ++Index)
+	{
+		FQuietRuntime& Runtime = QuietRuntime[Index];
+		if (!Runtime.Widget.IsValid())
+		{
+			Runtime.RetryTimer -= DeltaTime;
+			if (Runtime.RetryTimer > 0.f)
+			{
+				continue;
+			}
+			Runtime.RetryTimer = 1.f;
+			Runtime.Widget = ResolveWidgetPath(QuietGroups[Index].WidgetPath);
+		}
+		UWidget* Target = Runtime.Widget.Get();
+		if (!Target)
+		{
+			continue;
+		}
+
+		const bool bShow = !bEnabled || bHUDInCombat || EvaluateQuietRule(QuietGroups[Index].Rule, Target);
+		if (!bEnabled || bCombatStarted)
+		{
+			Runtime.Alpha = 1.f; // instant
+		}
+		else if (bShow)
+		{
+			Runtime.Alpha = FMath::Min(1.f, Runtime.Alpha + DeltaTime / FMath::Max(0.01f, Settings->QuietFadeIn));
+		}
+		else
+		{
+			Runtime.Alpha = FMath::Max(0.f, Runtime.Alpha - DeltaTime / FMath::Max(0.01f, Settings->QuietFadeOut));
+		}
+
+		if (!FMath::IsNearlyEqual(Runtime.Alpha, Runtime.Applied, 0.001f))
+		{
+			Runtime.Applied = Runtime.Alpha;
+			// User widgets fade through their colour-and-opacity tint (their own Blueprint logic owns RenderOpacity).
+			if (UUserWidget* AsUser = Cast<UUserWidget>(Target))
+			{
+				AsUser->SetColorAndOpacity(FLinearColor(1.f, 1.f, 1.f, Runtime.Alpha));
+			}
+			else
+			{
+				Target->SetRenderOpacity(Runtime.Alpha);
+			}
+		}
+	}
 }

@@ -84,6 +84,10 @@ void ABH_WeaponCache::BH_OnInteractionCompleted(APawn* InteractingPawn)
 	{
 		// Not spent: the player can try again (a full inventory, for example).
 		UE_LOG(LogBHWeaponCache, Warning, TEXT("%s: %s could not take the weapon: %s"), *GetNameSafe(this), *GetNameSafe(InteractingPawn), *Reason.ToString());
+		if (UBH_InteractorComponent* RefusedInteractor = UBH_InteractorComponent::Find(InteractingPawn))
+		{
+			RefusedInteractor->NotifyInventoryFull(UBH_LootLibrary::GetItemDisplayName(TSubclassOf<UNarrativeItem>(WeaponClass))); // 13C (#14)
+		}
 		return;
 	}
 

@@ -2,6 +2,10 @@
 
 #include "UI/BH_HUDSubsystem.h"
 #include "UI/BH_HUDWidget.h"
+#include "UI/BH_HUDSettings.h"
+#include "UI/BH_NotificationSubsystem.h"
+#include "UI/BH_UILayoutSubsystem.h"
+#include "UI/BH_PrimaryLayoutWidget.h"
 #include "Beats/BH_BeatNavigationComponent.h"
 #include "UI/BH_BossHealthBarWidget.h"
 #include "AI/BH_AIController.h"
@@ -90,6 +94,50 @@ namespace
 	}
 }
 
+void UBH_HUDSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Collection.InitializeDependency<UBH_UILayoutSubsystem>();
+	Super::Initialize(Collection);
+	const ULocalPlayer* LocalPlayer = GetLocalPlayer();
+	if (UBH_UILayoutSubsystem* LayoutSub = LocalPlayer ? LocalPlayer->GetSubsystem<UBH_UILayoutSubsystem>() : nullptr)
+	{
+		LayoutReadyHandle = LayoutSub->OnLayoutReady.AddUObject(this, &UBH_HUDSubsystem::HandleLayoutReady);
+	}
+}
+
+void UBH_HUDSubsystem::HandleLayoutReady()
+{
+	AttachMainHUDToLayout();
+}
+
+bool UBH_HUDSubsystem::AttachMainHUDToLayout()
+{
+	if (!MainHUD || !UBH_HUDSettings::Get()->bHUDInGameLayer)
+	{
+		return false;
+	}
+	const ULocalPlayer* LocalPlayer = GetLocalPlayer();
+	const UBH_UILayoutSubsystem* LayoutSub = LocalPlayer ? LocalPlayer->GetSubsystem<UBH_UILayoutSubsystem>() : nullptr;
+	UBH_PrimaryLayoutWidget* Layout = LayoutSub ? LayoutSub->GetLayout() : nullptr;
+	if (!Layout)
+	{
+		return false;
+	}
+	// Re-parenting destroys and re-constructs the widget (NativeDestruct unbinds the ASC), so rebind afterwards.
+	UAbilitySystemComponent* ASC = MainHUD->GetHUDAbilitySystem();
+	const bool bWasInViewport = MainHUD->IsInViewport();
+	if (bWasInViewport)
+	{
+		MainHUD->RemoveFromParent();
+	}
+	Layout->AddHUDWidget(MainHUD);
+	if (bWasInViewport && ASC)
+	{
+		MainHUD->InitializeHUD(ASC);
+	}
+	return true;
+}
+
 bool UBH_HUDSubsystem::SetupHUD(APawn* Pawn, TSubclassOf<UBH_HUDWidget> MainHUDClass, TSubclassOf<UUserWidget> DebugHUDClass)
 {
 	ULocalPlayer* LocalPlayer = GetLocalPlayer();
@@ -105,9 +153,9 @@ bool UBH_HUDSubsystem::SetupHUD(APawn* Pawn, TSubclassOf<UBH_HUDWidget> MainHUDC
 	if (!MainHUD && MainHUDClass)
 	{
 		MainHUD = CreateWidget<UBH_HUDWidget>(PC, MainHUDClass);
-		if (MainHUD)
+		if (MainHUD && !AttachMainHUDToLayout())
 		{
-			MainHUD->AddToViewport(0);
+			MainHUD->AddToViewport(0); // no layout yet: HandleLayoutReady moves it later
 		}
 	}
 	if (!DebugHUD && DebugHUDClass)
@@ -411,13 +459,21 @@ void UBH_HUDSubsystem::ShowLevelUp(int32 NewLevel)
 void UBH_HUDSubsystem::ShowLevelUpDetailed(const FBH_LevelUpInfo& Info)
 {
 	const int32 NewLevel = Info.NewLevel;
+	// Phase 13C: the level-up is a queue toast when the HUD has a queue widget (the old banner and plain text stay off).
+	const ULocalPlayer* QueuePlayer = GetLocalPlayer();
+	UBH_NotificationSubsystem* Queue = QueuePlayer ? QueuePlayer->GetSubsystem<UBH_NotificationSubsystem>() : nullptr;
+	const bool bQueued = Queue && Queue->HasPresenter();
+	if (bQueued)
+	{
+		Queue->PushLevelUp(Info);
+	}
 	if (MainHUD)
 	{
 		MainHUD->NotifyLevelUp(Info);
 	}
 
 	// A bound LevelUpBanner replaces the plain Slate text.
-	const bool bNativeText = !MainHUD || (MainHUD->bShowNativeLevelUpText && !MainHUD->HasLevelUpBanner());
+	const bool bNativeText = !bQueued && (!MainHUD || (MainHUD->bShowNativeLevelUpText && !MainHUD->HasLevelUpBanner()));
 	const ULocalPlayer* LocalPlayer = GetLocalPlayer();
 	UWorld* World = LocalPlayer ? LocalPlayer->GetWorld() : nullptr;
 	UGameViewportClient* Viewport = World ? World->GetGameViewport() : nullptr;
@@ -462,6 +518,15 @@ void UBH_HUDSubsystem::HideLevelUpText()
 
 void UBH_HUDSubsystem::Deinitialize()
 {
+	if (LayoutReadyHandle.IsValid())
+	{
+		const ULocalPlayer* LocalPlayer = GetLocalPlayer();
+		if (UBH_UILayoutSubsystem* LayoutSub = LocalPlayer ? LocalPlayer->GetSubsystem<UBH_UILayoutSubsystem>() : nullptr)
+		{
+			LayoutSub->OnLayoutReady.Remove(LayoutReadyHandle);
+		}
+		LayoutReadyHandle.Reset();
+	}
 	HideLevelUpText();
 	StopBossWatch();
 	if (BossBar)

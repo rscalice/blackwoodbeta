@@ -15,6 +15,7 @@
 #include "GameFramework/PlayerState.h"
 #include "GameplayTagContainer.h"
 #include "Consumables/BH_ConsumableTypes.h"
+#include "Combat/BH_EnemyRank.h"
 #include "BH_PlayerState.generated.h"
 
 class UNarrativeInventoryComponent;
@@ -30,6 +31,26 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnProgressionGatesChanged);
 
 /** Broadcast on the OWNING player's machine when a consumable use was refused (nothing consumed). Wire a toast / sound to it. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnConsumableUseRefused, TSubclassOf<UNarrativeItem>, ItemClass, EBH_ConsumableRefusal, Reason);
+
+/** 13C. What killed the player last, for the death prompt. Epoch changes on every death so two identical deaths still replicate. */
+USTRUCT(BlueprintType)
+struct BLACKWOODHOLLOWBETA_API FBH_DeathCause
+{
+	GENERATED_BODY()
+
+	/** True when an enemy landed the killing blow; false = the Blight (or an unknown source). */
+	UPROPERTY(BlueprintReadOnly, Category = "Death")
+	bool bKilledByEnemy = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Death")
+	EBH_EnemyRank Rank = EBH_EnemyRank::Common;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Death")
+	FString KillerName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Death")
+	uint8 Epoch = 0;
+};
 
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API ABH_PlayerState : public APlayerState
@@ -61,6 +82,13 @@ public:
 	int32 GetPlayerSlot() const { return PlayerSlot; }
 
 	static constexpr int32 MaxPlayerSlots = 4;
+
+	// -- Cause of death (13C) ------------------------------------------------------------------------------------
+	/** SERVER. Records what just killed this player. Killer null / not an enemy / bBlight = "Overwhelmed by the Blight". */
+	void RecordDeathCause(const AActor* Killer, bool bBlight);
+
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Death")
+	const FBH_DeathCause& GetDeathCause() const { return DeathCause; }
 
 	// -- Consumable refusal feedback (Phase 11E) -------------------------------------------------
 
@@ -240,6 +268,10 @@ protected:
 
 	UFUNCTION()
 	void OnRep_ProgressionGates();
+
+	/** 13C. Last damage source that killed this player. Replicated so the owning client's death prompt can name it. */
+	UPROPERTY(Replicated)
+	FBH_DeathCause DeathCause;
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerEquipFragment(int32 Slot, TSubclassOf<UAH_GA_FragmentBase> FragmentClass);

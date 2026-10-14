@@ -88,10 +88,16 @@ public:
 	/** Seconds the native "Level N" text stays up. */
 	static constexpr float LevelUpTextSeconds = 2.f;
 
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
 private:
 	void ApplyVisibility();
+
+	/** Phase 13C: puts the main HUD into the primary layout's Game layer (when the layout exists and the setting is on). */
+	bool AttachMainHUDToLayout();
+	void HandleLayoutReady();
+	FDelegateHandle LayoutReadyHandle;
 
 	// -- Boss bar ---------------------------------------------------------------
 	void StartBossWatch();

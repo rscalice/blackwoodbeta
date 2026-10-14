@@ -27,6 +27,7 @@ UBH_PrimaryLayoutWidget* UBH_UILayoutSubsystem::EnsureLayout(TSubclassOf<UBH_Pri
 	if (Layout)
 	{
 		Layout->AddToPlayerScreen(LayoutZOrder);
+		OnLayoutReady.Broadcast();
 	}
 	return Layout;
 }

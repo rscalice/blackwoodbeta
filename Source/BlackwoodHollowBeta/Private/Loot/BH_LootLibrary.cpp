@@ -36,11 +36,18 @@ int32 UBH_LootLibrary::GrantItem(APlayerState* PlayerState, TSubclassOf<UNarrati
 	}
 
 	const FItemAddResult Result = Inventory->TryAddItemFromClass(ItemClass, Quantity, /*bCheckAutoUse*/ true);
-	if (Result.AmountGiven > 0 && bNotifyPlayer)
+	if (bNotifyPlayer)
 	{
 		if (UBH_InteractorComponent* Interactor = UBH_InteractorComponent::Find(PlayerState->GetPawn()))
 		{
-			Interactor->NotifyItemGranted(GetItemDisplayName(ItemClass), Result.AmountGiven);
+			if (Result.AmountGiven > 0)
+			{
+				Interactor->NotifyItemGranted(GetItemDisplayName(ItemClass), Result.AmountGiven);
+			}
+			if (Result.AmountGiven < Quantity)
+			{
+				Interactor->NotifyInventoryFull(GetItemDisplayName(ItemClass)); // 13C (#14): "Inventory full" through the queue
+			}
 		}
 	}
 	return Result.AmountGiven;

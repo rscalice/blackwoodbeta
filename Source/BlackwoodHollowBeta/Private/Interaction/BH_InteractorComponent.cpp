@@ -7,6 +7,7 @@
 #include "Consumables/BH_ConsumableLibrary.h"
 #include "Components/BPC_HeartFragment.h"
 #include "Loot/BH_LootLibrary.h"
+#include "UI/BH_NotificationSubsystem.h"
 #include "Player/BH_PlayerDeathComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystemComponent.h"
@@ -595,6 +596,17 @@ void UBH_InteractorComponent::OnRep_HoldPercent()
 // Grant toast + debug
 // ============================================================================
 
+namespace BH_InteractorNotify
+{
+	/** 13C: the local player's notification queue (null on a machine without a local controller for this pawn). */
+	static UBH_NotificationSubsystem* GetQueue(const AActor* Owner)
+	{
+		const APawn* PawnOwner = Cast<APawn>(Owner);
+		const APlayerController* PC = PawnOwner ? Cast<APlayerController>(PawnOwner->GetController()) : nullptr;
+		return (PC && PC->IsLocalController()) ? UBH_NotificationSubsystem::ForController(PC) : nullptr;
+	}
+}
+
 void UBH_InteractorComponent::NotifyItemGranted(const FText& ItemName, int32 Quantity)
 {
 	const APawn* PawnOwner = Cast<APawn>(GetOwner());
@@ -604,6 +616,10 @@ void UBH_InteractorComponent::NotifyItemGranted(const FText& ItemName, int32 Qua
 	}
 	if (PawnOwner->IsLocallyControlled())
 	{
+		if (UBH_NotificationSubsystem* Queue = BH_InteractorNotify::GetQueue(GetOwner()))
+		{
+			Queue->PushLoot(ItemName, Quantity);
+		}
 		OnItemGranted.Broadcast(ItemName, Quantity);
 	}
 	else if (Cast<APlayerController>(PawnOwner->GetController()))
@@ -614,7 +630,38 @@ void UBH_InteractorComponent::NotifyItemGranted(const FText& ItemName, int32 Qua
 
 void UBH_InteractorComponent::ClientItemGranted_Implementation(const FText& ItemName, int32 Quantity)
 {
+	if (UBH_NotificationSubsystem* Queue = BH_InteractorNotify::GetQueue(GetOwner()))
+	{
+		Queue->PushLoot(ItemName, Quantity);
+	}
 	OnItemGranted.Broadcast(ItemName, Quantity);
+}
+
+void UBH_InteractorComponent::NotifyInventoryFull(const FText& ItemName)
+{
+	const APawn* PawnOwner = Cast<APawn>(GetOwner());
+	if (!PawnOwner)
+	{
+		return;
+	}
+	if (PawnOwner->IsLocallyControlled())
+	{
+		ClientInventoryFull_Implementation(ItemName);
+	}
+	else if (Cast<APlayerController>(PawnOwner->GetController()))
+	{
+		ClientInventoryFull(ItemName);
+	}
+}
+
+void UBH_InteractorComponent::ClientInventoryFull_Implementation(const FText& ItemName)
+{
+	if (UBH_NotificationSubsystem* Queue = BH_InteractorNotify::GetQueue(GetOwner()))
+	{
+		const FText Body = ItemName.IsEmpty() ? FText::GetEmpty()
+			: FText::Format(NSLOCTEXT("BlackwoodHollow", "InventoryFullBody", "{0} left behind"), ItemName);
+		Queue->PushNotice(NSLOCTEXT("BlackwoodHollow", "InventoryFullTitle", "Inventory full"), Body, /*bWarning*/ true);
+	}
 }
 
 bool UBH_InteractorComponent::ServerDebugGiveItem_Validate(const FString& ItemName, int32 Count)

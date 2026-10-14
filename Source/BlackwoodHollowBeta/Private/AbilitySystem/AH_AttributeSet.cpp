@@ -5,6 +5,9 @@
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "Combat/BH_CombatFeel.h"
+#include "Player/BH_PlayerState.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerState.h"
 #include "Progression/BH_RPGSettings.h"
 #include "GameplayCueManager.h"
 #include "GameplayEffectTypes.h"
@@ -327,6 +330,14 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 
 		if (DamageDone > 0.f && NewHealth <= 0.f && TargetASC && !TargetASC->HasMatchingGameplayTag(Tags.State_Combat_Dead))
 		{
+			// 13C: remember what killed a player (the death prompt names it). Blight DoT or no enemy instigator = "Overwhelmed by the Blight".
+			if (const APawn* DeadPawn = Cast<APawn>(TargetActor))
+			{
+				if (ABH_PlayerState* DeadState = Cast<ABH_PlayerState>(DeadPawn->GetPlayerState()))
+				{
+					DeadState->RecordDeathCause(Instigator, BH_AttributeSetBlightPrivate::IsBlightSpec(Data.EffectSpec));
+				}
+			}
 			OnHealthZero.Broadcast(Instigator);
 			// Replicated loose tag (TagOnly): UpdateTagMap also bumps the authority's own count, so the server sees it too.
 			TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead, 1, EGameplayTagReplicationState::TagOnly);
@@ -350,6 +361,13 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 
 		if (NewHealth <= 0.f)
 		{
+			if (const APawn* DeadPawn = Cast<APawn>(TargetActor))
+			{
+				if (ABH_PlayerState* DeadState = Cast<ABH_PlayerState>(DeadPawn->GetPlayerState()))
+				{
+					DeadState->RecordDeathCause(Instigator, false);
+				}
+			}
 			OnHealthZero.Broadcast(Instigator);
 			if (TargetASC)
 			{

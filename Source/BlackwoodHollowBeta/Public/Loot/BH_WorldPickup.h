@@ -58,4 +58,7 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_Collected)
 	bool bCollected = false;
+
+	/** 13C (#14). Server only. Quantity left after a partial pickup (inventory full); 0 = untouched. */
+	int32 RemainingQuantity = 0;
 };

@@ -37,6 +37,35 @@ class UBH_BossHealthBarWidget;
 class UBH_TargetVitalsWidget;
 class UBH_XPBarWidget;
 class UBH_LevelUpBannerWidget;
+class UBH_NotificationQueueWidget;
+class UBH_QuestTrackerWidget;
+
+/** When a quiet-HUD element is shown outside combat. */
+UENUM(BlueprintType)
+enum class EBH_QuietRule : uint8
+{
+	/** Only in combat. */
+	CombatOnly,
+	/** Also whenever health is below full. */
+	HealthNotFull,
+	/** Also whenever stamina is below full. */
+	StaminaNotFull,
+	/** Also while a Heart-Fragment slot is cooling down (and briefly after one becomes ready). The widget must be a UBH_FragmentBarWidget. */
+	FragmentsBusy,
+};
+
+/** One element the quiet HUD fades. WidgetPath names a widget in this HUD's tree, or "Child/Grandchild" through a nested user widget. */
+USTRUCT(BlueprintType)
+struct FBH_QuietGroup
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quiet")
+	FName WidgetPath;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quiet")
+	EBH_QuietRule Rule = EBH_QuietRule::CombatOnly;
+};
 
 UCLASS(Abstract, Blueprintable)
 class BLACKWOODHOLLOWBETA_API UBH_HUDWidget : public UUserWidget
@@ -44,6 +73,8 @@ class BLACKWOODHOLLOWBETA_API UBH_HUDWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
+	UBH_HUDWidget(const FObjectInitializer& ObjectInitializer);
+
 	/** Bind this widget (and every nested UBH_HUDWidget) to an AbilitySystemComponent. Safe to call again with a new ASC (respawn). */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|HUD")
 	void InitializeHUD(UAbilitySystemComponent* ASC);
@@ -103,6 +134,19 @@ public:
 
 	/** True when a LevelUpBanner widget is bound on this HUD (UBH_HUDSubsystem then skips its plain "Level N" text). */
 	bool HasLevelUpBanner() const;
+
+	/** True when a notification queue widget is in this HUD: level-ups then show as queue toasts and the old banner stays hidden. */
+	bool UsesQueueForLevelUp() const { return NotificationQueue != nullptr; }
+
+	// -- Quiet HUD (Phase 13C) ---------------------------------------------------------------------------------------------
+
+	/** Elements the quiet HUD fades out of combat. Defaults are set in the constructor; only the ROOT HUD (WBP_HUD_Main) acts on them. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|HUD|Quiet")
+	TArray<FBH_QuietGroup> QuietGroups;
+
+	/** True while the HUD is in its combat look (combat signals, plus the out-of-combat delay). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD|Quiet")
+	bool IsHUDInCombat() const { return bHUDInCombat; }
 
 	/**
 	 * When true UBH_HUDSubsystem shows a plain "Level N" text for ~2 s on level up. It is skipped automatically when the HUD has a
@@ -198,6 +242,18 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD|Level", meta = (BindWidgetOptional))
 	TObjectPtr<UBH_LevelUpBannerWidget> LevelUpBanner;
 
+	/** The one notification toast widget (WBP_NotificationQueue). Self-binding; only its presence is read here. */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UBH_NotificationQueueWidget> NotificationQueue;
+
+	/** Quest tracker slot under the compass (WBP_QuestTracker). Self-binding. */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UBH_QuestTrackerWidget> QuestTracker;
+
+	/** The HUD entered / left its combat look (not nested HUDs). */
+	UFUNCTION(BlueprintImplementableEvent, Category = "BlackwoodHollow|HUD", meta = (DisplayName = "On HUD Combat Changed"))
+	void K2_OnHUDCombatChanged(bool bInCombat);
+
 	/**
 	 * Container for the boss bar, top of the TopCentreStack (an Overlay named "BossBarSlot"; a SizeBox with no overrides also works).
 	 * UBH_HUDSubsystem adds the boss bar here, so the stack grows only while the bar has size (the bar collapses when faded out).
@@ -245,4 +301,22 @@ private:
 	bool bPostureBroken = false;
 	FString CurrentStanceName;
 	float StancePollTimer = 0.f;
+
+	// -- Quiet HUD runtime ---------------------------------------------------------------------------------------------
+	struct FQuietRuntime
+	{
+		TWeakObjectPtr<UWidget> Widget;
+		float Alpha = 1.f;
+		float Applied = -1.f;
+		float RetryTimer = 0.f;
+	};
+
+	void TickQuietHUD(float DeltaTime);
+	bool ComputeEngaged() const;
+	UWidget* ResolveWidgetPath(FName Path) const;
+	bool EvaluateQuietRule(EBH_QuietRule Rule, UWidget* Widget) const;
+
+	TArray<FQuietRuntime> QuietRuntime;
+	float OutOfCombatTimer = 0.f;
+	bool bHUDInCombat = true;
 };

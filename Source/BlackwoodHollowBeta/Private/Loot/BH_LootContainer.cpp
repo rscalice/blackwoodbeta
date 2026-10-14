@@ -74,12 +74,12 @@ void ABH_LootContainer::BH_OnInteractionCompleted(APawn* InteractingPawn)
 		return;
 	}
 
-	// The player's share is spent now, even if the inventory turns out to be (partly) full: no re-rolling by emptying the bag.
-	LootedKeys.Add(UBH_LootLibrary::GetPlayerKey(PlayerState));
-
 	if (Inventory)
 	{
 		UBH_InteractorComponent* Interactor = UBH_InteractorComponent::Find(InteractingPawn);
+		bool bAnyAdded = false;
+		bool bAnyRefused = false;
+		FText FirstRefusedName;
 		for (const FLootTableRoll& Roll : LootRolls)
 		{
 			if (!Roll.TableToRoll)
@@ -90,17 +90,37 @@ void ABH_LootContainer::BH_OnInteractionCompleted(APawn* InteractingPawn)
 			Inventory->TryAddFromLootTable(Roll, Results);
 			for (const FItemAddResult& Result : Results)
 			{
+				bAnyAdded |= Result.AmountGiven > 0;
+				if (Result.AmountToGive > Result.AmountGiven)
+				{
+					if (!bAnyRefused && Result.ItemClass)
+					{
+						FirstRefusedName = UBH_LootLibrary::GetItemDisplayName(Result.ItemClass);
+					}
+					bAnyRefused = true;
+				}
 				if (Interactor && Result.AmountGiven > 0 && Result.ItemClass)
 				{
 					Interactor->NotifyItemGranted(UBH_LootLibrary::GetItemDisplayName(Result.ItemClass), Result.AmountGiven);
 				}
 			}
 		}
+		if (bAnyRefused && Interactor)
+		{
+			Interactor->NotifyInventoryFull(FirstRefusedName); // 13C (#14)
+		}
+		// Nothing fit at all: the crate is NOT spent for this player, they can come back with room. A partial fit spends it (no re-rolling).
+		if (bAnyRefused && !bAnyAdded)
+		{
+			return;
+		}
 	}
 	else
 	{
 		UE_LOG(LogBHLootContainer, Warning, TEXT("%s: %s has no Narrative inventory, nothing granted."), *GetNameSafe(this), *GetNameSafe(PlayerState));
 	}
+
+	LootedKeys.Add(UBH_LootLibrary::GetPlayerKey(PlayerState));
 
 	if (!bOpened)
 	{

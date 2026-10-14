@@ -27,7 +27,8 @@ void UBH_InteractPromptWidget::SetPrompt(const FText& Name, const FText& Action,
 	const ESlateVisibility HoldVisibility = bShowingHold ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed;
 	if (Pb_Hold)
 	{
-		Pb_Hold->SetVisibility(HoldVisibility);
+		// Phase 13C: when the radial ring exists it replaces the flat bar.
+		Pb_Hold->SetVisibility(Img_HoldRing ? ESlateVisibility::Collapsed : HoldVisibility);
 	}
 	if (Img_HoldRing)
 	{

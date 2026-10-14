@@ -1,6 +1,8 @@
 // Blackwood Hollow - death / revive prompt widget (implementation)
 
 #include "UI/BH_DeathPromptWidget.h"
+#include "Combat/BH_EnemyRank.h"
+#include "Player/BH_PlayerState.h"
 #include "Components/Button.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
@@ -209,6 +211,22 @@ FString UBH_DeathPromptWidget::GetRespawnHubLabel() const
 // Presentation
 // ----------------------------------------------------------------------------
 
+FText UBH_DeathPromptWidget::GetDeathCauseText() const
+{
+	const ABH_PlayerState* State = GetOwningPlayerState<ABH_PlayerState>();
+	if (!State || !State->GetDeathCause().bKilledByEnemy)
+	{
+		return CauseBlightText;
+	}
+	const FBH_DeathCause& Cause = State->GetDeathCause();
+	FString Killer = Cause.KillerName;
+	if (Cause.Rank != EBH_EnemyRank::Common)
+	{
+		Killer = FString::Printf(TEXT("%s %s"), UBH_EnemyRankLibrary::RankName(Cause.Rank), *Killer);
+	}
+	return FText::FormatNamed(CauseFormat, TEXT("Killer"), FText::FromString(Killer));
+}
+
 void UBH_DeathPromptWidget::Refresh()
 {
 	const EBH_DeathPhase Phase = GetDeathPhase();
@@ -240,6 +258,14 @@ void UBH_DeathPromptWidget::Refresh()
 	{
 		Txt_Prompt->SetText(PromptText);
 		Txt_Prompt->SetVisibility(bDown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (Txt_Cause)
+	{
+		if (bDown)
+		{
+			Txt_Cause->SetText(GetDeathCauseText());
+		}
+		Txt_Cause->SetVisibility(bDown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 	const bool bBlocked = bShowRespawn && bRespawnBlocked;
 	if (Btn_Respawn)

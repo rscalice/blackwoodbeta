@@ -63,6 +63,7 @@ void ABH_PlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(ABH_PlayerState, AttunedHubs);
 	DOREPLIFETIME(ABH_PlayerState, bStarterPointsRetired);
 	DOREPLIFETIME(ABH_PlayerState, PlayerSlot);
+	DOREPLIFETIME(ABH_PlayerState, DeathCause);
 }
 
 void ABH_PlayerState::BeginPlay()
@@ -174,6 +175,28 @@ bool ABH_PlayerState::AttuneHub(FName HubName, bool bRetireStarterPoints)
 void ABH_PlayerState::OnRep_ProgressionGates()
 {
 	OnProgressionGatesChanged.Broadcast();
+}
+
+// ============================================================================
+// Cause of death (13C)
+// ============================================================================
+
+void ABH_PlayerState::RecordDeathCause(const AActor* Killer, bool bBlight)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	FBH_DeathCause Cause;
+	Cause.Epoch = static_cast<uint8>(DeathCause.Epoch + 1);
+	if (!bBlight && Killer && UBH_EnemyRankLibrary::HasRankData(Killer))
+	{
+		Cause.bKilledByEnemy = true;
+		Cause.Rank = UBH_EnemyRankLibrary::GetRank(Killer);
+		Cause.KillerName = UBH_EnemyRankLibrary::GetBossBarName(Killer).ToString();
+	}
+	DeathCause = Cause;
+	ForceNetUpdate();
 }
 
 // ============================================================================

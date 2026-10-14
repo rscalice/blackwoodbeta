@@ -46,6 +46,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|UI|Layout")
 	bool IsAnyMenuOpen() const;
 
+	/** Native event: the layout widget was just created and added to the screen (the HUD subsystem moves the HUD into the Game layer). */
+	FSimpleMulticastDelegate OnLayoutReady;
+
 	/** Fires when the open/closed state of the menus changes (true = at least one menu open). Local per player; HUDs bind instead of polling. */
 	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|UI|Layout")
 	FBH_OnMenuStateChanged OnMenuStateChanged;

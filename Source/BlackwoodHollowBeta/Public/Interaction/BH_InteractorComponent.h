@@ -111,6 +111,9 @@ public:
 	/** SERVER. Tells the owning player what they received (toast). Handles listen host and remote clients. */
 	void NotifyItemGranted(const FText& ItemName, int32 Quantity);
 
+	/** SERVER (13C, #14). Tells the owning player an item did not (fully) fit: the "Inventory full" toast through the notification queue. */
+	void NotifyInventoryFull(const FText& ItemName);
+
 	/** SERVER. Aborts a running hold (death, teleport...). */
 	void CancelActiveInteraction();
 
@@ -135,6 +138,9 @@ public:
 
 	UFUNCTION(Client, Reliable)
 	void ClientItemGranted(const FText& ItemName, int32 Quantity);
+
+	UFUNCTION(Client, Reliable)
+	void ClientInventoryFull(const FText& ItemName);
 
 	/** bh.Loot.Give: server grants Count of ItemName (alias Shard / Sap / Incense or a class path) to this player. Compiled out in Shipping. */
 	UFUNCTION(Server, Reliable, WithValidation)

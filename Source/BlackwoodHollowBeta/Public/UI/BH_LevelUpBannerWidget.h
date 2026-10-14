@@ -27,6 +27,8 @@ class BLACKWOODHOLLOWBETA_API UBH_LevelUpBannerWidget : public UUserWidget
 {
 	GENERATED_BODY()
 
+	friend class UBH_NotificationSubsystem;
+
 public:
 	/** Shows (or restarts) the banner for this level up. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|LevelUp")
