@@ -75,39 +75,6 @@ void UBH_MenuActivatableWidget::UnregisterCloseProcessor()
 	}
 }
 
-void UBH_MenuActivatableWidget::RestoreGameInputIfNoMenu(UBH_MenuActivatableWidget* Context, APlayerController* PC)
-{
-	if (!PC || !PC->IsLocalController())
-	{
-		return;
-	}
-	if (const ULocalPlayer* LP = PC->GetLocalPlayer())
-	{
-		if (const UBH_UILayoutSubsystem* Layout = LP->GetSubsystem<UBH_UILayoutSubsystem>())
-		{
-			if (Layout->IsAnyMenuOpen())
-			{
-				return;
-			}
-		}
-	}
-	// CommonUI's action router keeps the last UI input config (Menu / NoCapture) and re-applies it, which undid a plain
-	// SetInputMode. Tell the router itself to go back to Game input (Lyra pattern), then fix cursor and focus.
-	if (Context)
-	{
-		if (UCommonUIActionRouterBase* Router = UCommonUIActionRouterBase::Get(*Context))
-		{
-			Router->SetActiveUIInputConfig(FUIInputConfig(ECommonInputMode::Game, EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown, /*bHideCursorDuringViewportCapture*/ true));
-		}
-	}
-	PC->SetInputMode(FInputModeGameOnly());
-	PC->SetShowMouseCursor(false);
-	if (FSlateApplication::IsInitialized())
-	{
-		FSlateApplication::Get().SetAllUserFocusToGameViewport();
-	}
-}
-
 void UBH_MenuActivatableWidget::NotifyLayoutMenuState() const
 {
 	if (const APlayerController* PC = GetOwningPlayer())
@@ -141,37 +108,8 @@ void UBH_MenuActivatableWidget::NativeOnDeactivated()
 	UnregisterCloseProcessor();
 	Super::NativeOnDeactivated();
 
+	// The layout subsystem decides whether any menu is still open and, when none is, puts the player back into game input.
 	NotifyLayoutMenuState();
-
-	// Put the player back in game input when the last menu closes: now, and once more next tick (after the activatable
-	// stack has settled and CommonUI has re-applied its config). Both do nothing if another menu is still open.
-	if (APlayerController* PC = GetOwningPlayer())
-	{
-		RestoreGameInputIfNoMenu(this, PC);
-		if (UWorld* World = GetWorld())
-		{
-			TWeakObjectPtr<UBH_MenuActivatableWidget> WeakSelf(this);
-			TWeakObjectPtr<APlayerController> WeakPC(PC);
-			World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateLambda([WeakSelf, WeakPC]()
-			{
-				APlayerController* P = WeakPC.Get();
-				UBH_MenuActivatableWidget* Self = WeakSelf.Get();
-				RestoreGameInputIfNoMenu(Self, P);
-				if (P)
-				{
-					ECommonInputMode Mode = ECommonInputMode::All;
-					if (Self)
-					{
-						if (const UCommonUIActionRouterBase* Router = UCommonUIActionRouterBase::Get(*Self))
-						{
-							Mode = Router->GetActiveInputMode();
-						}
-					}
-					UE_LOG(LogTemp, Log, TEXT("[BH_Menu] restore: mode=%d cursor=%d"), static_cast<int32>(Mode), P->bShowMouseCursor ? 1 : 0);
-				}
-			}));
-		}
-	}
 }
 void UBH_MenuActivatableWidget::NativeDestruct()
 {

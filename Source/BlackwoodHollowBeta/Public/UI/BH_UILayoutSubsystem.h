@@ -50,8 +50,11 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|UI|Layout")
 	FBH_OnMenuStateChanged OnMenuStateChanged;
 
-	/** Called by menus on activate / deactivate: re-evaluates IsAnyMenuOpen and broadcasts OnMenuStateChanged if it changed. */
+	/** Called by menus on activate / deactivate and by the layout when a stack settles: re-evaluates IsAnyMenuOpen, broadcasts OnMenuStateChanged on a change, and (re)applies game input whenever no menu is open. */
 	void NotifyMenuStateChanged();
+
+	/** When bAnyMenuOpen is false: put CommonUI's router, the cursor and Slate focus back to game input now and again next tick. No-op while a menu is open. */
+	void ApplyInputForMenuState(bool bAnyMenuOpen);
 
 	/** Index of the player menu tab that was showing when it last closed, so it reopens there. Session only (not saved). */
 	UPROPERTY(BlueprintReadWrite, Category = "BlackwoodHollow|UI|Layout")
@@ -68,4 +71,6 @@ private:
 	TObjectPtr<UBH_PrimaryLayoutWidget> Layout;
 
 	bool bLastAnyMenuOpen = false;
+
+	void RestoreGameInputNow() const;
 };

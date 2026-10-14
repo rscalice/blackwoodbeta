@@ -53,9 +53,6 @@ private:
 	void RegisterCloseProcessor();
 	void UnregisterCloseProcessor();
 
-	/** Put the owning player back into game input (no cursor, GameOnly) once no menu remains open. */
-	static void RestoreGameInputIfNoMenu(UBH_MenuActivatableWidget* Context, APlayerController* PC);
-
 	/** Tell the layout subsystem a menu activated / deactivated so it can broadcast OnMenuStateChanged. */
 	void NotifyLayoutMenuState() const;
 

@@ -6,6 +6,10 @@
 #include "CommonActivatableWidget.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
+#include "Input/CommonUIActionRouterBase.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
 
 UBH_PrimaryLayoutWidget* UBH_UILayoutSubsystem::EnsureLayout(TSubclassOf<UBH_PrimaryLayoutWidget> LayoutClass)
 {
@@ -58,8 +62,69 @@ void UBH_UILayoutSubsystem::NotifyMenuStateChanged()
 		bLastAnyMenuOpen = bOpen;
 		OnMenuStateChanged.Broadcast(bOpen);
 	}
+	// Idempotent: also runs when the state did not change, because CommonUI re-applies its Menu config as the stack settles.
+	ApplyInputForMenuState(bOpen);
 }
 
+void UBH_UILayoutSubsystem::RestoreGameInputNow() const
+{
+	const ULocalPlayer* LP = GetLocalPlayer();
+	APlayerController* PC = LP ? LP->GetPlayerController(GetWorld()) : nullptr;
+	if (!PC || !PC->IsLocalController())
+	{
+		return;
+	}
+	// CommonUI's action router keeps the last UI input config (Menu / NoCapture) and re-applies it, so a plain SetInputMode is
+	// undone. Tell the router itself to go back to Game input (Lyra pattern), then fix cursor and focus.
+	if (Layout)
+	{
+		if (UCommonUIActionRouterBase* Router = UCommonUIActionRouterBase::Get(*Layout))
+		{
+			Router->SetActiveUIInputConfig(FUIInputConfig(ECommonInputMode::Game, EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown, /*bHideCursorDuringViewportCapture*/ true));
+		}
+	}
+	PC->SetInputMode(FInputModeGameOnly());
+	PC->SetShowMouseCursor(false);
+	if (FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().SetAllUserFocusToGameViewport();
+	}
+}
+
+void UBH_UILayoutSubsystem::ApplyInputForMenuState(bool bAnyMenuOpen)
+{
+	if (bAnyMenuOpen)
+	{
+		return;
+	}
+	RestoreGameInputNow();
+
+	// Once more next tick (after the stack transition), with the result logged.
+	if (UWorld* World = GetWorld())
+	{
+		TWeakObjectPtr<UBH_UILayoutSubsystem> WeakThis(this);
+		World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateLambda([WeakThis]()
+		{
+			UBH_UILayoutSubsystem* Self = WeakThis.Get();
+			if (!Self || Self->IsAnyMenuOpen())
+			{
+				return;
+			}
+			Self->RestoreGameInputNow();
+			const ULocalPlayer* LP = Self->GetLocalPlayer();
+			const APlayerController* PC = LP ? LP->GetPlayerController(Self->GetWorld()) : nullptr;
+			ECommonInputMode Mode = ECommonInputMode::All;
+			if (Self->Layout)
+			{
+				if (const UCommonUIActionRouterBase* Router = UCommonUIActionRouterBase::Get(*Self->Layout))
+				{
+					Mode = Router->GetActiveInputMode();
+				}
+			}
+			UE_LOG(LogTemp, Log, TEXT("[BH_Menu] restore: mode=%d cursor=%d"), static_cast<int32>(Mode), (PC && PC->bShowMouseCursor) ? 1 : 0);
+		}));
+	}
+}
 void UBH_UILayoutSubsystem::Deinitialize()
 {
 	if (Layout)

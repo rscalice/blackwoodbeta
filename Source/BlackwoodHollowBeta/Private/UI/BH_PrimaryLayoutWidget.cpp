@@ -7,6 +7,8 @@
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Blueprint/UserWidget.h"
+#include "Engine/LocalPlayer.h"
+#include "UI/BH_UILayoutSubsystem.h"
 
 UCommonActivatableWidgetStack* UBH_PrimaryLayoutWidget::GetLayerStack(FGameplayTag LayerTag) const
 {
@@ -66,14 +68,56 @@ void UBH_PrimaryLayoutWidget::RemoveHUDWidget(UUserWidget* HUDWidget)
 	}
 }
 
+void UBH_PrimaryLayoutWidget::NativeOnInitialized()
+{
+	Super::NativeOnInitialized();
+	UCommonActivatableWidgetStack* Stacks[] = { GameMenuStack, MenuStack, ModalStack };
+	for (UCommonActivatableWidgetStack* Stack : Stacks)
+	{
+		if (Stack)
+		{
+			Stack->OnDisplayedWidgetChanged().AddUObject(this, &UBH_PrimaryLayoutWidget::HandleDisplayedWidgetChanged);
+		}
+	}
+}
+
+void UBH_PrimaryLayoutWidget::NativeDestruct()
+{
+	UCommonActivatableWidgetStack* Stacks[] = { GameMenuStack, MenuStack, ModalStack };
+	for (UCommonActivatableWidgetStack* Stack : Stacks)
+	{
+		if (Stack)
+		{
+			Stack->OnDisplayedWidgetChanged().RemoveAll(this);
+		}
+	}
+	Super::NativeDestruct();
+}
+
+void UBH_PrimaryLayoutWidget::HandleDisplayedWidgetChanged(UCommonActivatableWidget* DisplayedWidget)
+{
+	if (const ULocalPlayer* LP = GetOwningLocalPlayer())
+	{
+		if (UBH_UILayoutSubsystem* Layout = LP->GetSubsystem<UBH_UILayoutSubsystem>())
+		{
+			Layout->NotifyMenuStateChanged();
+		}
+	}
+}
+
 bool UBH_PrimaryLayoutWidget::IsAnyMenuOpen() const
 {
+	// Count only activated widgets: GetActiveWidget() still returns a just-closed widget until the stack finishes its transition.
 	const UCommonActivatableWidgetStack* Stacks[] = { GameMenuStack, MenuStack, ModalStack };
 	for (const UCommonActivatableWidgetStack* Stack : Stacks)
 	{
-		if (Stack && Stack->GetActiveWidget())
+		if (!Stack) { continue; }
+		for (const UCommonActivatableWidget* Widget : Stack->GetWidgetList())
 		{
-			return true;
+			if (Widget && Widget->IsActivated())
+			{
+				return true;
+			}
 		}
 	}
 	return false;

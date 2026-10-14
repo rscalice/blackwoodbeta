@@ -51,11 +51,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|UI|Layout")
 	UCommonActivatableWidgetStack* GetLayerStack(FGameplayTag LayerTag) const;
 
-	/** True when any of the GameMenu / Menu / Modal layers currently has an active widget. */
+	/** True when any widget in the GameMenu / Menu / Modal stacks IsActivated(). A widget that was just deactivated but is still in the stack (transition) does not count. */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|UI|Layout")
 	bool IsAnyMenuOpen() const;
 
 protected:
+	virtual void NativeOnInitialized() override;
+	virtual void NativeDestruct() override;
+
+	/** A stack's displayed widget changed (fires after the stack has settled): re-evaluate menu state on the layout subsystem. */
+	void HandleDisplayedWidgetChanged(UCommonActivatableWidget* DisplayedWidget);
+
 	/** Non-activatable HUD layer (UI.Layer.Game). */
 	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|UI|Layout", meta = (BindWidget))
 	TObjectPtr<UOverlay> GameLayer;
