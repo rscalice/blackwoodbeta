@@ -82,3 +82,6 @@ __pycache__/
 
 # Armor fit tool: scratch MetaHuman builds (re-created by Fit Armor; kept locally for re-harvest)
 Content/BlackwoodHollow/Characters/BodyTypes/*/Built_Fit/
+
+# STF demo open-world map (390 MB) - kept locally, never tracked
+/Content/Fab/STF/Pack03-LandscapePro/Maps/open_world_LSP_v2.umap
