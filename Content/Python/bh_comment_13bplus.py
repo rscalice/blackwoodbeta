@@ -22,8 +22,12 @@ BOXES = {
     COMPASS: [
         ("UpdateMarkers", "Compass position from the bearing to the marker, clamped to the strip edge (13B+ change)", C_VIEW,
          ["MapRangeClamped", "FindLookAtRotation", "NormalizeAxis", "SetPosition"]),
-        ("UpdateMarkers", "Fade by distance; our markers push the fade distances out to the whole island", C_LOGIC,
-         ["SetRenderOpacity", "MapRangeUnclamped", "GetMarkerStartFadeOutDistance", "GetMarkerStartFadeinDistance"]),
+        ("UpdateMarkers", "Pin: a marker beyond the +-45 degree window sits 36 px inside the strip edge (clear of the edge mask) and flags a chevron", C_VIEW,
+         ["PromotableOperator", "PinMarkers"]),
+        ("UpdateMarkers", "After the loop: show or hide the left and right chevrons", C_SETUP,
+         ["ApplyEdgeArrows"]),
+        ("UpdateMarkers", "Fade by distance, clamped and never below 40 percent so a far objective stays visible", C_LOGIC,
+         ["SetRenderOpacity", "MapRangeUnclamped", "Clamp(Float)", "GetMarkerStartFadeOutDistance", "GetMarkerStartFadeinDistance"]),
     ],
 }
 
