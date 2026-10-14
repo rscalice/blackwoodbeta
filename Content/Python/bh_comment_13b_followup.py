@@ -31,8 +31,8 @@ BOXES = {
          ["UpdateCrosshairVisibility", "SetVisibility", "Branch", "Txt_Crosshair"]),
     ],
     MENU: [
-        ("EventGraph", "Construct: size the frame material to the 1280x720 frame box", C_VIEW,
-         ["Event Construct", "SetImagePixelSize", "MakeVector2D", "FrameImage"]),
+        ("EventGraph", "Tick: push the frame material pixel size only when the frame size changed", C_VIEW,
+         ["Event Tick", "GetCachedGeometry", "GetLocalSize", "IsNearlyZero2D", "NotEqualExactly", "LastFrameSize", "SetImagePixelSize", "FrameImage", "Branch", "AND"]),
     ],
 }
 
