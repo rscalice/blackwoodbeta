@@ -19,6 +19,7 @@
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 #include "UI/BH_HUDWidget.h"
+#include "UI/BH_EnemyReadability.h"
 #include "BH_HUDElements.generated.h"
 
 class UProgressBar;
@@ -442,6 +443,22 @@ public:
 protected:
 	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Txt_Name;
+
+	/** Phase 13D: "Lv N", coloured against the local player's level (13A level tokens). */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Txt_Level;
+
+	/** Phase 13D: rank title ("Elite Brute"); collapsed for Common and Veteran. */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Txt_Title;
+
+	/** Phase 13D: role glyph (Skirmisher / Soldier / Brute), texture from UBH_EnemyReadabilitySettings::RoleGlyphs. */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Img_RoleGlyph;
+
+	/** Blueprint hook after a lock: pick the rank frame instance. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "BlackwoodHollow|HUD", meta = (DisplayName = "On Target Presented"))
+	void K2_OnTargetPresented(EBH_EnemyRank Rank, EBH_EnemyArchetype Archetype, const FText& EnemyName, const FText& EnemyTitle, int32 EnemyLevel, EBH_LevelTier LevelTier);
 
 	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Img_HealthBar;

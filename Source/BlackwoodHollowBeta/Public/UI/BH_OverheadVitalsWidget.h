@@ -13,9 +13,12 @@
 #include "CoreMinimal.h"
 #include "UI/BH_HUDWidget.h"
 #include "UI/BH_HUDElements.h"
+#include "UI/BH_EnemyReadability.h"
 #include "BH_OverheadVitalsWidget.generated.h"
 
 class UImage;
+class UTextBlock;
+class UWidget;
 class UMaterialInstanceDynamic;
 
 UCLASS(Abstract, Blueprintable)
@@ -35,6 +38,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
 	float GetOverheadOpacity() const { return CurrentOpacity; }
 
+	/**
+	 * Phase 13D: shows the enemy's rank presentation. Common: no name. Veteran: name (single-notch frame, set in Blueprint). Elite: name
+	 * plus title (double-notch frame and title plate). Idempotent; the owning component calls it every visibility update, and it is
+	 * re-applied after the widget is re-constructed.
+	 */
+	void PresentEnemy(const AActor* Enemy, const AActor* Viewer);
+
 	/** How fast the health fill eases to its new value (per second, exponential). 0 = snap. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|HUD", meta = (ClampMin = "0.0"))
 	float HealthEaseSpeed = 10.f;
@@ -53,6 +63,26 @@ public:
 protected:
 	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Img_HealthBar;
+
+	/** Enemy name. Collapsed for Common. */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Txt_Name;
+
+	/** Rank title ("Elite Brute"). Collapsed unless the rank shows a title. */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Txt_Title;
+
+	/** Optional plate behind the title (shown with the title). */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Plate_Title;
+
+	/** Optional rank frame image (an M_UI_Frame instance chosen in Blueprint from OnEnemyPresented). */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Img_RankFrame;
+
+	/** Blueprint hook after the name / title visibility is applied: pick the rank frame instance (Common none, Veteran single notch, Elite double notch). */
+	UFUNCTION(BlueprintImplementableEvent, Category = "BlackwoodHollow|HUD", meta = (DisplayName = "On Enemy Presented"))
+	void K2_OnEnemyPresented(EBH_EnemyRank Rank, EBH_EnemyArchetype Archetype, const FText& EnemyName, const FText& EnemyTitle, int32 EnemyLevel, EBH_LevelTier LevelTier);
 
 	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
 	TObjectPtr<UImage> Img_PostureBar;
@@ -83,4 +113,7 @@ private:
 	bool bHealthSeeded = false;
 
 	float CurrentOpacity = 0.f;
+
+	/** Last presentation signature; reset on construct so a re-created widget applies it again. */
+	int32 PresentedSignature = INT32_MIN;
 };

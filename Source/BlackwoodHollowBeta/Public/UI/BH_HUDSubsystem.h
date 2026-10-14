@@ -105,6 +105,10 @@ private:
 	void OnAnyAggroChanged(UBH_CombatIdentityComponent* Source, AActor* NewTarget);
 	/** Phase 12G: the same event for ABH_EnemyBase enemies (the Elite crab). */
 	void OnAnyEnemyAggroSeen(ABH_EnemyBase* Enemy, AActor* NewTarget);
+
+	/** Phase 13D: Veteran growl / Elite stinger / Boss horn when a ranked enemy starts fighting the LOCAL pawn (once per enemy per cooldown). */
+	void TryPlayAggroCue(AActor* Enemy, AActor* NewTarget);
+	TMap<TWeakObjectPtr<AActor>, double> AggroCueTimes;
 	/** Picks the nearest living boss aggroed on the local pawn and shows / schedules the hide of the bar accordingly. */
 	void EvaluateBoss();
 	void ShowBossBar(AActor* Boss);

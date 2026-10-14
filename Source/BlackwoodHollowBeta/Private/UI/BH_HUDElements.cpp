@@ -13,6 +13,8 @@
 #include "AbilitySystemBlueprintLibrary.h"
 #include "Characters/BH_EnemyBase.h"
 #include "Combat/BH_CombatIdentityComponent.h"
+#include "UI/BH_EnemyReadability.h"
+#include "GameFramework/PlayerController.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 
 namespace BH_HUDElements_Private
@@ -664,6 +666,39 @@ void UBH_TargetVitalsWidget::HandleLockedTargetChanged(AActor* Target)
 		CurrentOpacity = 0.f;
 		SetRenderOpacity(0.f);
 	}
+	// Phase 13D: level colour against the local player, rank title, role glyph.
+	{
+		const APlayerController* OwningPC = GetOwningPlayer();
+		const FBH_EnemyReadability Info = UBH_EnemyReadabilityLibrary::Describe(Target, OwningPC ? OwningPC->GetPawn() : nullptr);
+		if (Info.bValid)
+		{
+			if (Txt_Level)
+			{
+				Txt_Level->SetText(FText::Format(NSLOCTEXT("BHEnemyReadability", "LevelFmt", "Lv {0}"), FText::AsNumber(Info.Level)));
+				Txt_Level->SetColorAndOpacity(FSlateColor(UBH_EnemyReadabilityLibrary::GetLevelColor(Info.LevelTier)));
+			}
+			if (Txt_Title)
+			{
+				const bool bTitle = UBH_EnemyReadabilityLibrary::RankShowsTitle(Info.Rank) && !Info.Title.IsEmpty();
+				Txt_Title->SetText(Info.Title);
+				Txt_Title->SetVisibility(bTitle ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+			}
+			if (Img_RoleGlyph)
+			{
+				if (UTexture2D* Glyph = UBH_EnemyReadabilityLibrary::GetRoleGlyph(Info.Archetype))
+				{
+					Img_RoleGlyph->SetBrushFromTexture(Glyph, /*bMatchSize*/ false);
+					Img_RoleGlyph->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+				}
+				else
+				{
+					Img_RoleGlyph->SetVisibility(ESlateVisibility::Collapsed);
+				}
+			}
+			K2_OnTargetPresented(Info.Rank, Info.Archetype, Info.Name, Info.Title, Info.Level, Info.LevelTier);
+		}
+	}
+
 	bHasTarget = true;
 	ApplyShown(); // stays collapsed while the root HUD has it suppressed (lock is on the presented boss)
 }

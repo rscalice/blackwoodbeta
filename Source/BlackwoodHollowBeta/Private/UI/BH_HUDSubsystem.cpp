@@ -3,6 +3,10 @@
 #include "UI/BH_HUDSubsystem.h"
 #include "UI/BH_HUDWidget.h"
 #include "UI/BH_HUDSettings.h"
+#include "UI/BH_EnemyReadability.h"
+#include "UI/BH_EnemyReadabilitySettings.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 #include "UI/BH_NotificationSubsystem.h"
 #include "UI/BH_UILayoutSubsystem.h"
 #include "UI/BH_PrimaryLayoutWidget.h"
@@ -285,15 +289,71 @@ void UBH_HUDSubsystem::OnAnyAggroChanged(UBH_CombatIdentityComponent* Source, AA
 	// The delegate is process-wide (every PIE world): only react to bosses in this player's world.
 	if (Source && GetLocalPlayer() && Source->GetWorld() == GetLocalPlayer()->GetWorld())
 	{
+		TryPlayAggroCue(Source->GetOwner(), NewTarget);
 		EvaluateBoss();
 	}
 }
 
-void UBH_HUDSubsystem::OnAnyEnemyAggroSeen(ABH_EnemyBase* Enemy, AActor* /*NewTarget*/)
+void UBH_HUDSubsystem::OnAnyEnemyAggroSeen(ABH_EnemyBase* Enemy, AActor* NewTarget)
 {
 	if (Enemy && GetLocalPlayer() && Enemy->GetWorld() == GetLocalPlayer()->GetWorld())
 	{
+		TryPlayAggroCue(Enemy, NewTarget);
 		EvaluateBoss();
+	}
+}
+
+void UBH_HUDSubsystem::TryPlayAggroCue(AActor* Enemy, AActor* NewTarget)
+{
+	UWorld* World = GetLocalPlayer() ? GetLocalPlayer()->GetWorld() : nullptr;
+	const APawn* LocalPawn = GetLocalPawn();
+	if (!World || !Enemy || !NewTarget || NewTarget != LocalPawn)
+	{
+		return; // only a fight with the local pawn is cued, so a partner's far-off fight stays silent
+	}
+	const EBH_EnemyRank Rank = UBH_EnemyRankLibrary::GetRank(Enemy);
+	if (Rank == EBH_EnemyRank::Common)
+	{
+		return;
+	}
+	USoundBase* Sound = UBH_EnemyReadabilityLibrary::GetAggroSound(Rank);
+	if (!Sound)
+	{
+		return;
+	}
+
+	const UBH_EnemyReadabilitySettings* S = UBH_EnemyReadabilitySettings::Get();
+	if (S->AggroCueMaxDistance > 0.f && FVector::DistSquared(LocalPawn->GetActorLocation(), Enemy->GetActorLocation()) > FMath::Square(S->AggroCueMaxDistance))
+	{
+		return;
+	}
+	const double Now = World->GetTimeSeconds();
+	if (const double* Last = AggroCueTimes.Find(Enemy))
+	{
+		if (Now - *Last < S->AggroCueCooldown)
+		{
+			return;
+		}
+	}
+	if (AggroCueTimes.Num() > 64)
+	{
+		for (auto It = AggroCueTimes.CreateIterator(); It; ++It)
+		{
+			if (!It->Key.IsValid() || Now - It->Value > S->AggroCueCooldown)
+			{
+				It.RemoveCurrent();
+			}
+		}
+	}
+	AggroCueTimes.Add(Enemy, Now);
+
+	if (Rank == EBH_EnemyRank::Veteran)
+	{
+		UGameplayStatics::PlaySoundAtLocation(World, Sound, Enemy->GetActorLocation(), S->AggroSoundVolume);
+	}
+	else
+	{
+		UGameplayStatics::PlaySound2D(World, Sound, S->AggroSoundVolume);
 	}
 }
 

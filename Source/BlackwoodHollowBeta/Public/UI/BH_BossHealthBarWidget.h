@@ -21,6 +21,7 @@
 #include "CoreMinimal.h"
 #include "UI/BH_HUDWidget.h"
 #include "UI/BH_HUDElements.h"
+#include "UI/BH_EnemyReadability.h"
 #include "Widgets/SWidget.h"
 #include "BH_BossHealthBarWidget.generated.h"
 
@@ -119,6 +120,15 @@ public:
 protected:
 	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Txt_Name;
+
+	/** Phase 13D: rank title ("Boss", "Elite Brute"). */
+	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Txt_Title;
+
+	/** Phase 13D: fires from PresentBoss after the name and title are set. bFirstEngage is true the first time this bar presents this boss
+	 *  (a new enemy, not a re-present): play the title card then (Boss rank; Elite may use it too). */
+	UFUNCTION(BlueprintImplementableEvent, Category = "BlackwoodHollow|HUD", meta = (DisplayName = "On Boss Presented"))
+	void K2_OnBossPresented(EBH_EnemyRank Rank, const FText& EnemyName, const FText& EnemyTitle, bool bFirstEngage);
 
 	/** Pale damage-chunk bar (behind the health fill). */
 	UPROPERTY(BlueprintReadOnly, Category = "BlackwoodHollow|HUD", meta = (BindWidgetOptional))
