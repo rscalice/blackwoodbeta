@@ -25,6 +25,7 @@
 #include "BH_GameState.generated.h"
 
 class UBH_PartyComponent;
+class UBH_BeatTrackerComponent;
 class UNarrativeComponent;
 class APlayerController;
 
@@ -46,6 +47,10 @@ public:
 	/** The party component (any machine; its member list replicates). */
 	UFUNCTION(BlueprintPure, Category = "BH|Party")
 	UBH_PartyComponent* GetPartyComponent() const { return PartyComponent; }
+
+	/** The party's current beat, objective and partner pings (Phase 13B+). Any machine. */
+	UFUNCTION(BlueprintPure, Category = "BH|Beat")
+	UBH_BeatTrackerComponent* GetBeatTracker() const { return BeatTracker; }
 
 	/** Any machine: the party is in combat (replicated copy of UBH_PartyStateSubsystem::IsPartyInCombat). */
 	UFUNCTION(BlueprintPure, Category = "BH|Party")
@@ -86,6 +91,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Party")
 	TObjectPtr<UBH_PartyComponent> PartyComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Beat")
+	TObjectPtr<UBH_BeatTrackerComponent> BeatTracker;
 
 	/** The set flags. Replicated. */
 	UPROPERTY(ReplicatedUsing = OnRep_WorldFlags)
