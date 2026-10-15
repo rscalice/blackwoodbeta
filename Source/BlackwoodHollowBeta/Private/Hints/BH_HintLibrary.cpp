@@ -65,9 +65,10 @@ const TArray<UBH_HintData*>& UBH_HintLibrary::GetAllHints()
 		Strong.Add(TStrongObjectPtr<UBH_HintData>(Hint));
 		Raw.Add(Hint);
 	}
-	Raw.Sort([](const UBH_HintData* A, const UBH_HintData* B)
+	// TArray<T*>::Sort dereferences, so the predicate receives references.
+	Raw.Sort([](const UBH_HintData& A, const UBH_HintData& B)
 	{
-		return A->SortOrder != B->SortOrder ? A->SortOrder < B->SortOrder : A->HintId.LexicalLess(B->HintId);
+		return A.SortOrder != B.SortOrder ? A.SortOrder < B.SortOrder : A.HintId.LexicalLess(B.HintId);
 	});
 	UE_LOG(LogBHHints, Log, TEXT("Hint catalogue: %d hint(s) in %s."), Raw.Num(), *Settings->HintsFolder);
 	return Raw;
