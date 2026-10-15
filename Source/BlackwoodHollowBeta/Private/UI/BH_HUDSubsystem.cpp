@@ -28,6 +28,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/PlatformTime.h"
 #include "EngineUtils.h"
 #include "TimerManager.h"
 #include "Engine/GameViewportClient.h"
@@ -458,11 +459,20 @@ void UBH_HUDSubsystem::ShowBossBar(AActor* Boss)
 		BossBar->SetPositionInViewport(FVector2D(0.0, BossBarFallbackTopOffset), /*bRemoveDPIScale*/ false);
 	}
 
+	if (PresentedBoss.Get() != Boss)
+	{
+		BossPresentedAt = FPlatformTime::Seconds();
+	}
 	BossBar->PresentBoss(Boss);
 	PresentedBoss = Boss;
 	MainHUD->SetPresentedBoss(Boss);
 	BindBossHealth(Boss);
 	ApplyVisibility();
+}
+
+bool UBH_HUDSubsystem::IsBossIntroActive(float WindowSeconds) const
+{
+	return PresentedBoss.IsValid() && (FPlatformTime::Seconds() - BossPresentedAt) < WindowSeconds;
 }
 
 void UBH_HUDSubsystem::HideBossBar()

@@ -1,6 +1,7 @@
 // Blackwood Hollow - the Island 1 weapon cache (implementation)
 
 #include "Actors/BH_WeaponCache.h"
+#include "Hints/BH_HintLibrary.h"
 #include "Combat/BH_LoadoutComponent.h"
 #include "Interaction/BH_InteractorComponent.h"
 #include "Items/BH_WeaponItem.h"
@@ -100,6 +101,7 @@ void ABH_WeaponCache::BH_OnInteractionCompleted(APawn* InteractingPawn)
 		const TSubclassOf<UNarrativeItem> GrantedClass(WeaponClass);
 		Interactor->NotifyItemGranted(UBH_LootLibrary::GetItemDisplayName(GrantedClass), 1);
 	}
+	UBH_HintLibrary::TriggerHintKey(InteractingPawn, TEXT("Item.WeaponCache")); // 13E: equipping the Sword
 	UE_LOG(LogBHWeaponCache, Log, TEXT("%s: %s took %s."), *GetNameSafe(this), *GetNameSafe(TakerState), *GetNameSafe(WeaponClass));
 }
 

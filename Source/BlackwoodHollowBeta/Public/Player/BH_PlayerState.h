@@ -22,6 +22,7 @@ class UNarrativeInventoryComponent;
 class UNarrativeItem;
 class UAH_GA_FragmentBase;
 class UBH_ProgressionComponent;
+class UBH_PlayerHintComponent;
 
 /** Broadcast (server and owning client) when a fragment slot changes. SlotIndex -1 = several / unknown slots changed. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnFragmentSlotsChanged, int32, SlotIndex);
@@ -235,6 +236,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Progression")
 	TObjectPtr<UBH_ProgressionComponent> Progression;
+
+	/** 13E. Server-side first-time hint triggers for this player; sends each hint to the owning client only. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Hints")
+	TObjectPtr<UBH_PlayerHintComponent> HintComponent;
 
 	/**
 	 * Category restriction per slot (index 0 = key 1). Default {Offensive, Vitality, BlightResist}: Overload Burst (Offensive)

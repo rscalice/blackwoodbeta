@@ -1,6 +1,7 @@
 // Blackwood Hollow - Core combat AttributeSet (implementation)
 
 #include "AbilitySystem/AH_AttributeSet.h"
+#include "Hints/BH_HintLibrary.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
@@ -460,6 +461,15 @@ void UAH_AttributeSet::HandlePostureDepleted(UAbilitySystemComponent* TargetASC,
 	// Replicated loose tag (TagOnly) so every machine sees the broken state; UAH_GA_PostureBreak clears it on the server.
 	TargetASC->AddLooseGameplayTag(Tags.State_Combat_PostureBroken, 1, EGameplayTagReplicationState::TagOnly);
 	OnPostureBroken.Broadcast(Instigator);
+
+	// 13E: the first posture break a player causes on an enemy teaches the mechanic. Players breaking each other do not count.
+	if (const APawn* TargetPawn = Cast<APawn>(TargetActor))
+	{
+		if (!TargetPawn->IsPlayerControlled())
+		{
+			UBH_HintLibrary::TriggerHintKey(Instigator, TEXT("Combat.PostureBreak"));
+		}
+	}
 
 	// Cosmetic cue (replicated): shatter VFX/SFX on every machine. Server-side only (this runs from GE execution).
 	{

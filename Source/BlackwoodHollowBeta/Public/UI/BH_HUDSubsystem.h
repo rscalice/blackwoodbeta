@@ -70,6 +70,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
 	AActor* GetPresentedBoss() const { return PresentedBoss.Get(); }
 
+	/** 13E. True for WindowSeconds after the boss bar began presenting an enemy (the title card). First-time hints hold back during it. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
+	bool IsBossIntroActive(float WindowSeconds) const;
+
 	/**
 	 * Phase 9: level-up flourish. Tells the main HUD (On Level Up event) and, when UBH_HUDWidget::bShowNativeLevelUpText is set,
 	 * shows a plain "Level N" text for LevelUpTextSeconds (~2 s). Safe to call before the HUD exists (the native text still shows).
@@ -119,6 +123,9 @@ private:
 	TObjectPtr<UBH_BossHealthBarWidget> BossBar;
 
 	TWeakObjectPtr<AActor> PresentedBoss;
+
+	/** 13E. FPlatformTime::Seconds() when the bar last started presenting a new enemy. */
+	double BossPresentedAt = -1.0e9;
 	FTimerHandle BossScanTimer;
 	FTimerHandle BossHideTimer;
 	FDelegateHandle AggroHandle;

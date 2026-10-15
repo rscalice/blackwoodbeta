@@ -1,6 +1,7 @@
 // Blackwood Hollow - server-side loot granting helpers (implementation)
 
 #include "Loot/BH_LootLibrary.h"
+#include "Hints/BH_HintLibrary.h"
 #include "Interaction/BH_InteractorComponent.h"
 #include "Combat/BH_LoadoutComponent.h"
 #include "Items/BH_WeaponItem.h"
@@ -114,6 +115,7 @@ namespace BH_LootLibrary_Private
 		if (Given > 0 && Entry.bAutoEquip)
 		{
 			AutoEquipGrantedItem(PlayerState, ItemClass, Entry.AutoEquipSlot);
+			UBH_HintLibrary::TriggerHintKey(PlayerState, TEXT("Drop.AutoEquip")); // 13E: the kite shield (13-0b)
 		}
 	}
 }

@@ -71,6 +71,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Notifications")
 	bool IsShowing() const { return bHasCurrent; }
 
+	/** True while the local player is down (only death notifications are accepted). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Notifications")
+	bool IsSuppressed() const { return bSuppressed; }
+
 	/** A queue widget registers while it exists, so callers can fall back (a dev message) when none is in the HUD. */
 	void RegisterPresenter() { ++PresenterCount; }
 	void UnregisterPresenter() { PresenterCount = FMath::Max(0, PresenterCount - 1); }
