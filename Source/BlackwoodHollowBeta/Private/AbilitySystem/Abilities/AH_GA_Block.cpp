@@ -4,6 +4,9 @@
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Combat/BH_StanceComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
+#include "AbilitySystem/Abilities/AH_GA_Parry.h"
+#include "Engine/World.h"
+#include "Hints/BH_HintLibrary.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "AbilitySystemComponent.h"
@@ -11,6 +14,7 @@
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Animation/AnimMontage.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
 
 namespace AH_GA_Block_Private
 {
@@ -153,6 +157,16 @@ void UAH_GA_Block::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 		}
 	}
 
+	// Perfect block: remember when the guard went up (server clock) and watch for hits (validated in OnIncomingHit).
+	PerfectBlockAttacker.Reset();
+	if (const UWorld* World = GetWorld())
+	{
+		BlockStartTime = World->GetTimeSeconds();
+	}
+	UAbilityTask_WaitGameplayEvent* HitTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TAG_Event_Combat_Hit, nullptr, false, true);
+	HitTask->EventReceived.AddDynamic(this, &UAH_GA_Block::OnIncomingHit);
+	HitTask->ReadyForActivation();
+
 	UAbilityTask_WaitGameplayEvent* ImpactTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(this, TAG_Event_Combat_BlockImpact, nullptr, false, true);
 	ImpactTask->EventReceived.AddDynamic(this, &UAH_GA_Block::OnBlockImpact);
 	ImpactTask->ReadyForActivation();
@@ -176,6 +190,53 @@ void UAH_GA_Block::ActivateAbility(const FGameplayAbilitySpecHandle Handle, cons
 	}
 }
 
+void UAH_GA_Block::OnIncomingHit(FGameplayEventData Payload)
+{
+	// Server-authoritative: the clock, the arc and the outcome are all decided here, never on the client.
+	if (!K2_HasAuthority())
+	{
+		return;
+	}
+
+	AActor* Attacker = const_cast<AActor*>(Payload.Instigator.Get());
+	AActor* Self = GetAvatarActorFromActorInfo();
+	const UWorld* World = GetWorld();
+	if (!Attacker || Attacker == Self || !World)
+	{
+		return;
+	}
+
+	// Players only: enemy guards behave as before (no perfect block).
+	const APawn* SelfPawn = Cast<APawn>(Self);
+	if (!SelfPawn || !SelfPawn->IsPlayerControlled())
+	{
+		return;
+	}
+
+	const double Now = World->GetTimeSeconds();
+	if (Now - BlockStartTime > ParryWindow || !IsAttackInBlockArc(Attacker))
+	{
+		return; // an ordinary block (UAH_AttributeSet applies DamageReduction; the impact drains stamina)
+	}
+
+	if (UAH_GA_Parry::ExecutePerfectBlockOutcome(GetAbilitySystemComponentFromActorInfo(), Attacker, Payload))
+	{
+		PerfectBlockAttacker = Attacker;
+		PerfectBlockExpiry = Now + 0.25; // the damage effect follows the hit event within the same swing frame
+	}
+}
+
+bool UAH_GA_Block::ConsumePerfectBlock(const AActor* Attacker)
+{
+	const UWorld* World = GetWorld();
+	if (!Attacker || !World || PerfectBlockAttacker.Get() != Attacker || World->GetTimeSeconds() > PerfectBlockExpiry)
+	{
+		return false;
+	}
+	PerfectBlockAttacker.Reset();
+	return true;
+}
+
 void UAH_GA_Block::OnBlockImpact(FGameplayEventData Payload)
 {
 	using namespace AH_GA_Block_Private;
@@ -196,6 +257,15 @@ void UAH_GA_Block::OnBlockImpact(FGameplayEventData Payload)
 	if (K2_HasAuthority())
 	{
 		DrainStaminaForBlock(Payload.EventMagnitude);
+
+		// 13E: the first ordinary block a player lands teaches the perfect block (the hint also waits for the Block hint).
+		if (const APawn* BlockerPawn = Cast<APawn>(GetAvatarActorFromActorInfo()))
+		{
+			if (BlockerPawn->IsPlayerControlled())
+			{
+				UBH_HintLibrary::TriggerHintKey(BlockerPawn, TEXT("Combat.PerfectBlock"));
+			}
+		}
 	}
 
 	K2_OnBlockImpact(const_cast<AActor*>(Payload.Instigator.Get()), Payload.EventMagnitude);

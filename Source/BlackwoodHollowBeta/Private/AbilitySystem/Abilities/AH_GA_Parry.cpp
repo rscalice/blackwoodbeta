@@ -198,40 +198,120 @@ void UAH_GA_Parry::OnMontageInterrupted()
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }
 
-void UAH_GA_Parry::CalculateParryPostureDamage_Implementation(AActor* Attacker, float HitMultiplier,
+void UAH_GA_Parry::ComputePostureExchange(const UAbilitySystemComponent* ParrierASC, float HitMultiplier,
 	float& OutAttackerPostureDamage, float& OutSelfPostureCost) const
 {
 	const float Scale = bScaleWithHitMultiplier ? FMath::Max(HitMultiplier, 0.f) : 1.f;
 
 	float AttackPower = 0.f;
-	if (const UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+	if (ParrierASC)
 	{
-		AttackPower = ASC->GetNumericAttribute(UAH_AttributeSet::GetAttackPowerAttribute());
+		AttackPower = ParrierASC->GetNumericAttribute(UAH_AttributeSet::GetAttackPowerAttribute());
 	}
 
 	OutAttackerPostureDamage = AttackerPostureDamage * (1.f + AttackPower * AttackPowerPostureScale) * Scale;
 	OutSelfPostureCost = DefenderPostureCost * Scale;
 }
 
-void UAH_GA_Parry::ApplyPostureDelta(UAbilitySystemComponent* TargetASC, float PostureDamage) const
+void UAH_GA_Parry::CalculateParryPostureDamage_Implementation(AActor* Attacker, float HitMultiplier,
+	float& OutAttackerPostureDamage, float& OutSelfPostureCost) const
 {
-	if (!TargetASC || !PostureDamageEffectClass || PostureDamage <= 0.f)
+	ComputePostureExchange(GetAbilitySystemComponentFromActorInfo(), HitMultiplier, OutAttackerPostureDamage, OutSelfPostureCost);
+}
+
+void UAH_GA_Parry::ApplyPostureDelta(const UAH_GA_Parry* Tunables, UAbilitySystemComponent* SourceASC,
+	UAbilitySystemComponent* TargetASC, float PostureDamage)
+{
+	if (!Tunables || !SourceASC || !TargetASC || !Tunables->PostureDamageEffectClass || PostureDamage <= 0.f)
 	{
 		return;
 	}
 
-	UAbilitySystemComponent* SourceASC = GetAbilitySystemComponentFromActorInfo();
-	if (!SourceASC)
-	{
-		return;
-	}
-
-	FGameplayEffectSpecHandle Spec = MakeOutgoingGameplayEffectSpec(PostureDamageEffectClass, GetAbilityLevel());
+	FGameplayEffectSpecHandle Spec = SourceASC->MakeOutgoingSpec(Tunables->PostureDamageEffectClass, 1.f, SourceASC->MakeEffectContext());
 	if (Spec.IsValid())
 	{
 		Spec.Data->SetSetByCallerMagnitude(TAG_Data_PostureDamage, -PostureDamage);
 		SourceASC->ApplyGameplayEffectSpecToTarget(*Spec.Data.Get(), TargetASC);
 	}
+}
+
+void UAH_GA_Parry::ExecuteParryOutcome(const UAH_GA_Parry* Tunables, UAbilitySystemComponent* ParrierASC, AActor* Attacker,
+	const FGameplayEventData& Payload, float PostureToAttacker, float PostureToSelf)
+{
+	AActor* Self = ParrierASC ? ParrierASC->GetAvatarActor() : nullptr;
+	if (!Tunables || !Self || !Attacker)
+	{
+		return;
+	}
+
+	// Attribute changes are authoritative; the damage itself is negated by
+	// UAH_AttributeSet (State.Combat.Parrying, or a pending perfect block).
+	if (ParrierASC->IsOwnerActorAuthoritative())
+	{
+		ApplyPostureDelta(Tunables, ParrierASC, UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Attacker), PostureToAttacker);
+		ApplyPostureDelta(Tunables, ParrierASC, ParrierASC, PostureToSelf);
+
+		// Perfect parry: open the riposte window on the parrier.
+		if (Tunables->RiposteWindowEffectClass)
+		{
+			FGameplayEffectSpecHandle RiposteSpec = ParrierASC->MakeOutgoingSpec(Tunables->RiposteWindowEffectClass, 1.f, ParrierASC->MakeEffectContext());
+			if (RiposteSpec.IsValid())
+			{
+				ParrierASC->ApplyGameplayEffectSpecToSelf(*RiposteSpec.Data.Get());
+			}
+		}
+
+		// Cosmetic cue (replicated): target = parrier, the attacker travels in SourceObject / Instigator.
+		const FHitResult ParryHit = UAbilitySystemBlueprintLibrary::GetHitResultFromTargetData(Payload.TargetData, 0);
+		FGameplayCueParameters CueParams;
+		CueParams.Instigator = Attacker;
+		CueParams.EffectCauser = Attacker;
+		CueParams.SourceObject = Attacker;
+		CueParams.RawMagnitude = PostureToAttacker;
+		CueParams.Location = !ParryHit.ImpactPoint.IsZero() ? FVector(ParryHit.ImpactPoint) : Self->GetActorLocation();
+		CueParams.Normal = (Attacker->GetActorLocation() - Self->GetActorLocation()).GetSafeNormal();
+		CueParams.TargetAttachComponent = Self->GetRootComponent();
+		ParrierASC->ExecuteGameplayCue(TAG_GameplayCue_Combat_ParrySuccess, CueParams);
+	}
+
+	FGameplayEventData SuccessPayload;
+	SuccessPayload.EventTag = TAG_Event_Combat_Parry_Success;
+	SuccessPayload.Instigator = Self;       // parrier
+	SuccessPayload.Target = Attacker;       // attacker
+	SuccessPayload.EventMagnitude = PostureToAttacker;
+	SuccessPayload.TargetData = Payload.TargetData;
+
+	UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Attacker, TAG_Event_Combat_Parry_Success, SuccessPayload);
+	UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Self, TAG_Event_Combat_Parry_Success, SuccessPayload);
+}
+
+bool UAH_GA_Parry::ExecutePerfectBlockOutcome(UAbilitySystemComponent* ParrierASC, AActor* Attacker, const FGameplayEventData& Payload)
+{
+	if (!ParrierASC || !Attacker)
+	{
+		return false;
+	}
+
+	// The parry ability's CDO carries the tunables (posture values, effect classes); the player never activates it.
+	const UAH_GA_Parry* Tunables = nullptr;
+	for (const FGameplayAbilitySpec& Spec : ParrierASC->GetActivatableAbilities())
+	{
+		if (Spec.Ability && Spec.Ability->IsA<UAH_GA_Parry>())
+		{
+			Tunables = Cast<UAH_GA_Parry>(Spec.Ability);
+			break;
+		}
+	}
+	if (!Tunables)
+	{
+		return false;
+	}
+
+	float PostureToAttacker = 0.f;
+	float PostureToSelf = 0.f;
+	Tunables->ComputePostureExchange(ParrierASC, Payload.EventMagnitude, PostureToAttacker, PostureToSelf);
+	ExecuteParryOutcome(Tunables, ParrierASC, Attacker, Payload, PostureToAttacker, PostureToSelf);
+	return true;
 }
 
 void UAH_GA_Parry::OnIncomingHit(FGameplayEventData Payload)
@@ -252,48 +332,7 @@ void UAH_GA_Parry::OnIncomingHit(FGameplayEventData Payload)
 	float PostureToSelf = 0.f;
 	CalculateParryPostureDamage(Attacker, Payload.EventMagnitude, PostureToAttacker, PostureToSelf);
 
-	// Attribute changes are authoritative; the damage itself is negated by
-	// UAH_AttributeSet while State.Combat.Parrying is on us.
-	if (K2_HasAuthority())
-	{
-		ApplyPostureDelta(UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Attacker), PostureToAttacker);
-		ApplyPostureDelta(GetAbilitySystemComponentFromActorInfo(), PostureToSelf);
-
-		if (UAbilitySystemComponent* SelfASC = GetAbilitySystemComponentFromActorInfo())
-		{
-			// Perfect parry: open the riposte window on the parrier.
-			if (RiposteWindowEffectClass)
-			{
-				FGameplayEffectSpecHandle RiposteSpec = MakeOutgoingGameplayEffectSpec(RiposteWindowEffectClass, GetAbilityLevel());
-				if (RiposteSpec.IsValid())
-				{
-					SelfASC->ApplyGameplayEffectSpecToSelf(*RiposteSpec.Data.Get());
-				}
-			}
-
-			// Cosmetic cue (replicated): target = parrier, the attacker travels in SourceObject / Instigator.
-			const FHitResult ParryHit = UAbilitySystemBlueprintLibrary::GetHitResultFromTargetData(Payload.TargetData, 0);
-			FGameplayCueParameters CueParams;
-			CueParams.Instigator = Attacker;
-			CueParams.EffectCauser = Attacker;
-			CueParams.SourceObject = Attacker;
-			CueParams.RawMagnitude = PostureToAttacker;
-			CueParams.Location = !ParryHit.ImpactPoint.IsZero() ? FVector(ParryHit.ImpactPoint) : Self->GetActorLocation();
-			CueParams.Normal = (Attacker->GetActorLocation() - Self->GetActorLocation()).GetSafeNormal();
-			CueParams.TargetAttachComponent = Self->GetRootComponent();
-			SelfASC->ExecuteGameplayCue(TAG_GameplayCue_Combat_ParrySuccess, CueParams);
-		}
-	}
-
-	FGameplayEventData SuccessPayload;
-	SuccessPayload.EventTag = TAG_Event_Combat_Parry_Success;
-	SuccessPayload.Instigator = Self;       // parrier
-	SuccessPayload.Target = Attacker;       // attacker
-	SuccessPayload.EventMagnitude = PostureToAttacker;
-	SuccessPayload.TargetData = Payload.TargetData;
-
-	UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Attacker, TAG_Event_Combat_Parry_Success, SuccessPayload);
-	UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(Self, TAG_Event_Combat_Parry_Success, SuccessPayload);
+	ExecuteParryOutcome(this, GetAbilitySystemComponentFromActorInfo(), Attacker, Payload, PostureToAttacker, PostureToSelf);
 
 	K2_OnParrySuccess(Attacker, PostureToAttacker, PostureToSelf);
 

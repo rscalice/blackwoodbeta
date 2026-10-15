@@ -11,6 +11,10 @@
 //     posture, the parrier pays a small posture cost, and
 //     Event.Combat.Parry.Success is sent to both sides.
 //
+// The player no longer activates this ability by input: a block raised within UAH_GA_Block::ParryWindow
+// of the hit is a perfect block and reuses the outcome below (ExecutePerfectBlockOutcome). Enemy AI still
+// activates it through UBH_CombatFunctionLibrary::HandleParryInput.
+//
 // Activating a parry cancels any running Ability.Combat.MeleeAttack, and
 // melee attacks cannot start while it is active.
 
@@ -105,6 +109,21 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Parry")
 	bool IsParryWindowActive() const { return bParryWindowActive; }
 
+	/**
+	 * Perfect block (2026-10-15): the player has no parry key. UAH_GA_Block calls this for a hit that lands
+	 * within its ParryWindow. Runs the same outcome as a timed parry (posture exchange, riposte window, the
+	 * ParrySuccess cue, Event.Combat.Parry.Success) using the tunables of the first UAH_GA_Parry granted to
+	 * ParrierASC. Authority only. Returns false if the parrier has no parry ability to read tunables from.
+	 */
+	static bool ExecutePerfectBlockOutcome(UAbilitySystemComponent* ParrierASC, AActor* Attacker, const FGameplayEventData& Payload);
+
+	/** The default posture exchange for one parried hit (the pure part of CalculateParryPostureDamage). */
+	void ComputePostureExchange(const UAbilitySystemComponent* ParrierASC, float HitMultiplier, float& OutAttackerPostureDamage, float& OutSelfPostureCost) const;
+
+	/** Shared parry outcome: posture deltas, riposte window, ParrySuccess cue (authority) and Parry.Success events (both sides). */
+	static void ExecuteParryOutcome(const UAH_GA_Parry* Tunables, UAbilitySystemComponent* ParrierASC, AActor* Attacker,
+		const FGameplayEventData& Payload, float PostureToAttacker, float PostureToSelf);
+
 protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Parry", meta = (DisplayName = "On Parry Window Opened"))
 	void K2_OnParryWindowOpened();
@@ -134,7 +153,7 @@ private:
 	void CloseParryWindow();
 	void FinishParry();
 
-	void ApplyPostureDelta(UAbilitySystemComponent* TargetASC, float PostureDamage) const;
+	static void ApplyPostureDelta(const UAH_GA_Parry* Tunables, UAbilitySystemComponent* SourceASC, UAbilitySystemComponent* TargetASC, float PostureDamage);
 
 	/** Montage for the avatar's current stance (StanceParryMontagesByTag), falling back to ParryMontage. May be null. */
 	UAnimMontage* ResolveParryMontage() const;

@@ -228,6 +228,21 @@ bool UAH_AttributeSet::PreGameplayEffectExecute(FGameplayEffectModCallbackData& 
 		}
 	}
 
+	// -- Perfect block -------------------------------------------------------
+	// UAH_GA_Block decided on the hit event (server clock, arc) that this hit landed inside its ParryWindow and ran
+	// the parry outcome; the damage is thrown out here, like a timed parry.
+	if (Data.EvaluatedData.Attribute == GetIncomingDamageAttribute()
+		&& Data.Target.HasMatchingGameplayTag(FBH_GameplayTags::Get().State_Combat_Blocking))
+	{
+		if (UAH_GA_Block* PerfectBlock = UAH_GA_Block::FindActiveBlock(&Data.Target))
+		{
+			if (PerfectBlock->ConsumePerfectBlock(Data.EffectSpec.GetContext().GetOriginalInstigator()))
+			{
+				return false;
+			}
+		}
+	}
+
 	// -- Block mitigation ---------------------------------------------------
 	// While UAH_GA_Block is active (State.Combat.Blocking) and the attacker is
 	// inside its frontal arc, cut the damage and convert part of it into

@@ -83,6 +83,18 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block", meta = (ClampMin = "0.0", ClampMax = "360.0"))
 	float BlockAngleDegrees = 120.f;
 
+	/**
+	 * Perfect block (the old parry, decided by Robert 2026-10-15): a hit that lands within this many seconds of the
+	 * guard going up, from inside the block arc, gets the parry outcome (UAH_GA_Parry::ExecutePerfectBlockOutcome)
+	 * instead of the normal block. Holding the guard longer is an ordinary block. Measured on the server from
+	 * the moment this ability activates there. Tuned in claude/balance.md.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Block|PerfectBlock", meta = (ClampMin = "0.0"))
+	float ParryWindow = 0.2f;
+
+	/** Server only: true (once) if the pending melee hit from Attacker was resolved as a perfect block. Read by UAH_AttributeSet to negate the damage. */
+	bool ConsumePerfectBlock(const AActor* Attacker);
+
 	/** True if an attack from Attacker's position falls inside this block's arc. */
 	UFUNCTION(BlueprintPure, Category = "Block")
 	bool IsAttackInBlockArc(const AActor* Attacker) const;
@@ -98,6 +110,14 @@ protected:
 private:
 	UFUNCTION() void OnMontageInterrupted();
 	UFUNCTION() void OnBlockImpact(FGameplayEventData Payload);
+	UFUNCTION() void OnIncomingHit(FGameplayEventData Payload);
+
+	/** Server world time (seconds) when this guard went up. */
+	double BlockStartTime = 0.0;
+
+	/** The attacker whose hit was just resolved as a perfect block, until its damage is evaluated (or PerfectBlockExpiry). */
+	TWeakObjectPtr<const AActor> PerfectBlockAttacker;
+	double PerfectBlockExpiry = 0.0;
 
 	/** Block impact: spend stamina (PostureCost * BlockStaminaScale); on empty, break posture and end the block. */
 	void DrainStaminaForBlock(float PostureCost);
