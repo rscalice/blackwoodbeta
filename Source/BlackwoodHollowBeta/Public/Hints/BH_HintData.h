@@ -156,6 +156,18 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Display", meta = (ClampMin = "0.0", ForceUnits = "s"))
 	float BossIntroSeconds = 4.f;
 
+	/** Hint banner: fade-in time. */
+	UPROPERTY(Config, EditAnywhere, Category = "Banner", meta = (ClampMin = "0.0", ForceUnits = "s"))
+	float BannerFadeInSeconds = 0.3f;
+
+	/** Hint banner: fade-out time. */
+	UPROPERTY(Config, EditAnywhere, Category = "Banner", meta = (ClampMin = "0.0", ForceUnits = "s"))
+	float BannerFadeOutSeconds = 0.5f;
+
+	/** Hint banner: it rises this many pixels while fading in. */
+	UPROPERTY(Config, EditAnywhere, Category = "Banner", meta = (ClampMin = "0.0", ForceUnits = "px"))
+	float BannerRisePixels = 8.f;
+
 	/** How often the server checks tag, attribute and partner triggers. */
 	UPROPERTY(Config, EditAnywhere, Category = "Server", meta = (ClampMin = "0.05", ForceUnits = "s"))
 	float ServerPollInterval = 0.2f;

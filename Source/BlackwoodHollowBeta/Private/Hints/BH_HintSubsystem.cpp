@@ -1,6 +1,7 @@
 ﻿// Blackwood Hollow - per-local-player hint presenter and Field Notes data (Phase 13E, implementation)
 
 #include "Hints/BH_HintSubsystem.h"
+#include "Hints/BH_HintBannerWidget.h"
 #include "Hints/BH_HintData.h"
 #include "Hints/BH_HintLibrary.h"
 #include "Engine/LocalPlayer.h"
@@ -14,12 +15,6 @@
 #include "UI/BH_UILayoutSubsystem.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogBHHintSubsystem, Log, All);
-
-namespace
-{
-	/** A hint that was handed to the queue but never started (a death cleared the queue) is given up after this long and asked for again. */
-	constexpr double InFlightTimeoutSeconds = 20.0;
-}
 
 UBH_HintSubsystem* UBH_HintSubsystem::ForController(const APlayerController* PC)
 {
@@ -40,17 +35,40 @@ void UBH_HintSubsystem::Deinitialize()
 {
 	FTSTicker::GetCoreTicker().RemoveTicker(TickHandle);
 	TickHandle.Reset();
-	if (bBoundNotifications)
+	if (UBH_HintBannerWidget* Current = Banner.Get())
 	{
-		if (UBH_NotificationSubsystem* Notifications = GetNotifications())
-		{
-			Notifications->OnNotificationShown.RemoveDynamic(this, &UBH_HintSubsystem::HandleNotificationShown);
-			Notifications->OnNotificationFinished.RemoveDynamic(this, &UBH_HintSubsystem::HandleNotificationFinished);
-		}
-		bBoundNotifications = false;
+		Current->OnFinished.Remove(BannerFinishedHandle);
 	}
+	BannerFinishedHandle.Reset();
+	Banner.Reset();
 	Waiting.Reset();
 	Super::Deinitialize();
+}
+
+void UBH_HintSubsystem::RegisterBanner(UBH_HintBannerWidget* NewBanner)
+{
+	if (!NewBanner || Banner.Get() == NewBanner)
+	{
+		return;
+	}
+	if (UBH_HintBannerWidget* Old = Banner.Get())
+	{
+		Old->OnFinished.Remove(BannerFinishedHandle);
+	}
+	Banner = NewBanner;
+	BannerFinishedHandle = NewBanner->OnFinished.AddUObject(this, &UBH_HintSubsystem::HandleBannerFinished);
+	InFlightId = NAME_None;
+}
+
+void UBH_HintSubsystem::UnregisterBanner(UBH_HintBannerWidget* OldBanner)
+{
+	if (OldBanner && Banner.Get() == OldBanner)
+	{
+		OldBanner->OnFinished.Remove(BannerFinishedHandle);
+		BannerFinishedHandle.Reset();
+		Banner.Reset();
+		InFlightId = NAME_None;
+	}
 }
 
 APlayerController* UBH_HintSubsystem::GetPC() const
@@ -210,8 +228,14 @@ bool UBH_HintSubsystem::IsQuietMoment() const
 	{
 		return false;
 	}
+	const UBH_HintBannerWidget* Presenter = Banner.Get();
+	if (!Presenter || Presenter->IsShowing())
+	{
+		return false;
+	}
+	// A toast (loot, XP, quest) on screen counts as a busy moment, so the two never compete for attention.
 	const UBH_NotificationSubsystem* Notifications = GetNotifications();
-	if (!Notifications || !Notifications->HasPresenter() || Notifications->IsSuppressed() || Notifications->IsShowing())
+	if (Notifications && (Notifications->IsSuppressed() || Notifications->IsShowing()))
 	{
 		return false;
 	}
@@ -236,25 +260,8 @@ bool UBH_HintSubsystem::Tick(float DeltaTime)
 {
 	Clock += DeltaTime;
 
-	if (!bBoundNotifications)
-	{
-		if (UBH_NotificationSubsystem* Notifications = GetNotifications())
-		{
-			Notifications->OnNotificationShown.AddDynamic(this, &UBH_HintSubsystem::HandleNotificationShown);
-			Notifications->OnNotificationFinished.AddDynamic(this, &UBH_HintSubsystem::HandleNotificationFinished);
-			bBoundNotifications = true;
-		}
-	}
-
 	if (!InFlightId.IsNone())
 	{
-		if (!bInFlightShown && Clock - InFlightSince > InFlightTimeoutSeconds)
-		{
-			// The queue dropped it (a death clears the queue). Ask again.
-			const FName Lost = InFlightId;
-			InFlightId = NAME_None;
-			RequestHint(Lost);
-		}
 		return true;
 	}
 
@@ -294,44 +301,25 @@ bool UBH_HintSubsystem::Tick(float DeltaTime)
 
 void UBH_HintSubsystem::ShowHint(const UBH_HintData& Hint)
 {
-	UBH_NotificationSubsystem* Notifications = GetNotifications();
-	if (!Notifications)
+	UBH_HintBannerWidget* Presenter = Banner.Get();
+	if (!Presenter)
 	{
 		return;
 	}
-	FBH_Notification Notification;
-	Notification.Kind = EBH_NotificationKind::Hint;
-	Notification.Title = Hint.Title;
-	Notification.Body = Hint.Text;
-	Notification.HoldSeconds = Hint.HoldSeconds > 0.f ? Hint.HoldSeconds : UBH_HintSettings::Get()->DefaultHoldSeconds;
-	Notification.SourceId = Hint.HintId;
-	Notification.GlyphActions = Hint.GlyphActions;
-
+	const float Hold = Hint.HoldSeconds > 0.f ? Hint.HoldSeconds : UBH_HintSettings::Get()->DefaultHoldSeconds;
+	if (!Presenter->ShowHint(Hint, Hold))
+	{
+		return;
+	}
 	InFlightId = Hint.HintId;
-	InFlightSince = Clock;
-	bInFlightShown = false;
-	Notifications->Enqueue(Notification);
+	MarkSeen(Hint.HintId);
+	OnHintShown.Broadcast(const_cast<UBH_HintData*>(&Hint));
 }
 
-void UBH_HintSubsystem::HandleNotificationShown(const FBH_Notification& Notification)
+void UBH_HintSubsystem::HandleBannerFinished()
 {
-	if (Notification.Kind != EBH_NotificationKind::Hint || Notification.SourceId.IsNone() || Notification.SourceId != InFlightId)
-	{
-		return;
-	}
-	bInFlightShown = true;
-	MarkSeen(InFlightId);
-	OnHintShown.Broadcast(UBH_HintLibrary::FindHint(InFlightId));
-}
-
-void UBH_HintSubsystem::HandleNotificationFinished()
-{
-	if (!InFlightId.IsNone() && bInFlightShown)
-	{
-		InFlightId = NAME_None;
-		bInFlightShown = false;
-		NotBefore = Clock + UBH_HintSettings::Get()->MinGapSeconds;
-	}
+	InFlightId = NAME_None;
+	NotBefore = Clock + UBH_HintSettings::Get()->MinGapSeconds;
 }
 
 // -- Console (non-shipping use; harmless in shipping) ----------------------------------------------------------------------
