@@ -62,6 +62,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sanctuary|Effects", meta = (ClampMin = "0.05", ForceUnits = "s"))
 	float UpdateInterval = 0.2f;
 
+	/**
+	 * Source type for overlap dedupe (#15, 13F-1). Sanctuaries of the SAME type never stack: a pawn inside several only receives the
+	 * strongest one (highest BlightReductionFraction, then PostureRegenMultiplier, then BlightDrainPerSecond, then the longer remaining
+	 * life, then the lower object id). A different type would still stack.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sanctuary|Effects")
+	FName SourceType = FName(TEXT("Incense"));
+
 	/** Ring colour: warm gold (the Incense look). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sanctuary|Visual")
 	FLinearColor RingColor = FLinearColor(1.f, 0.62f, 0.12f, 1.f);
@@ -83,6 +91,12 @@ private:
 
 	/** Server: membership refresh + Blight drain. */
 	void UpdateMembers();
+
+	/** Server: true if this sanctuary wins the overlap dedupe against Other (same SourceType; see SourceType). Total order, so exactly one of two overlapping sanctuaries wins. */
+	bool IsStrongerThan(const ABH_WardenSanctuary& Other) const;
+
+	/** Server: true if Pawn's capsule touches this sanctuary's sphere (distance test; mirrors the membership overlap). */
+	bool CoversPawn(const APawn* Pawn) const;
 	void AddMember(APawn* Pawn);
 	void RemoveMember(APawn* Pawn);
 	void RemoveAllMembers();

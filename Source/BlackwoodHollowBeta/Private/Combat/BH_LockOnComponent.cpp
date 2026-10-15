@@ -820,6 +820,8 @@ AActor* UBH_LockOnComponent::RefreshSoftTarget()
 bool UBH_LockOnComponent::FaceMeleeTarget(bool bAllowHard, bool bAllowSoft, bool bNotifyServer, bool& bOutUsedSoftTarget)
 {
 	bOutUsedSoftTarget = false;
+	LastMeleeTarget = nullptr; // 13F-1: only set again below once we actually turn toward a target
+	LastMeleeTurnDeg = 0.f;
 	APlayerController* PC = GetPC();
 	APawn* Pawn = PC ? PC->GetPawn() : nullptr;
 	if (!Pawn)
@@ -855,6 +857,8 @@ bool UBH_LockOnComponent::FaceMeleeTarget(bool bAllowHard, bool bAllowSoft, bool
 	{
 		return false; // never spin the player around to someone behind them
 	}
+	LastMeleeTarget = Target;
+	LastMeleeTurnDeg = FMath::Abs(Delta);
 	NewRot.Yaw = ToTarget.Rotation().Yaw;
 	Pawn->SetActorRotation(NewRot);
 	if (!bHard)
@@ -865,12 +869,12 @@ bool UBH_LockOnComponent::FaceMeleeTarget(bool bAllowHard, bool bAllowSoft, bool
 
 	if (bNotifyServer && IsLocalPC() && GetOwner() && !GetOwner()->HasAuthority())
 	{
-		Server_ApplyMeleeFacing(Target);
+		Server_ApplyMeleeFacing(Target, LastMeleeTurnDeg);
 	}
 	return true;
 }
 
-void UBH_LockOnComponent::Server_ApplyMeleeFacing_Implementation(AActor* Target)
+void UBH_LockOnComponent::Server_ApplyMeleeFacing_Implementation(AActor* Target, float ClientTurnDeg)
 {
 	APlayerController* PC = GetPC();
 	APawn* Pawn = PC ? PC->GetPawn() : nullptr;
@@ -884,15 +888,22 @@ void UBH_LockOnComponent::Server_ApplyMeleeFacing_Implementation(AActor* Target)
 		return;
 	}
 	const FVector ToTarget = (Target->GetActorLocation() - Pawn->GetActorLocation()).GetSafeNormal2D();
+	LastMeleeTarget = nullptr;
+	LastMeleeTurnDeg = 0.f;
 	if (!ToTarget.IsNearlyZero())
 	{
 		FRotator NewRot = Pawn->GetActorRotation();
+		LastMeleeTarget = Target; // 13F-1: validated above (acquirable, inside the soft range unless it is the hard target)
+		// The client already turned its pawn before sending this, so the server's own yaw delta is ~0; take the turn the client reports
+		// (clamped) so the lunge assist's angle cap judges the same turn on both machines.
+		LastMeleeTurnDeg = FMath::Clamp(FMath::Abs(ClientTurnDeg), 0.f, 180.f);
 		NewRot.Yaw = ToTarget.Rotation().Yaw;
 		Pawn->SetActorRotation(NewRot);
 		if (Target != LockedTarget)
 		{
 			BeginMeleeFacingOverride(NewRot.Yaw);
 		}
+		OnMeleeTargetValidated.Broadcast(Target);
 	}
 }
 

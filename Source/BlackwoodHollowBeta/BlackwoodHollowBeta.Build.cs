@@ -35,6 +35,7 @@ public class BlackwoodHollowBeta : ModuleRules
 			"ProceduralMeshComponent", // weapon swing trails (UBH_WeaponTrailComponent)
 			"DeveloperSettings", // Phase 9: UBH_RPGSettings (Project Settings > Game > Blackwood Hollow RPG)
 			"PhysicsCore",       // Phase 10A: EPhysicalSurface / UPhysicalMaterial::DetermineSurfaceType (footstep surfaces)
+			"MotionWarping",     // Phase 13F-1: lunge assist (UMotionWarpingComponent warp target set by UAH_GA_MeleeAttack_Base)
 			"Narrative",         // Phase 11P: UNarrativePartyComponent / UNarrativeComponent (UBH_PartyComponent on ABH_GameState)
 		});
 

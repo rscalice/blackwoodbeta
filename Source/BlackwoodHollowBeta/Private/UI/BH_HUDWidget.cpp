@@ -57,6 +57,7 @@ void UBH_HUDWidget::InitializeHUD(UAbilitySystemComponent* ASC)
 		.AddUObject(this, &UBH_HUDWidget::OnPostureBrokenTagChanged);
 
 	// Push the current state once so the widget is right before the first change.
+	bStaminaStateKnown = false; // this first push (respawn, rebind) sets the empty state silently
 	PushHealth();
 	PushStamina();
 	PushPosture();
@@ -150,6 +151,34 @@ void UBH_HUDWidget::PushStamina()
 	const float Percent = MaxStamina > 0.f ? FMath::Clamp(Stamina / MaxStamina, 0.f, 1.f) : 0.f;
 	HandleStaminaChanged(Stamina, MaxStamina);
 	K2_OnStaminaUpdated(Stamina, MaxStamina, Percent);
+	UpdateStaminaEmptyState(Stamina, MaxStamina);
+}
+
+void UBH_HUDWidget::UpdateStaminaEmptyState(float Stamina, float MaxStamina)
+{
+	if (MaxStamina <= 0.f)
+	{
+		return;
+	}
+	if (!bStaminaStateKnown)
+	{
+		bStaminaStateKnown = true;
+		bStaminaEmpty = Stamina <= 0.f;
+		return;
+	}
+	if (!bStaminaEmpty)
+	{
+		if (Stamina <= 0.f)
+		{
+			bStaminaEmpty = true;
+			OnStaminaEmpty.Broadcast();
+		}
+	}
+	else if (Stamina >= MaxStamina * StaminaRecoveredFraction)
+	{
+		bStaminaEmpty = false;
+		OnStaminaRecovered.Broadcast();
+	}
 }
 
 void UBH_HUDWidget::PushPosture()

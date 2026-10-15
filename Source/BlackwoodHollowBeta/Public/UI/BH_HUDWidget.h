@@ -40,6 +40,9 @@ class UBH_LevelUpBannerWidget;
 class UBH_NotificationQueueWidget;
 class UBH_QuestTrackerWidget;
 
+/** Local-only stamina state events (13F-1): the player's Stamina hit zero from above / climbed back past StaminaRecoveredFraction. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnStaminaEmptyState);
+
 /** When a quiet-HUD element is shown outside combat. */
 UENUM(BlueprintType)
 enum class EBH_QuietRule : uint8
@@ -101,6 +104,27 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
 	float GetMaxPosture() const;
+
+	// -- Stamina empty (13F-1; local, cosmetic) ---------------------------------------------------------------------------------
+	// Fires on the machine that owns this HUD, from the replicated Stamina value, so it behaves the same on the host and a client.
+	// Every UBH_HUDWidget bound to the ASC fires it (WBP_HUD_Main and the nested WBP_VitalsCluster), so bind it where you play the exhale / flash the bar.
+	// The first value after InitializeHUD (respawn) only sets the state; it never fires.
+
+	/** Stamina went from above zero to zero (a short exhale + bar flash). */
+	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|HUD|Stamina")
+	FBH_OnStaminaEmptyState OnStaminaEmpty;
+
+	/** After OnStaminaEmpty, Stamina rose back to at least StaminaRecoveredFraction of MaxStamina. */
+	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|HUD|Stamina")
+	FBH_OnStaminaEmptyState OnStaminaRecovered;
+
+	/** Fraction of MaxStamina Stamina must reach again after being empty before OnStaminaRecovered fires (regen passes 0 immediately, so a bare "above 0" would flicker). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|HUD|Stamina", meta = (ClampMin = "0.01", ClampMax = "1.0"))
+	float StaminaRecoveredFraction = 0.25f;
+
+	/** True between OnStaminaEmpty and OnStaminaRecovered. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD|Stamina")
+	bool IsStaminaEmpty() const { return bStaminaEmpty; }
 
 	/** True while State.Combat.PostureBroken is on the ASC (or Posture has hit 0). */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
@@ -281,6 +305,7 @@ private:
 	void OnPostureBrokenTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void PushHealth();
 	void PushStamina();
+	void UpdateStaminaEmptyState(float Stamina, float MaxStamina);
 	void PushPosture();
 	void RefreshPostureBroken();
 	void PollStance();
@@ -301,6 +326,8 @@ private:
 	/** Set on widgets initialised by a parent HUD widget; only the root polls stance. */
 	bool bIsNestedHUD = false;
 	bool bPostureBroken = false;
+	bool bStaminaEmpty = false;
+	bool bStaminaStateKnown = false; // false until the first PushStamina after InitializeHUD (that push never fires an event)
 	FString CurrentStanceName;
 	float StancePollTimer = 0.f;
 

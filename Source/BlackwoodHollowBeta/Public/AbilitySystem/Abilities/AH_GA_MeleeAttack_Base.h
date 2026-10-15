@@ -30,6 +30,8 @@
 class UAnimMontage;
 class UGameplayEffect;
 class UAbilityTask_PlayMontageAndWait;
+class UBH_LockOnComponent;
+class UMotionWarpingComponent;
 
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API UAH_GA_MeleeAttack_Base : public UAH_GA_StaminaBase
@@ -61,6 +63,40 @@ public:
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Targeting")
 	bool bFaceSoftTargetOnActivate = true;
+
+	// -- Lunge assist (13F-1, #12) -------------------------------------------------------------
+	// Lunges that land: after the facing above picks the hard (locked) or soft target, the combo step's root-motion lunge is corrected
+	// toward that target with Motion Warping. This code only SETS the warp target (name LungeWarpTargetName) on the owning client AND on
+	// the server, each from the same lock-on target (the server mirrors the hard lock and validates the client's soft target in
+	// Server_ApplyMeleeFacing), so both predict the same warp and CMC reconciles any residue. The warp itself happens inside a
+	// Motion Warping notify state (Skew Warp, warp target = LungeWarpTargetName) that must sit on the lunge part of each combo section
+	// of the montage: montages without one are unaffected, which is how this starts with the Sword combo only (AM_Sword_MM_Combo_A).
+	// The correction is capped: the warped travel is clamped to LungeExpectedReach +/- LungeMaxCorrection, and nothing is warped
+	// (the target is removed) when facing the target needed a turn above LungeMaxAngleDegrees.
+
+	/** Master switch for the lunge assist on this ability. Harmless on montages without a warp window. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Lunge")
+	bool bEnableLungeAssist = true;
+
+	/** Max correction (cm) the warp may add to or take from the combo step's unwarped root-motion travel. 150 = 1.5 m (Robert, 2026-10-15). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Lunge", meta = (ClampMin = "0.0", ForceUnits = "cm"))
+	float LungeMaxCorrection = 150.f;
+
+	/** Max turn (degrees) toward the target the assist will correct for; a bigger turn gets no warp. 45 (Robert, 2026-10-15). Applies to hard and soft targets alike. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Lunge", meta = (ClampMin = "0.0", ClampMax = "180.0", ForceUnits = "deg"))
+	float LungeMaxAngleDegrees = 45.f;
+
+	/** Horizontal travel (cm) of one combo step's lunge WITHOUT warping (the clip's root motion). Estimate: measure it and set it per ability Blueprint. Used by every step. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Lunge", meta = (ClampMin = "0.0", ForceUnits = "cm"))
+	float LungeExpectedReach = 120.f;
+
+	/** Gap (cm) left between the two capsules when the warp stops in front of the target, so the lunge never ends inside it. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Lunge", meta = (ClampMin = "0.0", ForceUnits = "cm"))
+	float LungeStopGap = 20.f;
+
+	/** Name of the Motion Warping target this ability writes; the montage's Motion Warping notify state must use the same name. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Melee|Lunge")
+	FName LungeWarpTargetName = FName(TEXT("BH_Lunge"));
 
 	// -- Montage / combo ---------------------------------------------------------
 
@@ -237,6 +273,18 @@ private:
 
 	/** Hard target (bFaceLockedTargetOnActivate) or soft target (bFaceSoftTargetOnActivate) facing; see UBH_LockOnComponent::FaceMeleeTarget. */
 	void FaceMeleeTarget(bool bNotifyServer);
+
+	// Lunge assist (see the Melee|Lunge properties)
+	UBH_LockOnComponent* FindLockOn() const;
+	UMotionWarpingComponent* EnsureMotionWarping() const;
+	/** Sets (or removes, when out of the angle cap or without a target) the Motion Warping target for the step that is starting. TurnDeg = the facing turn. */
+	void ApplyLungeWarp(AActor* Target, float TurnDeg);
+	void ClearLungeWarp() const;
+	/** Server: a remote client's combo-step target was validated (UBH_LockOnComponent::OnMeleeTargetValidated). */
+	void OnServerMeleeTargetValidated(AActor* Target);
+
+	FDelegateHandle LungeTargetHandle;
+	TWeakObjectPtr<UBH_LockOnComponent> BoundLockOn;
 
 	/** Jumps the montage to the next combo step. Returns false at the end of a non-looping combo. */
 	bool AdvanceCombo();

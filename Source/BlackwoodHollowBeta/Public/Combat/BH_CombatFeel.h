@@ -295,6 +295,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Rumble")
 	FBH_RumbleSpec PostureBreakRumble;
 
+	// -- Low health (13F-1) ------------------------------------------------------------
+
+	/**
+	 * Health fraction (0..1) at or below which the player counts as low on health: the heartbeat MetaSound and the desaturated edge
+	 * vignette (13F-2..4) start here. 0.30 = 30% (Robert, 2026-10-15). Read it through UBH_CombatFeelLibrary::GetLowHealthThreshold / IsLowHealth.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "LowHealth", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float LowHealthThreshold = 0.30f;
+
 	// -- Voice ----------------------------------------------------------------
 
 	/** Voice set for player-controlled pawns (enemies use UBH_CombatIdentityComponent::VoiceSet). */
@@ -345,6 +354,14 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
 	static EBH_ImpactTier Escalate(EBH_ImpactTier Tier);
+
+	/** The low-health threshold as a health fraction (DA_CombatFeel LowHealthThreshold, 0.30 by default). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
+	static float GetLowHealthThreshold();
+
+	/** True when Health is above zero and at or below MaxHealth * the low-health threshold (a dead or unset player is not "low"). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
+	static bool IsLowHealth(float Health, float MaxHealth);
 
 	/**
 	 * Hit-stop on Instigator + Victim (every machine), camera shake for the LOCAL player only (when they are instigator or victim,

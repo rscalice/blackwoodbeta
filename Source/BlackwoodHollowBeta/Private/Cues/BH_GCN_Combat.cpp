@@ -2,6 +2,7 @@
 
 #include "Cues/BH_GCN_Combat.h"
 #include "Cues/BH_CueUtils.h"
+#include "Combat/BH_HitFeedback.h"
 #include "UI/BH_OverheadVitalsComponent.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/AH_AttributeSet.h"
@@ -110,6 +111,9 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 	}
 	UBH_CombatFeelLibrary::PlayImpactFeel(Attacker ? Attacker : Victim, Tier, Attacker, Victim, ImpactLocation, /*bEscalateForVictim*/ !bBlocked, false, /*bBlocked*/ bBlocked);
 
+	// 13F-1: the local HitFeedback event (surface, blight, outcome) for Blueprint sounds / sparks / shake / rumble; runs on every machine like this cue.
+	UBH_HitFeedbackSubsystem::Report(Attacker ? Attacker : Victim, Attacker, Victim, Tier, bBlocked ? EBH_HitOutcome::Block : EBH_HitOutcome::Hit, bFatal, ImpactLocation, Normal);
+
 	// Overhead enemy bar: a hit (blocked or not) by the LOCAL player shows the victim's bar for a few seconds (cosmetic, per machine).
 	UBH_OverheadVitalsComponent::NotifyHitByLocalPlayer(Attacker, Victim);
 
@@ -173,6 +177,10 @@ bool UBH_GCN_ParrySuccess::OnExecute_Implementation(AActor* MyTarget, const FGam
 	UBH_CombatFeelLibrary::PlayImpactFeel(Parrier ? Parrier : Attacker, EBH_ImpactTier::Heavy, Parrier, Attacker, Midpoint, false, /*bInstigatorOnlyShake*/ true, false, /*bSkipFreeze*/ true);
 	UBH_CombatFeelLibrary::ApplyTierFreeze(Attacker, UBH_CombatFeelSettings::Get()->ParryFreezeTier, 1.f, false);
 
+	// 13F-1: the local HitFeedback event. The Victim is the defender who parried (a perfect block); the attacker's blow was turned aside.
+	UBH_HitFeedbackSubsystem::Report(Parrier ? Parrier : Attacker, Attacker, Parrier, EBH_ImpactTier::Heavy, EBH_HitOutcome::PerfectBlock, false, Midpoint,
+		(Parrier && Attacker) ? (Parrier->GetActorLocation() - Attacker->GetActorLocation()).GetSafeNormal() : FVector::ZeroVector);
+
 	// Camera punch for the local parrier: strong short shake + FOV kick + rumble (no-op for everyone else).
 	if (APlayerController* LocalPC = BH_CueUtils::FindLocalControllerInvolving(Parrier, nullptr))
 	{
@@ -209,6 +217,10 @@ bool UBH_GCN_PostureBroken::OnExecute_Implementation(AActor* MyTarget, const FGa
 	AActor* Breaker = const_cast<AActor*>(Cast<AActor>(Parameters.Instigator.Get()));
 	UBH_CombatFeelLibrary::PlayImpactFeel(MyTarget, EBH_ImpactTier::Massive, Breaker, MyTarget, SpawnLocation);
 	UBH_CombatFeelLibrary::PlayVoice(MyTarget, EBH_VoiceCategory::PostureBreak);
+
+	// 13F-1: the local HitFeedback event. The Victim is the actor whose posture broke; the Attacker is whoever broke it (may be null).
+	UBH_HitFeedbackSubsystem::Report(MyTarget, Breaker, MyTarget, EBH_ImpactTier::Massive, EBH_HitOutcome::PostureBreak, false, SpawnLocation,
+		Breaker ? (MyTarget->GetActorLocation() - Breaker->GetActorLocation()).GetSafeNormal() : FVector::ZeroVector);
 
 	BH_CueUtils::PlayCueFX(MyTarget, PrimaryFX, SpawnLocation, FRotator::ZeroRotator, Attenuation);
 	BH_CueUtils::PlayCueFX(MyTarget, SecondaryFX, SpawnLocation, FRotator::ZeroRotator, Attenuation);

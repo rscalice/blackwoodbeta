@@ -329,6 +329,16 @@ EBH_ImpactTier UBH_CombatFeelLibrary::Escalate(EBH_ImpactTier Tier)
 	return static_cast<EBH_ImpactTier>(FMath::Min(static_cast<int32>(Tier) + 1, static_cast<int32>(EBH_ImpactTier::Massive)));
 }
 
+float UBH_CombatFeelLibrary::GetLowHealthThreshold()
+{
+	return FMath::Clamp(UBH_CombatFeelSettings::Get()->LowHealthThreshold, 0.f, 1.f);
+}
+
+bool UBH_CombatFeelLibrary::IsLowHealth(float Health, float MaxHealth)
+{
+	return MaxHealth > 0.f && Health > 0.f && Health <= MaxHealth * GetLowHealthThreshold();
+}
+
 void UBH_CombatFeelLibrary::ApplyTierFreeze(AActor* Actor, EBH_ImpactTier Tier, float Factor, bool bBlocked)
 {
 	const UBH_CombatFeelSettings* Settings = UBH_CombatFeelSettings::Get();
