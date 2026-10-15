@@ -164,6 +164,10 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Banner", meta = (ClampMin = "0.0", ForceUnits = "s"))
 	float BannerFadeOutSeconds = 0.5f;
 
+	/** Objective swap: the objective tracker fades out this long before the hint fades in, and back in this long after the hint is gone. */
+	UPROPERTY(Config, EditAnywhere, Category = "Banner", meta = (ClampMin = "0.0", ForceUnits = "s"))
+	float TrackerSwapSeconds = 0.2f;
+
 	/** Hint banner: it rises this many pixels while fading in. */
 	UPROPERTY(Config, EditAnywhere, Category = "Banner", meta = (ClampMin = "0.0", ForceUnits = "px"))
 	float BannerRisePixels = 8.f;

@@ -3,8 +3,8 @@
 //
 // Local to each player (nothing here replicates). The server tells this machine WHICH hint to show (UBH_PlayerHintComponent); this
 // subsystem decides WHEN: a hint waits for its delay, its prerequisites, a quiet moment (no boss intro, no open menu, the player alive,
-// the gap since the last hint), then is presented by the local UBH_HintBannerWidget (WBP_HintBanner, lower-middle of the HUD; the 13C
-// toast queue stays right-side for loot, XP and quests). A hint counts as seen the moment its banner starts to show, and the seen ids
+// the gap since the last hint), then is presented by the local UBH_HintBannerWidget (WBP_HintBanner, in the objective-tracker slot under the compass: the
+// objective fades out while a hint shows; the 13C toast queue stays right-side for loot, XP and quests). A hint counts as seen the moment its banner starts to show, and the seen ids
 // are saved to a local SaveGame slot (one per local player).
 //
 // Field Notes (Quest Journal, built in 13G) read: GetFieldNotes() (seen hints in order), GetAllHints(), HasSeenHint(), OnFieldNotesChanged.
