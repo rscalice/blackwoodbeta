@@ -1,8 +1,10 @@
 """
 bh_comment_13e.py  (Phase 13E)
 Comment boxes for the graphs added or changed in the 13E hint pass:
-  WBP_NotificationQueue  ApplyHintLayout     backing material, glyph row visibility, per-glyph input action
-  WBP_NotificationQueue  OnNotificationShown layout reset per kind; Hint kind uses the Bone title
+  WBP_HintBanner         OnHintPresented      title, body and the one primary-key glyph (hints show in the objective slot)
+  WBP_UI_InputGlyph      ApplyGlyphFallbacks  key name as text when a glyph image row is missing
+  WBP_UI_InputGlyph      ApplyDisplayNames    readable key names (Mouse 4, Space, Shift, Ctrl, ~) and WASD for IA_Move
+  WBP_NotificationQueue  OnNotificationShown  tint the title per kind (ApplyHintLayout was removed; hints no longer use the toast queue)
 Idempotent: a box is skipped when a comment node with the same text already exists in the graph.
 Run: Tools > Execute Python Script > Content/Python/bh_comment_13e.py
 """
@@ -16,13 +18,19 @@ C_VIEW = unreal.LinearColor(0.35, 0.12, 0.40, 0.45)
 UI = "/Game/BlackwoodHollow/UI/"
 
 BOXES = {
+    UI + "WBP_HintBanner": [
+        ("EventGraph", "Hint presented (from C++): set the title and body, and show one glyph for the primary key on the active device", C_VIEW,
+         ["OnHintPresented", "SetText", "SetInputAction", "RefreshGlyph", "SetVisibility", "Length", "Glyph_0", "Txt_Title", "Txt_Body"]),
+    ],
+    UI + "Style/Glyphs/WBP_UI_InputGlyph": [
+        ("ApplyGlyphFallbacks", "When a key has no glyph image row, show its name as text instead of the missing-image box (keyboard, Xbox and PlayStation)", C_VIEW,
+         ["DoesDataTableRowExist", "SetText", "ApplyLabelVisibility", "ApplyDisplayNames"]),
+        ("ApplyDisplayNames", "Readable key names for keys without an image (Mouse 4, Space, Shift, Ctrl, ~), and WASD for the Move action", C_VIEW,
+         ["EqualExactly", "SetText", "DoesDataTableRowExist", "GetObjectName"]),
+    ],
     UI + "WBP_NotificationQueue": [
-        ("ApplyHintLayout", "Pick the toast backing for the kind (hint with glyphs, hint, or standard) and show the glyph row only when the hint has input actions", C_VIEW,
-         ["ApplyHintLayout", "BreakBHNotification", "SetBrushResourceObject", "Img_Backing", "Row_Glyphs", "Length"]),
-        ("ApplyHintLayout", "Fill up to three input glyphs from the hint's actions; collapse the unused ones", C_VIEW,
-         ["SetInputAction", "RefreshGlyph", "Glyph_0", "Glyph_1", "Glyph_2", "Get"]),
-        ("EventGraph", "Notification shown (from C++): reset the layout for every kind, then tint the title (hints use the Bone title)", C_LOGIC,
-         ["OnNotificationShown", "SwitchonEBH_NotificationKind", "ApplyHintLayout", "TintTitle"]),
+        ("EventGraph", "Notification shown (from C++): tint the title for the kind (hints use the objective-slot banner, not this queue)", C_LOGIC,
+         ["OnNotificationShown", "SwitchonEBH_NotificationKind", "TintTitle"]),
     ],
 }
 
