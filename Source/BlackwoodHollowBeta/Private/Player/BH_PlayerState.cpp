@@ -3,6 +3,7 @@
 #include "Player/BH_PlayerState.h"
 #include "Hints/BH_HintLibrary.h"
 #include "Hints/BH_PlayerHintComponent.h"
+#include "Player/BH_PlayerMenuComponent.h"
 #include "InventoryComponent.h"
 #include "AbilitySystem/Abilities/AH_GA_FragmentBase.h"
 #include "AbilitySystem/Abilities/AH_GA_OverloadBurst.h"
@@ -47,6 +48,7 @@ ABH_PlayerState::ABH_PlayerState()
 	// Phase 9: XP / level (the component is replicated by default).
 	Progression = CreateDefaultSubobject<UBH_ProgressionComponent>(TEXT("Progression"));
 	HintComponent = CreateDefaultSubobject<UBH_PlayerHintComponent>(TEXT("HintComponent"));
+	PlayerMenu = CreateDefaultSubobject<UBH_PlayerMenuComponent>(TEXT("PlayerMenu"));
 
 	// PlayerState defaults to ~1 Hz; equipment changes should reach the client quickly (we also ForceNetUpdate on changes).
 	SetNetUpdateFrequency(10.f);

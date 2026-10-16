@@ -23,6 +23,7 @@ class UNarrativeItem;
 class UAH_GA_FragmentBase;
 class UBH_ProgressionComponent;
 class UBH_PlayerHintComponent;
+class UBH_PlayerMenuComponent;
 
 /** Broadcast (server and owning client) when a fragment slot changes. SlotIndex -1 = several / unknown slots changed. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnFragmentSlotsChanged, int32, SlotIndex);
@@ -67,6 +68,10 @@ public:
 	/** Phase 9: replicated XP / level (survives pawn respawns; applies the level to each new pawn). */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Progression")
 	UBH_ProgressionComponent* GetProgression() const { return Progression; }
+
+	/** 13G-0. The Player Menu's client-callable equip / unequip / drop requests (server RPCs on this PlayerState). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|PlayerMenu")
+	UBH_PlayerMenuComponent* GetPlayerMenu() const { return PlayerMenu; }
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
@@ -240,6 +245,10 @@ protected:
 	/** 13E. Server-side first-time hint triggers for this player; sends each hint to the owning client only. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Hints")
 	TObjectPtr<UBH_PlayerHintComponent> HintComponent;
+
+	/** 13G-0. Server RPCs for the Player Menu (equip / unequip / drop). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|PlayerMenu")
+	TObjectPtr<UBH_PlayerMenuComponent> PlayerMenu;
 
 	/**
 	 * Category restriction per slot (index 0 = key 1). Default {Offensive, Vitality, BlightResist}: Overload Burst (Offensive)

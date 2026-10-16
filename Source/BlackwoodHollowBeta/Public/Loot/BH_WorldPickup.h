@@ -15,6 +15,7 @@
 #include "BH_WorldPickup.generated.h"
 
 class UNarrativeItem;
+class UStaticMesh;
 class UStaticMeshComponent;
 
 UCLASS(Blueprintable)
@@ -35,6 +36,13 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "BH|Pickup")
 	bool IsCollected() const { return bCollected; }
+
+	/**
+	 * 13G-0. SERVER only. Spawns a pickup holding Quantity of ItemClass at Location: an item dropped from the Player Menu. The mesh is the item's
+	 * Narrative PickupMesh (a small sphere when it has none), the prompt shows the item's name, and the actor is destroyed shortly after it is
+	 * collected. @return null on a client or when the spawn fails.
+	 */
+	static ABH_WorldPickup* SpawnDroppedItem(UWorld* WorldContext, TSubclassOf<UNarrativeItem> DroppedClass, int32 DroppedQuantity, const FVector& Location);
 
 	/** Fires on every machine when the pickup is collected / restored. Pickup sparkle, sound go here. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "BH|Pickup")
@@ -61,4 +69,19 @@ private:
 
 	/** 13C (#14). Server only. Quantity left after a partial pickup (inventory full); 0 = untouched. */
 	int32 RemainingQuantity = 0;
+
+	/** 13G-0. Server only. True for items dropped from the Player Menu: the actor is destroyed 2 s after it is collected. */
+	bool bDestroyWhenCollected = false;
+
+	/** 13G-0. Replicated look of a dropped item (the static mesh and prompt of a level-placed pickup are set in its Blueprint instead). */
+	UPROPERTY(ReplicatedUsing = OnRep_DropVisual)
+	TObjectPtr<UStaticMesh> DropMesh;
+
+	UPROPERTY(ReplicatedUsing = OnRep_DropVisual)
+	FText DropName;
+
+	UFUNCTION()
+	void OnRep_DropVisual();
+
+	void ApplyDropVisual();
 };

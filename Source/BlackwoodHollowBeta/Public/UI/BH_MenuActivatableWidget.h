@@ -37,6 +37,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|UI|Menu")
 	TArray<FKey> CloseKeys;
 
+	/** 13G-0. Menus that show the once-per-session "Game not paused" caption set this (WBP_PlayerMenu). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|UI|Menu")
+	bool bShowNotPausedCue = false;
+
+	/** True when this menu wants the cue AND it has not been shown yet this session. Call once from the menu's activation. */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|UI|Menu")
+	bool ConsumeNotPausedCue();
+
 	virtual TOptional<FUIInputConfig> GetDesiredInputConfig() const override;
 
 	/** Called by the close pre-processor. */

@@ -89,6 +89,18 @@ void UBH_MenuActivatableWidget::NotifyLayoutMenuState() const
 	}
 }
 
+bool UBH_MenuActivatableWidget::ConsumeNotPausedCue()
+{
+	if (!bShowNotPausedCue)
+	{
+		return false;
+	}
+	const APlayerController* PC = GetOwningPlayer();
+	const ULocalPlayer* LP = PC ? PC->GetLocalPlayer() : nullptr;
+	UBH_UILayoutSubsystem* Layout = LP ? LP->GetSubsystem<UBH_UILayoutSubsystem>() : nullptr;
+	return Layout && Layout->ConsumeFirstOpenCue();
+}
+
 TOptional<FUIInputConfig> UBH_MenuActivatableWidget::GetDesiredInputConfig() const
 {
 	return FUIInputConfig(ECommonInputMode::Menu, EMouseCaptureMode::NoCapture);

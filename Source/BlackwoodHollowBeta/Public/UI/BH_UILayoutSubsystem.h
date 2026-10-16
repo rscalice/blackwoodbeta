@@ -67,9 +67,23 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|UI|Layout")
 	int32 LayoutZOrder = 100;
 
+	/** 13G-0. Returns true exactly once per session (per local player): the first call hands out the "Game not paused" cue, every later call returns false. */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|UI|Layout")
+	bool ConsumeFirstOpenCue()
+	{
+		if (bFirstOpenCueConsumed)
+		{
+			return false;
+		}
+		bFirstOpenCueConsumed = true;
+		return true;
+	}
+
 	virtual void Deinitialize() override;
 
 private:
+	bool bFirstOpenCueConsumed = false;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UBH_PrimaryLayoutWidget> Layout;
 
