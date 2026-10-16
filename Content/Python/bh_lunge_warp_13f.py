@@ -106,7 +106,7 @@ def read_segments(montage):
         for seg in segs:
             out.append((
                 float(seg.get_editor_property("start_pos")),
-                float(seg.get_editor_property("anim_start_pos")),
+                float(seg.get_editor_property("anim_start_time")),
                 float(seg.get_editor_property("anim_play_rate")),
             ))
         return out
@@ -191,9 +191,9 @@ def main():
         m_start = seg_start + (c_start - seg_clip_start) / rate
         m_dur = (c_end - c_start) / rate
 
-        evt = unreal.AnimationLibrary.add_animation_notify_state_event(
+        # add_animation_notify_state_event returns the created AnimNotifyState itself.
+        state = unreal.AnimationLibrary.add_animation_notify_state_event(
             montage, TRACK_NAME, m_start, m_dur, unreal.AnimNotifyState_MotionWarping)
-        state = evt.get_editor_property("notify_state_class") if evt else None
         ok = configure_state(state, clip_name) if state else False
         line = "%s: lunge window clip %.3f-%.3fs -> montage %.3f +%.3fs, root travel %.1f cm%s" % (
             clip_name, c_start, c_end, m_start, m_dur, travel, "" if ok else "  (CHECK PROPERTIES BY HAND)")
