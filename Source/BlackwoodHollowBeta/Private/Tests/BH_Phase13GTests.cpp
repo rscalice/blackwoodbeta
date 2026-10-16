@@ -4,6 +4,7 @@
 //   UnrealEditor-Cmd.exe <uproject> -ExecCmds="Automation RunTests BlackwoodHollow.Phase13G; Quit" -unattended -nullrhi -nosplash
 // Pure data-contract tests on plain structs, class default objects and transient objects: no map, no world, no PIE.
 
+#include "Engine/LocalPlayer.h"
 #include "Misc/AutomationTest.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -121,7 +122,13 @@ bool FBH_P13G_DropRulesTest::RunTest(const FString& Parameters)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBH_P13G_FirstOpenCueTest, "BlackwoodHollow.Phase13G.UI.FirstOpenCueOnce", BH_P13G_FLAGS)
 bool FBH_P13G_FirstOpenCueTest::RunTest(const FString& Parameters)
 {
-	UBH_UILayoutSubsystem* Subsystem = NewObject<UBH_UILayoutSubsystem>(GetTransientPackage());
+	// The subsystem is ClassWithin ULocalPlayer, so it needs a LocalPlayer outer (a transient one is enough for this flag test).
+	ULocalPlayer* LocalPlayer = NewObject<ULocalPlayer>(GetTransientPackage());
+	if (!TestNotNull(TEXT("Transient local player"), LocalPlayer))
+	{
+		return false;
+	}
+	UBH_UILayoutSubsystem* Subsystem = NewObject<UBH_UILayoutSubsystem>(LocalPlayer);
 	if (!TestNotNull(TEXT("Transient subsystem"), Subsystem))
 	{
 		return false;
