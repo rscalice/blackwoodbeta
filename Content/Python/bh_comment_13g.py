@@ -2,8 +2,8 @@
 bh_comment_13g.py  (Phase 13G)
 Comment boxes for the Player Menu Blueprint work:
   WBP_PlayerMenu        13G-1 functions and the OnActivated / OnDeactivated chains
-  PC_BlackwoodHollow    OpenPlayerMenu (the Door parameter and the System door tag) and the two menu input events
-The 13G-2 pages (World Map, Quest Journal, System) are separate widgets; when they are built, add their graphs to BOXES.
+  PC_BlackwoodHollow    OpenPlayerMenu (the Door parameter and the OpenAtTab call) and the two menu input events
+13G-2 adds the World Map, Quest Journal and System page widgets, the list button/region row helpers, and the HUD / interact-prompt hiding.
 Defensive by design: every asset, graph and node match is optional. A missing asset or graph, or a pattern that matches
 no node, is logged as a warning and skipped; one failure never stops the rest. Every box added is logged.
 Idempotent: a box is skipped when a comment node with the same text already exists in the graph.
@@ -26,10 +26,9 @@ BOXES = {
         ("LabelTab", "Set the tab's button text from TabLabels", C_VIEW, ALL),
         ("StepTab", "Q / E (LB / RB): move to the next or previous tab and wrap at both ends", C_LOGIC, ALL),
         ("StoreLastTab", "Remember the active tab for the next open (as an index), but never the System tab", C_LOGIC, ALL),
-        ("SelectLastTab", "Open on the last-used tab (clamped to the tab count), then check whether a door asked for System", C_LOGIC, ALL),
+        ("SelectLastTab", "Open on the last-used tab (clamped to the tab count)", C_LOGIC, ALL),
         ("ApplyRequestedTab", "If RequestedTabId is set, jump to that tab and clear the request", C_LOGIC, ALL),
         ("OpenAtTab", "Open the menu on a named tab (World Map, Quest Journal, Inventory, Heart, System)", C_LOGIC, ALL),
-        ("ApplyDoorRequest", "Workaround: Esc / Start sets the System tag on the player controller; if it is there, open on System", C_LOGIC, ALL),
         ("RefreshProgress", "Update Level, the XP bar and the XP text from the progression component", C_VIEW, ALL),
         ("ShowNotPausedCue", "Show the 'Game not paused' caption and hide it after NotPausedCueSeconds", C_VIEW, ALL),
         ("HideNotPausedCue", "Hide the 'Game not paused' caption", C_VIEW, ALL),
@@ -37,11 +36,42 @@ BOXES = {
          ["OnActivated", "SetupTabs", "SelectLastTab", "ApplyRequestedTab", "RefreshProgress", "SetTimer", "ConsumeNotPausedCue", "ShowNotPausedCue"]),
         ("EventGraph", "Menu closed: remember the tab and stop the XP and cue timers", C_LOGIC,
          ["OnDeactivated", "StoreLastTab", "ClearandInvalidate", "ClearTimer", "HideNotPausedCue"]),
+        ("EventGraph", "System page Resume: close the Player Menu (the page raises OnResumeRequested)", C_LOGIC,
+         ["OnResumeRequested", "AssignOnResumeRequested", "DeactivateWidget", "GetPageSystem"]),
     ],
     "/Game/Game/PC_BlackwoodHollow": [
-        ("OpenPlayerMenu", "Open the Player Menu on the Menu layer: write the Door into the controller's tags (System = Esc / Start), then push the widget", C_LOGIC, ALL),
+        ("OpenPlayerMenu", "Open the Player Menu on the Menu layer, then ask the pushed WBP_PlayerMenu to open at the Door tab (Esc / Start = System, Tab / View = last tab)", C_LOGIC, ALL),
         ("EventGraph", "Tab / View: open the Player Menu on the last-used tab (Door = None)", C_LOGIC, ["IA_UI_OpenMenu"]),
         ("EventGraph", "Esc / Start: open the Player Menu on the System tab (Door = System)", C_LOGIC, ["IA_UI_OpenSystem"]),
+    ],
+    # 13G-2: world prompts hide behind menus (HUD tells every WBP_InteractPrompt to collapse; the prompt remembers if it wanted to show)
+    "/Game/BlackwoodHollow/UI/WBP_HUD_Main": [
+        ("SuppressWorldPrompts", "Menu open: collapse every world interact prompt; menu closed: let each one show again if it wants to", C_VIEW, ALL),
+    ],
+    "/Game/BlackwoodHollow/UI/WBP_InteractPrompt": [
+        ("SetMenuSuppressed", "Menu flag: collapse while a menu is open, restore to hit-test-invisible if the prompt wanted to be shown", C_VIEW, ALL),
+        ("ApplyPromptState", "Remember whether the prompt wants to be shown, and stay collapsed while a menu is open", C_VIEW, ALL),
+    ],
+    # 13G-2 pages
+    MENU + "WBP_UI_ListButton": [
+        ("SetLabels", "Set the title and the small sub-line of a list button", C_VIEW, ALL),
+    ],
+    MENU + "WBP_Menu_RegionRow": [
+        ("SetRegion", "Show a region row: name, level range, and state (0 locked, 1 you are here, 2 complete)", C_VIEW, ALL),
+    ],
+    MENU + "WBP_Menu_WorldMap": [
+        ("RebuildRegions", "Rebuild the region list from DT_BH_Regions: each row is locked, current or complete from the Beat tracker's current beat", C_VIEW, ALL),
+        ("RefreshObjective", "Show the active objective text under the region list", C_VIEW, ALL),
+        ("EventGraph", "Page opened: follow beat and objective changes and fill both sections once", C_LOGIC, ALL),
+    ],
+    MENU + "WBP_Menu_Journal": [
+        ("ShowNote", "Show a Field Note in the detail panel: title, body, and up to three input glyphs", C_VIEW, ALL),
+        ("RebuildNotes", "Rebuild the Field Notes list from the hint subsystem and select the first note", C_VIEW, ALL),
+        ("HandleNoteSelected", "A note button was selected: show that note", C_LOGIC, ALL),
+        ("EventGraph", "Page opened: create the button group, follow the Field Notes list, and build it once", C_LOGIC, ALL),
+    ],
+    MENU + "WBP_Menu_System": [
+        ("EventGraph", "System page: label the buttons (Settings, Leave Session, Quit are disabled until 13H) and make Resume raise OnResumeRequested", C_LOGIC, ALL),
     ],
 }
 
