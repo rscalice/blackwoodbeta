@@ -150,6 +150,34 @@ def configure_state(notify_state, name):
     return ok
 
 
+def dump_notifies(montage, label):
+    """Log every notify / notify state on the montage so a stray Motion Warping window can be found."""
+    try:
+        events = list(unreal.AnimationLibrary.get_animation_notify_events(montage))
+    except Exception as exc:  # noqa
+        log("[%s] could not list notify events (%s)" % (label, exc))
+        return
+    log("[%s] %d notify event(s) on the montage" % (label, len(events)))
+    for ev in events:
+        def prop(name):
+            try:
+                return ev.get_editor_property(name)
+            except Exception:  # noqa
+                return "?"
+        state = prop("notify_state_class")
+        extra = ""
+        if state not in (None, "?") and isinstance(state, unreal.AnimNotifyState_MotionWarping):
+            try:
+                mod = state.get_editor_property("root_motion_modifier")
+                tgt = str(mod.get_editor_property("warp_target_name")) if mod else "<no modifier>"
+            except Exception as exc:  # noqa
+                tgt = "<unreadable: %s>" % exc
+            extra = "  MOTIONWARPING target=%s" % tgt
+        log("  [%s] name=%s track=%s time=%s state=%s%s" % (
+            label, prop("notify_name"), prop("track_index"), prop("display_time"),
+            type(state).__name__ if state not in (None, "?") else state, extra))
+
+
 def main():
     montage = unreal.EditorAssetLibrary.load_asset(MONTAGE_PATH)
     if montage is None:
@@ -160,6 +188,7 @@ def main():
         return
 
     segments = read_segments(montage)
+    dump_notifies(montage, "BEFORE")
 
     # rebuild the Lunge track
     try:
@@ -208,6 +237,7 @@ def main():
         log(line)
         summary.append(line)
 
+    dump_notifies(montage, "AFTER")
     unreal.EditorAssetLibrary.save_loaded_asset(montage)
     log("Saved " + MONTAGE_PATH)
     log("Set LungeExpectedReach on the Sword combo ability from the root travel numbers above.")
