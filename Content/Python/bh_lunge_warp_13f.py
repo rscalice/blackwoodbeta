@@ -120,8 +120,10 @@ def configure_state(notify_state, name):
     try:
         modifier = unreal.new_object(unreal.RootMotionModifier_SkewWarp, outer=notify_state)
         notify_state.set_editor_property("root_motion_modifier", modifier)
+        # Re-fetch the instanced object the notify state really holds and configure THAT one.
+        modifier = notify_state.get_editor_property("root_motion_modifier")
         for prop, val in (
-            ("warp_target_name", WARP_TARGET),
+            ("warp_target_name", unreal.Name(WARP_TARGET)),
             ("warp_translation", True),
             ("warp_rotation", True),
             ("ignore_z_axis", True),
@@ -136,6 +138,12 @@ def configure_state(notify_state, name):
         except Exception as exc:  # noqa
             ok = False
             log("  %s: could not set rotation_type (%s)" % (name, exc))
+        # Read everything back so the log proves what was actually stored.
+        back = notify_state.get_editor_property("root_motion_modifier")
+        stored = str(back.get_editor_property("warp_target_name")) if back else "<no modifier>"
+        log("  %s: stored modifier=%s warp_target_name=%s" % (name, type(back).__name__ if back else None, stored))
+        if stored != WARP_TARGET:
+            ok = False
     except Exception as exc:  # noqa
         ok = False
         log("  %s: could not create Skew Warp modifier (%s)" % (name, exc))
