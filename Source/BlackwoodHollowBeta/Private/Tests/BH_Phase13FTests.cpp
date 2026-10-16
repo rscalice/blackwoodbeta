@@ -234,8 +234,11 @@ bool FBH_P13F_LungeFlagsTest::RunTest(const FString& Parameters)
 	const FProperty* AngleProp = FindFProperty<FProperty>(Cls, TEXT("LungeMaxAngleDegrees"));
 	if (TestNotNull(TEXT("LungeMaxAngleDegrees reflected"), AngleProp))
 	{
+#if WITH_EDITORONLY_DATA
+		// Property metadata only exists in editor builds; packaged targets still compile this file.
 		TestEqual(TEXT("Angle ClampMin"), AngleProp->GetMetaData(TEXT("ClampMin")), FString(TEXT("0.0")));
 		TestEqual(TEXT("Angle ClampMax"), AngleProp->GetMetaData(TEXT("ClampMax")), FString(TEXT("180.0")));
+#endif
 	}
 	return true;
 }
@@ -266,7 +269,11 @@ bool FBH_P13F_ParryWindowTest::RunTest(const FString& Parameters)
 	const FProperty* WindowProp = FindFProperty<FProperty>(UAH_GA_Block::StaticClass(), TEXT("ParryWindow"));
 	if (TestNotNull(TEXT("ParryWindow reflected"), WindowProp))
 	{
+#if WITH_EDITORONLY_DATA
 		TestEqual(TEXT("ParryWindow ClampMin"), WindowProp->GetMetaData(TEXT("ClampMin")), FString(TEXT("0.0")));
+#else
+		(void)WindowProp;
+#endif
 	}
 	return true;
 }
