@@ -7,6 +7,10 @@
 // UBH_HitFeedbackSubsystem::Report on each machine, so the event fires on the host AND on every client with no extra network traffic,
 // and it can never disagree with the hit-stop / shake the same cue already plays. Cosmetic only; nothing here changes gameplay.
 //
+// DEBUG (13F-0): CVar bh.HitFeedback.Debug 1 logs (LogBHHitFeedback) and shows on screen (2 s) every broadcast on this machine, with net mode and
+// roles. Console command bh.HitFeedback.Test [Hit|Block|PerfectBlock|PostureBreak] [Light|Medium|Heavy|Massive] [Flesh|Armour|Shell] [Blighted] [Fatal]
+// fires a fake event on the local player (attacker = victim = local pawn, both local flags true) to exercise a Blueprint listener.
+//
 // USE FROM BLUEPRINT (13F-2..4): "Get HitFeedback Subsystem" -> "Assign On Hit Feedback" (e.g. in the player controller or a feel Blueprint).
 // The payload carries everything a sound / VFX / shake graph needs:
 //   Tier ...... EBH_ImpactTier, the same tier DA_CombatFeel uses for hit-freeze (Light / Medium / Heavy / Massive). A fatal hit is at
@@ -105,6 +109,12 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "HitFeedback")
 	FBH_OnHitFeedback OnHitFeedback;
 
+	/**
+	 * Broadcasts a ready-made payload (no-op on a dedicated server). Report() ends here; so does the bh.HitFeedback.Test console command.
+	 * With CVar bh.HitFeedback.Debug 1 every call also logs a line (LogBHHitFeedback) and shows a 2 s on-screen message.
+	 */
+	void BroadcastFeedback(const FBH_HitFeedback& Feedback);
+
 	/** The subsystem of the world WorldContext lives in, or null. */
 	UFUNCTION(BlueprintPure, Category = "HitFeedback", meta = (WorldContext = "WorldContext", DisplayName = "Get HitFeedback Subsystem"))
 	static UBH_HitFeedbackSubsystem* GetHitFeedbackSubsystem(const UObject* WorldContext);
@@ -123,11 +133,17 @@ class BLACKWOODHOLLOWBETA_API UBH_HitFeedbackLibrary : public UBlueprintFunction
 	GENERATED_BODY()
 
 public:
-	/** What Actor is made of: its identity component's SurfaceType, else ABH_EnemyBase::SurfaceType, else Flesh (players). */
+	/**
+	 * What Actor is made of. An explicit (non-Flesh) ABH_EnemyBase::SurfaceType wins; otherwise the identity component's SurfaceType;
+	 * otherwise Flesh (players). So a crab stays Shell even if a Blueprint adds an identity component left at its Flesh default.
+	 */
 	UFUNCTION(BlueprintPure, Category = "HitFeedback")
 	static EBH_HitSurface GetHitSurface(const AActor* Actor);
 
-	/** True if Actor is a Blighted enemy (identity component bBlighted, else ABH_EnemyBase::bBlighted). */
+	/** The precedence rule behind GetHitSurface: the enemy-level value if it is not the Flesh default, else the identity-level value. */
+	static EBH_HitSurface ResolveSurface(EBH_HitSurface EnemyLevel, EBH_HitSurface IdentityLevel);
+
+	/** True if Actor is a Blighted enemy (ABH_EnemyBase::bBlighted or the identity component's bBlighted; either one is enough). */
 	UFUNCTION(BlueprintPure, Category = "HitFeedback")
 	static bool IsActorBlighted(const AActor* Actor);
 };

@@ -402,9 +402,17 @@ public:
 	 */
 	static UCameraShakeBase* PlayDirectionalBiasShake(APlayerController* PC, const FVector& FromDirection, float Scale);
 
-	/** Plays Spec on PC's controller (local controllers only; honours UBH_CombatFeelSettings::bEnableRumble). */
+	/** Plays Spec on PC's controller (local controllers only; honours UBH_CombatFeelSettings::bEnableRumble and the player's IsRumbleEnabled()). */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel")
 	static void PlayRumble(APlayerController* PC, const FBH_RumbleSpec& Spec);
+
+	/** The player's rumble setting (CVar bh.Rumble.Enabled, default on). Every native rumble and PlayRumble check it; a Blueprint that plays its own force feedback should too. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
+	static bool IsRumbleEnabled();
+
+	/** Sets the player's rumble setting. The 13H Controls toggle calls this on startup and on change (persistence belongs to the settings save). */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel")
+	static void SetRumbleEnabled(bool bEnabled);
 
 	/** Parry success for the local parrier PC: strong short shake, FOV punch and the parry rumble. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel")

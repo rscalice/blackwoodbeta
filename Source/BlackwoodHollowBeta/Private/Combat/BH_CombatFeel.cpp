@@ -40,6 +40,12 @@ static TAutoConsoleVariable<int32> CVarBHCombatFeelDebug(
 	TEXT("1 = log every controller rumble, parry punch (FOV kick) and directional shake at Log level (LogBHFeel). For testing."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarBHRumbleEnabled(
+	TEXT("bh.Rumble.Enabled"),
+	1,
+	TEXT("Player setting: 1 = controller rumble on (default), 0 = off. Read by UBH_CombatFeelLibrary::PlayRumble together with DA_CombatFeel bEnableRumble. The 13H Controls toggle sets it via SetRumbleEnabled."),
+	ECVF_Default);
+
 namespace
 {
 	const TCHAR* TierName(EBH_ImpactTier Tier)
@@ -532,7 +538,7 @@ UCameraShakeBase* UBH_CombatFeelLibrary::PlayDirectionalBiasShake(APlayerControl
 void UBH_CombatFeelLibrary::PlayRumble(APlayerController* PC, const FBH_RumbleSpec& Spec)
 {
 	const UBH_CombatFeelSettings* Settings = UBH_CombatFeelSettings::Get();
-	if (!PC || !PC->IsLocalController() || !Settings->bEnableRumble || Spec.Duration <= 0.f || (Spec.Large <= 0.f && Spec.Small <= 0.f))
+	if (!PC || !PC->IsLocalController() || !Settings->bEnableRumble || !IsRumbleEnabled() || Spec.Duration <= 0.f || (Spec.Large <= 0.f && Spec.Small <= 0.f))
 	{
 		return;
 	}
@@ -549,6 +555,17 @@ void UBH_CombatFeelLibrary::PlayRumble(APlayerController* PC, const FBH_RumbleSp
 	{
 		UE_LOG(LogBHFeel, Log, TEXT("Rumble: pc=%s large=%.2f small=%.2f duration=%.2f"), *GetNameSafe(PC), Spec.Large, Spec.Small, Spec.Duration);
 	}
+}
+
+bool UBH_CombatFeelLibrary::IsRumbleEnabled()
+{
+	return CVarBHRumbleEnabled.GetValueOnAnyThread() != 0;
+}
+
+void UBH_CombatFeelLibrary::SetRumbleEnabled(bool bEnabled)
+{
+	// SetByCode: above the ini/game-setting levels, below the console, so typing "bh.Rumble.Enabled 0" still works for testing.
+	CVarBHRumbleEnabled.AsVariable()->Set(bEnabled ? 1 : 0, ECVF_SetByCode);
 }
 
 void UBH_CombatFeelLibrary::PlayParryPunch(APlayerController* PC)

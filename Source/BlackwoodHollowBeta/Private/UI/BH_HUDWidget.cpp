@@ -1,6 +1,7 @@
 // Blackwood Hollow - HUD widget base (implementation)
 
 #include "UI/BH_HUDWidget.h"
+#include "Combat/BH_CombatFeel.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
@@ -58,6 +59,7 @@ void UBH_HUDWidget::InitializeHUD(UAbilitySystemComponent* ASC)
 
 	// Push the current state once so the widget is right before the first change.
 	bStaminaStateKnown = false; // this first push (respawn, rebind) sets the empty state silently
+	bLowHealthStateKnown = false; // same for the low-health state
 	PushHealth();
 	PushStamina();
 	PushPosture();
@@ -142,6 +144,35 @@ void UBH_HUDWidget::PushHealth()
 	const float Percent = MaxHealth > 0.f ? FMath::Clamp(Health / MaxHealth, 0.f, 1.f) : 0.f;
 	HandleHealthChanged(Health, MaxHealth);
 	K2_OnHealthUpdated(Health, MaxHealth, Percent);
+	UpdateLowHealthState(Health, MaxHealth);
+}
+
+void UBH_HUDWidget::UpdateLowHealthState(float Health, float MaxHealth)
+{
+	if (MaxHealth <= 0.f)
+	{
+		return;
+	}
+	const bool bIsLow = UBH_CombatFeelLibrary::IsLowHealth(Health, MaxHealth);
+	if (!bLowHealthStateKnown)
+	{
+		bLowHealthStateKnown = true;
+		bLowHealth = bIsLow;
+		return;
+	}
+	if (!bLowHealth)
+	{
+		if (bIsLow)
+		{
+			bLowHealth = true;
+			OnLowHealthChanged.Broadcast(true);
+		}
+	}
+	else if (Health <= 0.f || Health > MaxHealth * (UBH_CombatFeelLibrary::GetLowHealthThreshold() + LowHealthExitMargin))
+	{
+		bLowHealth = false;
+		OnLowHealthChanged.Broadcast(false);
+	}
 }
 
 void UBH_HUDWidget::PushStamina()

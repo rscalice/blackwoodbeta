@@ -43,6 +43,9 @@ class UBH_QuestTrackerWidget;
 /** Local-only stamina state events (13F-1): the player's Stamina hit zero from above / climbed back past StaminaRecoveredFraction. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnStaminaEmptyState);
 
+/** Local-only low-health state event (13F-0): Health crossed the low-health threshold (UBH_CombatFeelSettings::LowHealthThreshold). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnLowHealthChanged, bool, bLowHealth);
+
 /** When a quiet-HUD element is shown outside combat. */
 UENUM(BlueprintType)
 enum class EBH_QuietRule : uint8
@@ -125,6 +128,23 @@ public:
 	/** True between OnStaminaEmpty and OnStaminaRecovered. */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD|Stamina")
 	bool IsStaminaEmpty() const { return bStaminaEmpty; }
+
+	// -- Low health (13F-0; local, cosmetic) ------------------------------------------------------------------------------------
+	// Same rules as the stamina events: fires on the machine that owns this HUD, on every bound UBH_HUDWidget (bind in one place), and the first
+	// value after InitializeHUD (respawn) only sets the state silently, so read IsLowHealthState() when you bind or after a respawn.
+	// Enter: Health > 0 and <= MaxHealth * LowHealthThreshold (30%). Leave: Health is 0 (dead) or above the threshold + LowHealthExitMargin (no flicker).
+
+	/** Health entered (true) or left (false) the low-health zone. Drive the heartbeat MetaSound and the edge vignette from it. */
+	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|HUD|Health")
+	FBH_OnLowHealthChanged OnLowHealthChanged;
+
+	/** Extra health fraction above the threshold that Health must reach before the low-health state ends. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|HUD|Health", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+	float LowHealthExitMargin = 0.05f;
+
+	/** True while the low-health state is on. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD|Health")
+	bool IsLowHealthState() const { return bLowHealth; }
 
 	/** True while State.Combat.PostureBroken is on the ASC (or Posture has hit 0). */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
@@ -306,6 +326,7 @@ private:
 	void PushHealth();
 	void PushStamina();
 	void UpdateStaminaEmptyState(float Stamina, float MaxStamina);
+	void UpdateLowHealthState(float Health, float MaxHealth);
 	void PushPosture();
 	void RefreshPostureBroken();
 	void PollStance();
@@ -327,6 +348,8 @@ private:
 	bool bIsNestedHUD = false;
 	bool bPostureBroken = false;
 	bool bStaminaEmpty = false;
+	bool bLowHealth = false;
+	bool bLowHealthStateKnown = false; // false until the first PushHealth after InitializeHUD (that push never fires an event)
 	bool bStaminaStateKnown = false; // false until the first PushStamina after InitializeHUD (that push never fires an event)
 	FString CurrentStanceName;
 	float StancePollTimer = 0.f;

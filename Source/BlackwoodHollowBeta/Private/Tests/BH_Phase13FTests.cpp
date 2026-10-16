@@ -294,6 +294,44 @@ bool FBH_P13F_SanctuaryDefaultsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ---- 13F-0: surface precedence, rumble flag, low-health hook -----------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBH_P13F_ResolveSurfaceTest, "BlackwoodHollow.Phase13F.Surface.EnemyLevelWins", BH_P13F_FLAGS)
+bool FBH_P13F_ResolveSurfaceTest::RunTest(const FString& Parameters)
+{
+	using S = EBH_HitSurface;
+	// A crab (enemy-level Shell) with an identity component left at Flesh stays Shell.
+	TestEqual(TEXT("Enemy Shell beats identity Flesh"), static_cast<int32>(UBH_HitFeedbackLibrary::ResolveSurface(S::Shell, S::Flesh)), static_cast<int32>(S::Shell));
+	// An explicit enemy value wins over a different identity value too.
+	TestEqual(TEXT("Enemy Armour beats identity Shell"), static_cast<int32>(UBH_HitFeedbackLibrary::ResolveSurface(S::Armour, S::Shell)), static_cast<int32>(S::Armour));
+	// Enemy left at the Flesh default: the identity component decides (humanoids set Armour on the identity component).
+	TestEqual(TEXT("Identity Armour used when enemy is Flesh"), static_cast<int32>(UBH_HitFeedbackLibrary::ResolveSurface(S::Flesh, S::Armour)), static_cast<int32>(S::Armour));
+	TestEqual(TEXT("Both Flesh is Flesh"), static_cast<int32>(UBH_HitFeedbackLibrary::ResolveSurface(S::Flesh, S::Flesh)), static_cast<int32>(S::Flesh));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBH_P13F_RumbleFlagTest, "BlackwoodHollow.Phase13F.Rumble.PlayerFlag", BH_P13F_FLAGS)
+bool FBH_P13F_RumbleFlagTest::RunTest(const FString& Parameters)
+{
+	const bool bWas = UBH_CombatFeelLibrary::IsRumbleEnabled();
+	UBH_CombatFeelLibrary::SetRumbleEnabled(false);
+	TestFalse(TEXT("Rumble off after SetRumbleEnabled(false)"), UBH_CombatFeelLibrary::IsRumbleEnabled());
+	UBH_CombatFeelLibrary::SetRumbleEnabled(true);
+	TestTrue(TEXT("Rumble on after SetRumbleEnabled(true)"), UBH_CombatFeelLibrary::IsRumbleEnabled());
+	UBH_CombatFeelLibrary::SetRumbleEnabled(bWas);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBH_P13F_LowHealthHookDefaultsTest, "BlackwoodHollow.Phase13F.Hud.LowHealthDefaults", BH_P13F_FLAGS)
+bool FBH_P13F_LowHealthHookDefaultsTest::RunTest(const FString& Parameters)
+{
+	const UBH_HUDWidget* Hud = GetDefault<UBH_HUDWidget>();
+	if (!TestNotNull(TEXT("HUD widget CDO"), Hud)) { return false; }
+	TestFalse(TEXT("Not in the low-health state on a fresh widget"), Hud->IsLowHealthState());
+	TestEqual(TEXT("LowHealthExitMargin defaults to 0.05"), Hud->LowHealthExitMargin, 0.05f);
+	return true;
+}
+
 // ---- HUD stamina-empty state -------------------------------------------------------------------------------------------------
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBH_P13F_StaminaDefaultsTest, "BlackwoodHollow.Phase13F.Hud.StaminaEmptyDefaults", BH_P13F_FLAGS)
