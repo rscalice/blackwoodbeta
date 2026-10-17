@@ -1,4 +1,4 @@
-"""Read-only report of the new armor meshes: per material section triangle count, Z range, skin-underlay guess.
+﻿"""Read-only report of the new armor meshes: per material section triangle count, Z range, skin-underlay guess.
 
 Run from the editor Python console:
     from bh_armor_fit import inspect_new; inspect_new.run()
@@ -9,14 +9,19 @@ more than half of the mesh height with a name that is not a garment.
 """
 import unreal
 
-from . import assets, config, meshes
+from . import assets, clearance, config, meshes
 
 DEFAULT_PATHS = [
     "/Game/Fab/Equipment/BaseClothing/Basic_Cloth_Chest",
     "/Game/Fab/Equipment/BaseClothing/Basic_Cloth_Pants",
     "/Game/Fab/Equipment/BaseClothing/Basic_Cloth_Boots",
-    "/Game/Fab/Equipment/ClothArmor/Cloth_Full_Rigged",
+    "/Game/Fab/Equipment/StarterClothArmor/Cloth_Full_Rigged",      # Boots
+    "/Game/Fab/Equipment/StarterClothArmor/Cloth_Full_Rigged1",     # Gloves
+    "/Game/Fab/Equipment/StarterClothArmor/Cloth_Full_Rigged12",    # Pants
+    "/Game/Fab/Equipment/StarterClothArmor/Cloth_Full_Rigged123",   # Chest
 ]
+# Authoring body of the Fab packs plus every built body type (the BodyTypes/Reference folder holds only textures).
+AUTHORING_BODY = "/Game/Fab/Equipment/Polyphoria/CharacterParts_HeavyArmour/MH_Creator/SK_tal_nrw_base"
 _SKIN_WORDS = ("body", "skin", "synth", "nude", "underlay")
 _MATERIAL_FUNCTIONS = unreal.GeometryScript_MeshMaterialFunctions
 _QUERIES = unreal.GeometryScript_MeshQueries
@@ -66,3 +71,18 @@ def run(paths=None):
             unreal.log("    [%d] %-28s tris=%-6d Z %.1f..%.1f %s" % (
                 index, name, entry["tris"], entry["zmin"] if entry["tris"] else 0.0, entry["zmax"] if entry["tris"] else 0.0,
                 "SKIN?" if skin else ""))
+        _poke(mesh)
+
+
+def _poke(mesh):
+    """Share of garment vertices inside the skin of each candidate body (the lowest share is the authoring body)."""
+    bodies = [("SK_tal_nrw_base (Fab authoring)", AUTHORING_BODY)]
+    try:
+        bodies += [(b.name, b.body_mesh_path) for b in config.load_body_types()]
+    except Exception as error:  # noqa: BLE001
+        unreal.log_warning("%s body types not read: %s" % (config.LOG_FIT, error))
+    for label, path in bodies:
+        try:
+            unreal.log("    poke vs %-34s %.1f%% inside skin" % (label, 100.0 * clearance.poke_ratio(mesh, path)))
+        except Exception as error:  # noqa: BLE001
+            unreal.log_warning("    poke vs %s failed: %s" % (label, error))
