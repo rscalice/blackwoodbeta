@@ -22,10 +22,25 @@ def _log(msg):
 
 
 def _expressions(mat):
-    try:
-        return list(mat.get_editor_property("expression_collection").get_editor_property("expressions"))
-    except Exception:  # noqa: BLE001
-        return list(mat.get_editor_property("expressions"))
+    """Expressions of `mat` (the Expressions property is protected in Python; walk the live objects instead)."""
+    for name in ("get_material_expressions", "get_expressions"):
+        fn = getattr(MEL, name, None)
+        if fn:
+            try:
+                return list(fn(mat))
+            except Exception:  # noqa: BLE001
+                pass
+    path = mat.get_path_name()
+    result = []
+    for e in unreal.ObjectIterator(unreal.MaterialExpression):
+        try:
+            outer = e.get_outer()
+            if outer is not None and outer.get_path_name() == path:
+                result.append(e)
+        except Exception:  # noqa: BLE001
+            pass
+    _log("found %d expressions" % len(result))
+    return result
 
 
 def _new(mat, cls, x, y):
@@ -124,10 +139,19 @@ def run():
         MEL.delete_material_expression(mat, e)
     _log("removed %d old BH nodes" % len(doomed))
 
-    # 4. samplers readable in the vertex shader
+    # 4. samplers readable in the vertex shader; default = a black MASKS-compressed texture (the engine Black is a
+    #    Color texture and fails to compile on a Masks sampler)
+    from . import mask as _mask
+    black_pkg = "/Game/BlackwoodHollow/Characters/Materials/T_BH_MaskBlack"
+    black = unreal.load_asset(black_pkg) if unreal.EditorAssetLibrary.does_asset_exist(black_pkg) else None
+    if black is None:
+        black = _mask._import_texture(black_pkg, bytearray(16), 4)
+        unreal.EditorAssetLibrary.save_loaded_asset(black, False)
     for s in samplers.values():
         s.set_editor_property("mip_value_mode", unreal.TextureMipValueMode.TMVM_MIP_LEVEL)
         s.set_editor_property("const_mip_value", 0)
+        s.set_editor_property("sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_MASKS)
+        s.set_editor_property("texture", black)
 
     base = samplers["Helm"]
     bx, by = base.get_editor_property("material_expression_editor_x"), base.get_editor_property("material_expression_editor_y")
