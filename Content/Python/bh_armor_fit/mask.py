@@ -43,7 +43,7 @@ EDGE_SAMPLE_CM = 0.5
 WELD_DECIMALS = 3  # positions equal to 0.001 cm are the same point (UV seams / split vertices)
 _NEVER = re.compile(r"^(head|neck)")
 
-SIGNATURE = assets.stamp_of(MASK_SIZE, MASK_REACH_CM, MASK_ALIGN, MASK_EDGE_MARGIN_CM, MASK_ERODE_RINGS, PAD_PIXELS, _NEVER.pattern, "v2")
+SIGNATURE = assets.stamp_of(MASK_SIZE, MASK_REACH_CM, MASK_ALIGN, MASK_EDGE_MARGIN_CM, MASK_ERODE_RINGS, PAD_PIXELS, _NEVER.pattern, "v3")
 
 _QUERIES = unreal.GeometryScript_MeshQueries
 _SPATIAL = unreal.GeometryScript_MeshSpatial
@@ -105,6 +105,10 @@ def _triangles(mesh):
     return result
 
 
+_UV_API_USED = []
+_UV_SAMPLE = []
+
+
 class _UVTri(object):
     def __init__(self, a, b, c):
         self.uv0, self.uv1, self.uv2 = a, b, c
@@ -114,8 +118,13 @@ def _uv_triangle(mesh, triangle_id):
     """UV0 corners of a triangle. MeshQueries.get_triangle_u_vs -> (uv1, uv2, uv3, valid)."""
     if hasattr(_QUERIES, "get_triangle_u_vs"):
         result = _QUERIES.get_triangle_u_vs(mesh, 0, triangle_id)
-        uvs = [v for v in (result if isinstance(result, tuple) else (result,)) if isinstance(v, unreal.Vector2D)]
+        if not _UV_SAMPLE:
+            _UV_SAMPLE.append(result)
+        values = result if isinstance(result, tuple) else (result,)
+        uvs = [v for v in values if hasattr(v, "x") and hasattr(v, "y") and not hasattr(v, "z")]
         if len(uvs) >= 3:
+            if not _UV_API_USED:
+                _UV_API_USED.append("MeshQueries.get_triangle_u_vs")
             return _UVTri(*uvs[:3])
     if hasattr(_UVS, "get_mesh_uv_triangle"):
         result = _UVS.get_mesh_uv_triangle(mesh, 0, triangle_id)
@@ -184,7 +193,21 @@ def _body_data(body_mesh_path):
             [group_of[v] for v in corners],
             [(uv.uv0.x, uv.uv0.y), (uv.uv1.x, uv.uv1.y), (uv.uv2.x, uv.uv2.y)],
         ))
+    us = [c[0] for _, uvs in uv_triangles for c in uvs]
+    vs = [c[1] for _, uvs in uv_triangles for c in uvs]
+    flat = 0
+    for _, ((ax, ay), (bx, by), (cx, cy)) in uv_triangles:
+        if abs((by - cy) * (ax - cx) + (cx - bx) * (ay - cy)) < 1e-12:
+            flat += 1
+    uv_diag = {
+        "tris": len(uv_triangles), "flat": flat,
+        "u": (round(min(us), 3), round(max(us), 3)) if us else None,
+        "v": (round(min(vs), 3), round(max(vs), 3)) if vs else None,
+        "api": _UV_API_USED[0] if _UV_API_USED else None,
+        "sample": repr(_UV_SAMPLE[0])[:200] if _UV_SAMPLE else None,
+    }
     data = {
+        "uv_diag": uv_diag,
         "positions": positions,
         "group_of": group_of,
         "members": members,
@@ -306,7 +329,11 @@ def _rasterize(flags, data, size):
         values = [1.0 if flags[g] else 0.0 for g in groups]
         if not any(values):
             continue
-        pts = [(u * size, v * size) for u, v in uvs]
+        # The MetaHuman body UVs live in a UDIM tile (U 1..2): fold each triangle into 0..1 by its own tile.
+        # The texture uses Wrap addressing, so the material's sample at the raw UV reads the same texel.
+        ou = math.floor(sum(u for u, _ in uvs) / 3.0)
+        ov = math.floor(sum(v for _, v in uvs) / 3.0)
+        pts = [((u - ou) * size, (v - ov) * size) for u, v in uvs]
         x0 = max(0, int(math.floor(min(p[0] for p in pts))))
         x1 = min(size - 1, int(math.ceil(max(p[0] for p in pts))))
         y0 = max(0, int(math.floor(min(p[1] for p in pts))))
@@ -374,8 +401,8 @@ def _import_texture(package, pixels, size):
     texture.set_editor_property("compression_settings", unreal.TextureCompressionSettings.TC_MASKS)
     texture.set_editor_property("srgb", False)
     texture.set_editor_property("mip_gen_settings", unreal.TextureMipGenSettings.TMGS_NO_MIPMAPS)
-    texture.set_editor_property("address_x", unreal.TextureAddress.TA_CLAMP)
-    texture.set_editor_property("address_y", unreal.TextureAddress.TA_CLAMP)
+    texture.set_editor_property("address_x", unreal.TextureAddress.TA_WRAP)  # body UVs are in UDIM tile U 1..2
+    texture.set_editor_property("address_y", unreal.TextureAddress.TA_WRAP)
     # set_editor_property already runs PostEditChange in Python (there is no post_edit_change binding).
     return texture
 
@@ -392,6 +419,8 @@ def bake(piece, body, garment, stamp, label=""):
     flags, data, summary = coverage(garment, body.body_mesh_path)
     pixels = _rasterize(flags, data, MASK_SIZE)
     summary["white_pixels"] = sum(1 for p in pixels if p >= 170)
+    summary["any_pixels"] = sum(1 for p in pixels if p)
+    summary["uv"] = data.get("uv_diag")
     texture = _import_texture(package, pixels, MASK_SIZE)
     assets.write_stamp(texture, stamp)
     assets.save([package])
