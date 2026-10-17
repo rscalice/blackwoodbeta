@@ -162,8 +162,8 @@ def _drop_entry(item_name):
     entry.set_editor_property("chance", 1.0)
     entry.set_editor_property("min_quantity", 1)
     entry.set_editor_property("max_quantity", 1)
-    entry.set_editor_property("b_grant_to_whole_party", True)
-    entry.set_editor_property("b_once_per_player", True)
+    entry.set_editor_property("grant_to_whole_party", True)
+    entry.set_editor_property("once_per_player", True)
     return entry
 
 
