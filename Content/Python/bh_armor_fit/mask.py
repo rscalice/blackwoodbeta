@@ -43,7 +43,7 @@ EDGE_SAMPLE_CM = 0.5
 WELD_DECIMALS = 3  # positions equal to 0.001 cm are the same point (UV seams / split vertices)
 _NEVER = re.compile(r"^(head|neck)")
 
-SIGNATURE = assets.stamp_of(MASK_SIZE, MASK_REACH_CM, MASK_ALIGN, MASK_EDGE_MARGIN_CM, MASK_ERODE_RINGS, PAD_PIXELS, _NEVER.pattern, "v1")
+SIGNATURE = assets.stamp_of(MASK_SIZE, MASK_REACH_CM, MASK_ALIGN, MASK_EDGE_MARGIN_CM, MASK_ERODE_RINGS, PAD_PIXELS, _NEVER.pattern, "v2")
 
 _QUERIES = unreal.GeometryScript_MeshQueries
 _SPATIAL = unreal.GeometryScript_MeshSpatial
@@ -154,9 +154,13 @@ def _body_data(body_mesh_path):
     triangles = _triangles(mesh)
     normals = [(0.0, 0.0, 0.0)] * len(members)
     neighbours = [set() for _ in members]
-    for _, corners in triangles:
+    for tri, corners in triangles:
         a, b, c = (positions[v] for v in corners)
-        face = _cross(_sub(b, a), _sub(c, a))  # area weighted
+        # Orientation from UE's own face normal (the one clearance.py uses, proven outward); the cross-product
+        # winding pointed INTO the body, which rejected almost every garment hit. Weighted by triangle area.
+        area = 0.5 * _length(_cross(_sub(b, a), _sub(c, a)))
+        n_face = _xyz(clearance._first(_QUERIES.get_triangle_face_normal(mesh, tri), unreal.Vector))
+        face = (n_face[0] * area, n_face[1] * area, n_face[2] * area)
         ga, gb, gc = (group_of[v] for v in corners)
         for g in (ga, gb, gc):
             n = normals[g]
@@ -258,6 +262,7 @@ def coverage(garment, body_mesh_path):
     grid, boundary_edges = _boundary_grid(garment)
     flags = [False] * len(members)
     tested = 0
+    rejected = {"far": 0, "align": 0, "edge": 0}
     for group, vertices in enumerate(members):
         if data["never"][group]:
             continue
@@ -272,10 +277,13 @@ def coverage(garment, body_mesh_path):
         offset = _sub(_xyz(hit.position), p)
         distance = _length(offset)
         if distance > MASK_REACH_CM:
+            rejected["far"] += 1
             continue
         if distance > 0.05 and _dot(offset, data["normals"][group]) < MASK_ALIGN * distance:
+            rejected["align"] += 1
             continue
         if not _boundary_distance_ok(grid, _xyz(hit.position)):
+            rejected["edge"] += 1
             continue
         flags[group] = True
     covered = sum(flags)
@@ -287,6 +295,7 @@ def coverage(garment, body_mesh_path):
         "covered_before_erosion": covered,
         "covered": sum(flags),
         "garment_boundary_edges": boundary_edges,
+        "rejected": rejected,
     }
     return flags, data, summary
 
