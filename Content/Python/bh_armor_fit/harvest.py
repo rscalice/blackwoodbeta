@@ -9,7 +9,7 @@ harvested copy gets the source's slot names back before the piece's materials ar
 Every harvested mesh is re-skinned to core bones (weights.clean) and then pushed out of the body skin
 (clearance.push_out) before it is written.
 """
-from . import assets, clearance, config, mask, meshes, posed, weights
+from . import assets, clearance, config, mask, meshes, posed, weights, winding
 from . import report as rpt
 
 SANITY_BOUNDS_CM = 10.0
@@ -96,6 +96,7 @@ def harvest_piece(piece, built_package, body, outfit, skeleton, body_bones):
     assets.write_stamp(target, stamp)
     assets.save([final])
     detail += _mask_and_posed(piece, body, mesh, stamp)
+    detail += winding.check(mesh, body.body_mesh_path, piece.name)
     return detail
 
 
