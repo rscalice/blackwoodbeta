@@ -1,8 +1,8 @@
 """Body mask bake: which skin does a worn piece really enclose?
 
 For every final armor piece a single-channel texture in the body mesh's UV0 space is written
-(T_BHMask_<Set>_<Slot>_<Body>, 512 x 512, next to the final mesh). White = hide the skin there. The masked body
-material (M_BH_Skin_Masked) fades the skin under the white areas; UBH_ArmorVisualComponent feeds the texture of
+(T_BHMask_<Set>_<Slot>_<Body>, 512 x 512, next to the final mesh). White = pull the skin in there (shrink, not hide). The masked body
+material (M_BH_Skin_Masked) is opaque and moves the vertices under the white areas inward along their normal (WPO, BH_MaskShrinkCm); UBH_ArmorVisualComponent feeds the texture of
 each worn piece into BH_Mask_<Slot>.
 
 A body vertex is covered only when ALL of these hold (the mask must never hide arms, neck, face or anything the
@@ -16,7 +16,7 @@ The garment point is the nearest point on the garment (an approximation of a ray
 test rejects garment parts on the other side of a gap, e.g. the other leg).
 
 The pixel value is the covered flag interpolated over the UV triangles, so island borders fall at the middle of the
-last covered / uncovered triangle (the material clips at 0.33 of 1 - mask, which errs towards showing skin).
+last covered / uncovered triangle (the shrink weight is the mask value, so the edge falls off smoothly).
 
 Everything works in the bind pose, on the DynamicMesh the piece was just written from.
 """
