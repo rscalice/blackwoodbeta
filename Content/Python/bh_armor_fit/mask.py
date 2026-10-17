@@ -367,8 +367,7 @@ def _import_texture(package, pixels, size):
     texture.set_editor_property("mip_gen_settings", unreal.TextureMipGenSettings.TMGS_NO_MIPMAPS)
     texture.set_editor_property("address_x", unreal.TextureAddress.TA_CLAMP)
     texture.set_editor_property("address_y", unreal.TextureAddress.TA_CLAMP)
-    texture.modify(True)
-    texture.post_edit_change()
+    # set_editor_property already runs PostEditChange in Python (there is no post_edit_change binding).
     return texture
 
 
