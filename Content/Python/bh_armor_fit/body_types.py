@@ -13,7 +13,7 @@ import time
 
 import unreal
 
-from . import assets, checks, config, metahuman
+from . import assets, bodymat, checks, config, metahuman
 from . import report as rpt
 
 RIG_TIMEOUT_SECONDS = 600
@@ -170,6 +170,7 @@ class _BuildJob:
         metahuman.clear_outfits(self._mhc)
         metahuman.build(self._mhc, body.built_root)
         assets.write_stamp(assets.load(body.body_mesh_path), _expected_stamp(body))
+        bodymat.apply(body)  # a rebuild resets the body mesh to the built (opaque) skin instance
         assets.save([body.mhc_path] + assets.list_folder(body.built_root))
         self._close_edit()
         seconds = round(time.time() - self._started)

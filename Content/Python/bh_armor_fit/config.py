@@ -43,6 +43,29 @@ RIG_NONE = "None"
 RIG_BODY_WEIGHTS = "BodyWeights"
 RIG_RIGID_BONE = "RigidBone"
 
+# Fit settings of the harvest step (Armor Refit 2). Every value is part of the output stamps (weights.TRANSFER_SIGNATURE,
+# clearance.SIGNATURE, mask.SIGNATURE): change one and the next fit_armor() rebuilds the affected pieces. The modules read
+# them at import time, so reload the package (or restart the editor Python) after editing.
+FIT = {
+    # clearance (cm): wanted gap between skin and garment; larger in joint bands (elbow, knee, hip, shoulder, wrist)
+    "clearance_cm": 1.0,
+    "joint_clearance_cm": 1.5,
+    "joint_gain": 2.0,            # joint factor = min(1, gain * min(weight on bone A, weight on bone B) of the joint)
+    # near-skin weight transfer from the body (all bones, incl. twist / corrective), blended into the cleaned weights
+    "transfer": True,
+    "transfer_full_cm": 4.0,      # within this distance of the skin the body's weights are used as they are
+    "transfer_fade_cm": 4.0,      # ... fading out to the cleaned weights over this much further distance
+    "transfer_smooth_rings": 2,   # smoothing passes over the blended zone
+    # body mask bake
+    "mask_size": 512,
+    "mask_reach_cm": 5.0,         # body vertex is covered when the garment is within this distance along its normal
+    "mask_align": 0.5,            # cosine between the skin normal and the direction to the garment
+    "mask_edge_margin_cm": 3.0,   # ... and the garment point is at least this far inside its boundary loops
+    "mask_erode_rings": 1,
+    # posed check (report only): off by default, fit_armor(posed_check=True) turns it on
+    "posed_check": False,
+}
+
 
 def _package(ref):
     """Package path of a JSON-exported soft reference, or '' when it is empty."""
@@ -128,6 +151,12 @@ class Piece:
         if self.skip_resize:
             return self.rigged_path or self.source_mesh
         return "%s/%s/SKM_%s_%s_%s" % (ARMOR_ROOT, self.set_name, self.set_name, self.slot, body.name)
+
+    def mask_path(self, body):
+        """Body mask texture written next to the final mesh; '' for pieces that get none (rigid helms, never resized)."""
+        if self.skip_resize or self.slot == "Helm":
+            return ""
+        return "%s/%s/T_BHMask_%s_%s_%s" % (ARMOR_ROOT, self.set_name, self.set_name, self.slot, body.name)
 
 
 def _read_table(path):

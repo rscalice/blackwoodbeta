@@ -9,13 +9,17 @@ from . import assets, checks, config, harvest, meshes, metahuman, outfits, riggi
 from . import report as rpt
 
 
-def fit_armor(sets=None, body_types=None, dry_run=False, force=False, reuse_builds=False):
+def fit_armor(sets=None, body_types=None, dry_run=False, force=False, reuse_builds=False, posed_check=None):
     """Fit the given sets (default all) to the given body types (default all).
 
     Up-to-date pieces are skipped unless `force`. A dry run reports what would be built or skipped.
     With `reuse_builds` no MetaHuman build runs: the finals are re-harvested from the outfit meshes
     an earlier build left in the body type's Built_Fit folder.
+    `posed_check=True` adds the report-only posed poke-through check per piece (slow); None keeps config.FIT["posed_check"].
+    Each harvested piece also gets its body mask texture (T_BHMask_<Set>_<Slot>_<Body>, see mask.py).
     """
+    if posed_check is not None:
+        config.FIT["posed_check"] = bool(posed_check)
     pieces = config.load_pieces()
     selected_sets = [s for s in config.set_names(pieces) if sets is None or s in sets]
     bodies = [b for b in config.load_body_types() if body_types is None or b.name in body_types]
@@ -79,6 +83,9 @@ def _all_up_to_date(groups, group_outfits, body):
         for piece in group:
             if assets.read_stamp(piece.final_path(body)) != harvest.piece_stamp(piece, body, outfit):
                 return False
+            mask_package = piece.mask_path(body)
+            if mask_package and assets.read_stamp(mask_package) != harvest.piece_stamp(piece, body, outfit):
+                return False  # mask missing or from an older fit
     return True
 
 

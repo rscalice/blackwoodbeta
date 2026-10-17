@@ -7,6 +7,7 @@ the vertex is closer than CLEARANCE_CM to the skin (or inside it), moves it out 
 Loose areas are left untouched. The displacement is feathered over neighbouring vertices so the push does not
 leave ridges, and it never shrinks a push below what the vertex itself needs.
 """
+import re
 import time
 
 import unreal
@@ -14,12 +15,38 @@ import unreal
 from . import assets, config
 from . import report as rpt
 
-CLEARANCE_CM = 0.6        # wanted gap between skin and garment
+_FIT = config.FIT
+CLEARANCE_CM = float(_FIT["clearance_cm"])             # wanted gap between skin and garment (1.0 cm)
+JOINT_CLEARANCE_CM = float(_FIT["joint_clearance_cm"])  # ... in joint bands (1.5 cm)
+JOINT_GAIN = float(_FIT["joint_gain"])
 MAX_DEPTH_CM = 4.0        # vertices deeper than this inside the body are deliberate (tucked edges): left alone
-MAX_REACH_CM = 4.0        # vertices farther than this from the skin are not touched
+MAX_REACH_CM = 4.0        # vertices farther than this from the skin are not touched (must exceed the largest clearance)
 FEATHER_PASSES = 2
 
-SIGNATURE = assets.stamp_of(CLEARANCE_CM, MAX_DEPTH_CM, MAX_REACH_CM, FEATHER_PASSES)
+# Joint bands, chosen by bone weight: a vertex is in a joint band when it is weighted to BOTH bone families of the joint
+# (50 / 50 = full band). Families are matched on the bone name prefix, so twist and corrective bones count with their bone.
+_FAMILIES = (
+    ("pelvis", re.compile(r"^pelvis")),
+    ("spine", re.compile(r"^spine_")),
+    ("clavicle", re.compile(r"^clavicle")),
+    ("upperarm", re.compile(r"^upperarm")),
+    ("lowerarm", re.compile(r"^lowerarm")),
+    ("hand", re.compile(r"^(hand_|thumb_|index_|middle_|ring_|pinky_)")),
+    ("thigh", re.compile(r"^thigh")),
+    ("calf", re.compile(r"^calf")),
+)
+JOINT_BANDS = {
+    "shoulder": ({"clavicle", "spine"}, {"upperarm"}),
+    "elbow": ({"upperarm"}, {"lowerarm"}),
+    "wrist": ({"lowerarm"}, {"hand"}),
+    "hip": ({"pelvis"}, {"thigh"}),
+    "knee": ({"thigh"}, {"calf"}),
+}
+
+SIGNATURE = assets.stamp_of(
+    CLEARANCE_CM, JOINT_CLEARANCE_CM, JOINT_GAIN, MAX_DEPTH_CM, MAX_REACH_CM, FEATHER_PASSES,
+    sorted((k, sorted(a), sorted(b)) for k, (a, b) in JOINT_BANDS.items()), "v2",
+)
 
 _SPATIAL = unreal.GeometryScript_MeshSpatial
 _QUERIES = unreal.GeometryScript_MeshQueries
@@ -82,14 +109,42 @@ def _neighbours(mesh):
     return adjacent
 
 
+def _family(bone_name):
+    for family, pattern in _FAMILIES:
+        if pattern.match(bone_name):
+            return family
+    return ""
+
+
+def joint_factors(mesh):
+    """{vertex: 0..1} joint-band factor of every garment vertex that is weighted to both families of a joint."""
+    from . import weights
+    names, _ = weights.bone_table(mesh)
+    families = [_family(n) for n in names]
+    result = {}
+    for vertex, bone_weights in weights._read_weights(mesh, _vertex_ids(mesh)).items():
+        sums = {}
+        for bone, weight in bone_weights.items():
+            sums[families[bone]] = sums.get(families[bone], 0.0) + weight
+        factor = 0.0
+        for side_a, side_b in JOINT_BANDS.values():
+            both = min(sum(sums.get(f, 0.0) for f in side_a), sum(sums.get(f, 0.0) for f in side_b))
+            factor = max(factor, min(1.0, JOINT_GAIN * both))
+        if factor > 0.0:
+            result[vertex] = factor
+    return result
+
+
 def push_out(mesh, body_mesh_path, label=""):
-    """Move garment vertices out to CLEARANCE_CM from the body skin; returns (mesh, summary)."""
+    """Move garment vertices out to CLEARANCE_CM (JOINT_CLEARANCE_CM in joint bands) from the body skin; returns (mesh, summary)."""
     started = time.time()
     measured = measure(mesh, body_mesh_path)
+    joints = joint_factors(mesh)
     push = {}
     for vertex, (distance, normal) in measured.items():
-        if -MAX_DEPTH_CM < distance < CLEARANCE_CM:
-            push[vertex] = normal * (CLEARANCE_CM - distance)
+        wanted = CLEARANCE_CM + (JOINT_CLEARANCE_CM - CLEARANCE_CM) * joints.get(vertex, 0.0)
+        if -MAX_DEPTH_CM < distance < wanted:
+            push[vertex] = normal * (wanted - distance)
     inside = sum(1 for d, _ in measured.values() if -MAX_DEPTH_CM < d < 0.0)
     if push and FEATHER_PASSES:
         adjacent = _neighbours(mesh)
@@ -112,7 +167,7 @@ def push_out(mesh, body_mesh_path, label=""):
         mesh, _ = _EDIT.set_vertex_position(mesh, vertex, _position(mesh, vertex) + delta, True)
         moved += 1
         largest = max(largest, delta.length())
-    summary = {"near_skin": len(measured), "inside": inside, "moved": moved, "max_push_cm": round(largest, 2)}
+    summary = {"near_skin": len(measured), "inside": inside, "in_joint_band": sum(1 for v in measured if v in joints), "moved": moved, "max_push_cm": round(largest, 2)}
     rpt.log(config.LOG_FIT, "%s clearance %s (%.1f s)" % (label, summary, time.time() - started))
     return mesh, summary
 
