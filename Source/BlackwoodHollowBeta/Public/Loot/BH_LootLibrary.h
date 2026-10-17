@@ -56,6 +56,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|Loot")
 	static TSubclassOf<UNarrativeItem> ResolveItemClass(const FString& ItemName);
 
+	/**
+	 * SERVER. First-time hints for an item a player just received through loot (enemy drop or container): armor fires hint key "Item.Armor"
+	 * (DA_Hint_ArmorEquip: "open the Player Menu and equip it from Inventory"). Not called for starting-outfit grants.
+	 */
+	static void NotifyItemGrantedHints(APlayerState* PlayerState, TSubclassOf<UNarrativeItem> ItemClass);
+
 	/** Display name of an item class (its CDO's DisplayName), falling back to the class name. */
 	static FText GetItemDisplayName(TSubclassOf<UNarrativeItem> ItemClass);
 };

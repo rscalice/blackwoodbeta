@@ -103,6 +103,10 @@ void ABH_LootContainer::BH_OnInteractionCompleted(APawn* InteractingPawn)
 				{
 					Interactor->NotifyItemGranted(UBH_LootLibrary::GetItemDisplayName(Result.ItemClass), Result.AmountGiven);
 				}
+				if (Result.AmountGiven > 0 && Result.ItemClass)
+				{
+					UBH_LootLibrary::NotifyItemGrantedHints(PlayerState, Result.ItemClass);
+				}
 			}
 		}
 		if (bAnyRefused && Interactor)

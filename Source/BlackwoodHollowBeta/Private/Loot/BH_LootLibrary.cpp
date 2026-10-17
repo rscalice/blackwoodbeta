@@ -4,6 +4,7 @@
 #include "Hints/BH_HintLibrary.h"
 #include "Interaction/BH_InteractorComponent.h"
 #include "Combat/BH_LoadoutComponent.h"
+#include "Items/BH_ArmorItem.h"
 #include "Items/BH_WeaponItem.h"
 #include "Player/BH_PartyLibrary.h"
 #include "Player/BH_PlayerDeathComponent.h"
@@ -112,6 +113,10 @@ namespace BH_LootLibrary_Private
 			return;
 		}
 		const int32 Given = UBH_LootLibrary::GrantItem(PlayerState, ItemClass, Quantity);
+		if (Given > 0)
+		{
+			UBH_LootLibrary::NotifyItemGrantedHints(PlayerState, ItemClass);
+		}
 		if (Given > 0 && Entry.bAutoEquip)
 		{
 			AutoEquipGrantedItem(PlayerState, ItemClass, Entry.AutoEquipSlot);
@@ -189,6 +194,14 @@ void UBH_LootLibrary::GrantEnemyDrops(const AActor* Source, const FBH_DropTable&
 		{
 			BH_LootLibrary_Private::GrantDropToPlayer(&MemberState, Entry, LoadedClass, Quantity);
 		});
+	}
+}
+
+void UBH_LootLibrary::NotifyItemGrantedHints(APlayerState* PlayerState, TSubclassOf<UNarrativeItem> ItemClass)
+{
+	if (PlayerState && PlayerState->HasAuthority() && ItemClass && ItemClass->IsChildOf(UBH_ArmorItem::StaticClass()))
+	{
+		UBH_HintLibrary::TriggerHintKey(PlayerState, TEXT("Item.Armor")); // 13E: first armor pickup -> "equip it from the Player Menu"
 	}
 }
 
