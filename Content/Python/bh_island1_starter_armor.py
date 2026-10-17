@@ -67,11 +67,18 @@ def _soft_class(path):
 # --------------------------------------------------------------------------------------------------------------------
 
 def _manual_trigger():
-    for name in ("BH_HintTrigger", "BHHintTrigger", "EBH_HintTrigger"):
-        enum = getattr(unreal, name, None)
-        if enum is not None:
-            return enum.MANUAL
-    raise RuntimeError("hint trigger enum not found in the unreal module")
+    """The 'Manual' trigger value, copied from an existing manual hint.
+
+    unreal.BH_HintTrigger is the ABH_HintTrigger actor class (EBH_HintTrigger collides with it in Python), so the enum
+    can't be reached by name. The weapon-cache / auto-equip hints are Manual and fire by key, so copy theirs.
+    """
+    for asset_path in unreal.EditorAssetLibrary.list_assets(HINT_DIR, recursive=True, include_folder=False):
+        hint = unreal.load_asset(asset_path)
+        if not isinstance(hint, unreal.BH_HintData):
+            continue
+        if str(hint.get_editor_property("trigger_key")) in ("Item.WeaponCache", "Drop.AutoEquip"):
+            return hint.get_editor_property("trigger")
+    raise RuntimeError("no existing manual hint (trigger key Item.WeaponCache / Drop.AutoEquip) found in %s" % HINT_DIR)
 
 
 def _ensure_hint():
