@@ -23,4 +23,13 @@ public:
 	/** The beat this actor is the target of (matches FBH_BeatRow::TargetTag, or BeatId when that is empty). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Beat", meta = (Categories = "Beat"))
 	FGameplayTag BeatTag;
+
+	/**
+	 * Scavenging checklist. When set, this target is one item of the beat's checklist: several targets can share a BeatTag, each with its own
+	 * id. The marker shows for a player until THEY have done the item (the interactable reports it through
+	 * UBH_BeatTrackerComponent::ReportChecklistItem with the same id), the objective text gets a "(done/total)" counter, and the beat completes
+	 * when any one player has done every item. None = an ordinary single-target beat.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Beat")
+	FName ChecklistItemId;
 };

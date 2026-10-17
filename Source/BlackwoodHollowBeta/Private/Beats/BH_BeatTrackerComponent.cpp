@@ -5,6 +5,8 @@
 #include "Beats/BH_BeatTarget.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "Loot/BH_LootLibrary.h"
 #include "EngineUtils.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/Pawn.h"
@@ -26,6 +28,7 @@ void UBH_BeatTrackerComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProper
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UBH_BeatTrackerComponent, CurrentBeat);
 	DOREPLIFETIME(UBH_BeatTrackerComponent, PartnerPings);
+	DOREPLIFETIME(UBH_BeatTrackerComponent, ChecklistDone);
 }
 
 UBH_BeatTrackerComponent* UBH_BeatTrackerComponent::Get(const UObject* WorldContext)
@@ -274,6 +277,12 @@ bool UBH_BeatTrackerComponent::GetCurrentObjective(FBH_ObjectiveInfo& Out)
 	Out.BeatId = Row.BeatId;
 	Out.ObjectiveText = Row.ObjectiveText;
 	Out.bShowWorldMarker = Row.bShowWorldMarker;
+	int32 ChecklistDoneCount = 0;
+	int32 ChecklistTotal = 0;
+	if (GetChecklistProgress(GetLocalPlayerState(), ChecklistDoneCount, ChecklistTotal) && ChecklistTotal > 0)
+	{
+		Out.ObjectiveText = FText::Format(NSLOCTEXT("BlackwoodHollow", "BeatChecklistProgress", "{0} ({1}/{2})"), Row.ObjectiveText, ChecklistDoneCount, ChecklistTotal);
+	}
 
 	const ABH_GameState* GameState = GetBeatGameState();
 	Out.bGateOpen = Row.RequiredGateFlag.IsNone() || (GameState && GameState->HasWorldFlag(Row.RequiredGateFlag));
@@ -283,6 +292,177 @@ bool UBH_BeatTrackerComponent::GetCurrentObjective(FBH_ObjectiveInfo& Out)
 		Out.TargetLocation = Target->GetActorLocation();
 	}
 	return true;
+}
+
+// ============================================================================
+// Scavenging checklist
+// ============================================================================
+
+namespace
+{
+	FString ChecklistKey(const APlayerState* Player, FName ItemId)
+	{
+		return UBH_LootLibrary::GetPlayerKey(Player) + TEXT("|") + ItemId.ToString();
+	}
+}
+
+FGameplayTag UBH_BeatTrackerComponent::GetCurrentTargetTag()
+{
+	LoadRows();
+	const int32 Index = GetBeatIndex(CurrentBeat);
+	if (Index == INDEX_NONE)
+	{
+		return FGameplayTag();
+	}
+	const FBH_BeatRow& Row = Rows[Index];
+	return Row.TargetTag.IsValid() ? Row.TargetTag : Row.BeatId;
+}
+
+const TArray<TWeakObjectPtr<ABH_BeatTarget>>& UBH_BeatTrackerComponent::GetChecklistTargets()
+{
+	UWorld* World = GetWorld();
+	const FGameplayTag Wanted = GetCurrentTargetTag();
+	const double Now = World ? World->GetTimeSeconds() : 0.0;
+	if (World && (ChecklistCacheTag != Wanted || (ChecklistTargets.IsEmpty() && Now - ChecklistCacheTime > 1.0)))
+	{
+		ChecklistCacheTag = Wanted;
+		ChecklistCacheTime = Now;
+		ChecklistTargets.Reset();
+		if (Wanted.IsValid())
+		{
+			for (TActorIterator<ABH_BeatTarget> It(World); It; ++It)
+			{
+				if (It->BeatTag == Wanted && !It->ChecklistItemId.IsNone())
+				{
+					ChecklistTargets.Add(*It);
+				}
+			}
+		}
+	}
+	return ChecklistTargets;
+}
+
+const APlayerState* UBH_BeatTrackerComponent::GetLocalPlayerState() const
+{
+	const UWorld* World = GetWorld();
+	const APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	return PC ? PC->PlayerState.Get() : nullptr;
+}
+
+bool UBH_BeatTrackerComponent::IsChecklistItemDone(const APlayerState* Player, FName ItemId) const
+{
+	return Player && !ItemId.IsNone() && ChecklistDone.Contains(ChecklistKey(Player, ItemId));
+}
+
+bool UBH_BeatTrackerComponent::GetChecklistProgress(const APlayerState* Player, int32& OutDone, int32& OutTotal)
+{
+	OutDone = 0;
+	OutTotal = 0;
+	TSet<FName> Seen;
+	for (const TWeakObjectPtr<ABH_BeatTarget>& Weak : GetChecklistTargets())
+	{
+		const ABH_BeatTarget* Target = Weak.Get();
+		if (!Target || Seen.Contains(Target->ChecklistItemId))
+		{
+			continue;
+		}
+		Seen.Add(Target->ChecklistItemId);
+		++OutTotal;
+		OutDone += IsChecklistItemDone(Player, Target->ChecklistItemId) ? 1 : 0;
+	}
+	return OutTotal > 0;
+}
+
+bool UBH_BeatTrackerComponent::IsTargetActive(const ABH_BeatTarget* Target)
+{
+	if (!Target)
+	{
+		return false;
+	}
+	const FGameplayTag Wanted = GetCurrentTargetTag();
+	if (!Wanted.IsValid() || Target->BeatTag != Wanted)
+	{
+		return false;
+	}
+	return Target->ChecklistItemId.IsNone() || !IsChecklistItemDone(GetLocalPlayerState(), Target->ChecklistItemId);
+}
+
+void UBH_BeatTrackerComponent::ReportChecklistItem(const UObject* WorldContext, APlayerState* Player, FName ItemId)
+{
+	UBH_BeatTrackerComponent* Tracker = Get(WorldContext);
+	if (!Tracker || !Tracker->GetOwner() || !Tracker->GetOwner()->HasAuthority() || !Player || ItemId.IsNone())
+	{
+		return;
+	}
+	const FString Key = ChecklistKey(Player, ItemId);
+	if (Tracker->ChecklistDone.Contains(Key))
+	{
+		return;
+	}
+	Tracker->ChecklistDone.Add(Key);
+	Tracker->GetOwner()->ForceNetUpdate();
+	UE_LOG(LogTemp, Log, TEXT("[BH_Beat] checklist: %s did '%s'"), *Player->GetPlayerName(), *ItemId.ToString());
+	Tracker->OnObjectiveChanged.Broadcast(); // the server has no RepNotify call
+	Tracker->EvaluateChecklistCompletion();
+}
+
+void UBH_BeatTrackerComponent::ResetChecklistItem(const UObject* WorldContext, FName ItemId)
+{
+	UBH_BeatTrackerComponent* Tracker = Get(WorldContext);
+	if (!Tracker || !Tracker->GetOwner() || !Tracker->GetOwner()->HasAuthority() || ItemId.IsNone())
+	{
+		return;
+	}
+	const FString Suffix = TEXT("|") + ItemId.ToString();
+	if (Tracker->ChecklistDone.RemoveAll([&Suffix](const FString& Entry) { return Entry.EndsWith(Suffix); }) > 0)
+	{
+		Tracker->GetOwner()->ForceNetUpdate();
+		Tracker->OnObjectiveChanged.Broadcast();
+	}
+}
+
+void UBH_BeatTrackerComponent::EvaluateChecklistCompletion()
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority() || !GetWorld())
+	{
+		return;
+	}
+	TSet<FName> Ids;
+	for (const TWeakObjectPtr<ABH_BeatTarget>& Weak : GetChecklistTargets())
+	{
+		if (const ABH_BeatTarget* Target = Weak.Get())
+		{
+			Ids.Add(Target->ChecklistItemId);
+		}
+	}
+	const AGameStateBase* GameState = GetWorld()->GetGameState();
+	if (Ids.IsEmpty() || !GameState)
+	{
+		return;
+	}
+	for (const APlayerState* Player : GameState->PlayerArray)
+	{
+		if (!Player || Player->IsSpectator() || Player->IsABot())
+		{
+			continue;
+		}
+		bool bAll = true;
+		for (const FName& Id : Ids)
+		{
+			bAll &= IsChecklistItemDone(Player, Id);
+		}
+		if (bAll)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[BH_Beat] checklist of %s finished by %s"), *CurrentBeat.ToString(), *Player->GetPlayerName());
+			CompleteBeat(CurrentBeat);
+			return;
+		}
+	}
+}
+
+void UBH_BeatTrackerComponent::OnRep_ChecklistDone()
+{
+	OnObjectiveChanged.Broadcast();
 }
 
 bool UBH_BeatTrackerComponent::ShouldShowWorldMarker(const FVector& ViewerLocation)

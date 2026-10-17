@@ -310,7 +310,7 @@ void UBH_BeatNavigationComponent::RefreshObjective(const APlayerController* Play
 		}
 
 		// This target is the active objective when its position is the one the tracker resolved, and the gate is open.
-		const bool bIsCurrent = bHasObjective && Info.bHasTarget && Info.bGateOpen && FVector::DistSquared(Target->GetActorLocation(), Info.TargetLocation) < 1.0;
+		const bool bIsCurrent = bHasObjective && Info.bGateOpen && Tracker->IsTargetActive(Target); // every target of the beat (checklist items drop out once this player did them)
 
 		bool bWantScreen = false;
 		if (bIsCurrent && Info.bShowWorldMarker)

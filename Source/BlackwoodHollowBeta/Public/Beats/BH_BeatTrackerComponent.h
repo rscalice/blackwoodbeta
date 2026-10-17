@@ -25,6 +25,8 @@
 
 class UDataTable;
 class ABH_GameState;
+class ABH_BeatTarget;
+class APlayerState;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnBeatChanged, FGameplayTag, NewBeat, FGameplayTag, OldBeat);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnObjectiveChanged);
@@ -84,6 +86,31 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Beat")
 	bool ShouldShowWorldMarker(const FVector& ViewerLocation);
 
+	// -- Scavenging checklist (a beat whose targets carry a ChecklistItemId) -----------------------------------------------
+	// Beat progress stays PARTY-WIDE (one replicated current beat). The checklist is per player: the server keeps "<player key>|<item id>"
+	// entries (replicated, so every machine knows who did what, also for targets/containers that are not loaded on that machine), the markers
+	// and the counter are computed for the LOCAL player, and the beat advances as soon as ANY one player has done every item of it.
+
+	/** SERVER. Records that Player did checklist item ItemId (a container opened, the cache taken) and completes the beat if that finishes the list. */
+	UFUNCTION(BlueprintCallable, Category = "Beat|Checklist", meta = (WorldContext = "WorldContext"))
+	static void ReportChecklistItem(const UObject* WorldContext, APlayerState* Player, FName ItemId);
+
+	/** SERVER, debug (bh.Loot.ResetContainers): forgets ItemId for every player. */
+	UFUNCTION(BlueprintCallable, Category = "Beat|Checklist", meta = (WorldContext = "WorldContext"))
+	static void ResetChecklistItem(const UObject* WorldContext, FName ItemId);
+
+	/** Any machine. True when Player has done checklist item ItemId. */
+	UFUNCTION(BlueprintPure, Category = "Beat|Checklist")
+	bool IsChecklistItemDone(const APlayerState* Player, FName ItemId) const;
+
+	/** Any machine. Items done / total for the current beat. False when the current beat has no checklist. */
+	UFUNCTION(BlueprintCallable, Category = "Beat|Checklist")
+	bool GetChecklistProgress(const APlayerState* Player, int32& OutDone, int32& OutTotal);
+
+	/** Any machine. True when Target is a marker of the current beat that the LOCAL player still has to visit (every target of the beat for a plain beat). */
+	UFUNCTION(BlueprintCallable, Category = "Beat|Checklist")
+	bool IsTargetActive(const ABH_BeatTarget* Target);
+
 	/** Any machine. Every player as last sampled by the server (includes the local player; filter it out in the widget). */
 	UFUNCTION(BlueprintPure, Category = "Beat")
 	const TArray<FBH_PartnerPing>& GetPartnerPings() const { return PartnerPings; }
@@ -116,11 +143,22 @@ protected:
 	UFUNCTION()
 	void OnRep_PartnerPings();
 
+	/** "<player key>|<item id>" per finished checklist item. */
+	UPROPERTY(ReplicatedUsing = OnRep_ChecklistDone)
+	TArray<FString> ChecklistDone;
+
+	UFUNCTION()
+	void OnRep_ChecklistDone();
+
 	UFUNCTION()
 	void HandleWorldFlagChanged(FName Flag, bool bIsSet);
 
 private:
 	void LoadRows();
+	FGameplayTag GetCurrentTargetTag();
+	const TArray<TWeakObjectPtr<ABH_BeatTarget>>& GetChecklistTargets();
+	const APlayerState* GetLocalPlayerState() const;
+	void EvaluateChecklistCompletion();
 	void SetCurrentBeatInternal(FGameplayTag NewBeat);
 	void CompleteBeatsForSetFlags();
 	void UpdatePartnerPings();
@@ -131,6 +169,10 @@ private:
 	/** Cached copy of the table rows, in table order. */
 	TArray<FBH_BeatRow> Rows;
 	bool bRowsLoaded = false;
+
+	TArray<TWeakObjectPtr<ABH_BeatTarget>> ChecklistTargets;
+	FGameplayTag ChecklistCacheTag;
+	double ChecklistCacheTime = -100.0;
 
 	TWeakObjectPtr<AActor> CachedTarget;
 	double LastTargetSearchTime = -100.0;

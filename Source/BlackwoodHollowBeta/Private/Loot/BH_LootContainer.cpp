@@ -1,6 +1,7 @@
 // Blackwood Hollow - lootable container (implementation)
 
 #include "Loot/BH_LootContainer.h"
+#include "Beats/BH_BeatTrackerComponent.h"
 #include "Interaction/BH_InteractorComponent.h"
 #include "Loot/BH_LootLibrary.h"
 #include "Player/BH_PlayerState.h"
@@ -125,6 +126,7 @@ void ABH_LootContainer::BH_OnInteractionCompleted(APawn* InteractingPawn)
 	}
 
 	LootedKeys.Add(UBH_LootLibrary::GetPlayerKey(PlayerState));
+	UBH_BeatTrackerComponent::ReportChecklistItem(this, PlayerState, ChecklistItemId); // no-op when the id is None
 
 	if (!bOpened)
 	{
@@ -141,6 +143,7 @@ void ABH_LootContainer::BH_DebugReset()
 		return;
 	}
 	LootedKeys.Reset();
+	UBH_BeatTrackerComponent::ResetChecklistItem(this, ChecklistItemId);
 	if (bOpened)
 	{
 		bOpened = false;
