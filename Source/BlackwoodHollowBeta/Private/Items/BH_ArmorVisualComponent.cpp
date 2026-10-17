@@ -238,18 +238,17 @@ void UBH_ArmorVisualComponent::Refresh()
 		if (bChanged)
 		{
 			ClearSlot(SlotIndex);
+			// The mask is resolved once per slot change (a missing texture asset is not re-requested every refresh).
+			SlotMasks[SlotIndex] = (Visual && !Visual->BodyMask.IsNull()) ? Visual->BodyMask.LoadSynchronous() : nullptr;
 			if (Visual && Source)
 			{
 				BuildSlot(SlotIndex, Body, *Visual, Source);
 			}
 		}
+		DesiredMasks[SlotIndex] = Visual ? SlotMasks[SlotIndex].Get() : nullptr;
 
 		if (Visual)
 		{
-			if (!Visual->BodyMask.IsNull())
-			{
-				DesiredMasks[SlotIndex] = Visual->BodyMask.LoadSynchronous();
-			}
 			bAnyHidesHair |= Visual->bHidesHair;
 			for (const int32 BodySlot : Visual->HiddenBodyMaterialSlots)
 			{

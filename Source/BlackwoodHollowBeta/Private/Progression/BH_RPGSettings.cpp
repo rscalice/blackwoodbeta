@@ -1,6 +1,7 @@
 // Blackwood Hollow - Phase 9 RPG scaling settings (implementation)
 
 #include "Progression/BH_RPGSettings.h"
+#include "Engine/Texture2D.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Audio/BH_FootstepSet.h"
 #include "Items/BH_ArmorItem.h"
@@ -46,20 +47,21 @@ UBH_RPGSettings::UBH_RPGSettings()
 	AddEnemy(TEXT("CV"), TEXT("/Game/BlackwoodHollow/Characters/Enemies/MM/BP_BH_Enemy_CorruptedVanguard_MM.BP_BH_Enemy_CorruptedVanguard_MM_C"));
 	AddEnemy(TEXT("CVSergeant"), TEXT("/Game/BlackwoodHollow/Characters/Enemies/MM/BP_BH_Enemy_CV_Sergeant.BP_BH_Enemy_CV_Sergeant_C"));
 
-	// Starting outfit (Phase 11E): the BasicCloth MaleNormal chest / gloves / pants / boots (fitted to the MetaHuman visual body). No helm.
+	// Starting outfit (Armor Refit 2): the BaseClothing chest / pants / boots (fitted to the MetaHuman visual body). No helm and NO gloves
+	// (a slot without an entry shows nothing: bare hands). Each piece names its body mask texture (written next to the mesh by the fit tool).
 	// Config/DefaultGame.ini overrides this list with the same paths; keep the two in sync.
-	auto AddOutfit = [this](EBH_EquipSlot Slot, const TCHAR* MeshPath)
+	auto AddOutfit = [this](EBH_EquipSlot Slot, const TCHAR* Piece3)
 	{
+		const FString Base = TEXT("/Game/BlackwoodHollow/Equipment/Armor/BaseClothing/");
 		FBH_StartingOutfitPiece Piece;
 		Piece.Slot = Slot;
-		Piece.Visual.SkeletalMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(MeshPath));
+		Piece.Visual.SkeletalMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(FString::Printf(TEXT("%sSKM_BaseClothing_%s_MaleNormal.SKM_BaseClothing_%s_MaleNormal"), *Base, Piece3, Piece3)));
+		Piece.Visual.BodyMask = TSoftObjectPtr<UTexture2D>(FSoftObjectPath(FString::Printf(TEXT("%sT_BHMask_BaseClothing_%s_MaleNormal.T_BHMask_BaseClothing_%s_MaleNormal"), *Base, Piece3, Piece3)));
 		StartingOutfit.Add(Piece);
 	};
-	AddOutfit(EBH_EquipSlot::Chest, TEXT("/Game/BlackwoodHollow/Equipment/Armor/BasicCloth/SKM_BasicCloth_Chest_MaleNormal.SKM_BasicCloth_Chest_MaleNormal"));
-	AddOutfit(EBH_EquipSlot::Arms,  TEXT("/Game/BlackwoodHollow/Equipment/Armor/BasicCloth/SKM_BasicCloth_Gloves_MaleNormal.SKM_BasicCloth_Gloves_MaleNormal"));
-	AddOutfit(EBH_EquipSlot::Legs,  TEXT("/Game/BlackwoodHollow/Equipment/Armor/BasicCloth/SKM_BasicCloth_Pants_MaleNormal.SKM_BasicCloth_Pants_MaleNormal"));
-	AddOutfit(EBH_EquipSlot::Feet,  TEXT("/Game/BlackwoodHollow/Equipment/Armor/BasicCloth/SKM_BasicCloth_Boots_MaleNormal.SKM_BasicCloth_Boots_MaleNormal"));
-
+	AddOutfit(EBH_EquipSlot::Chest, TEXT("Chest"));
+	AddOutfit(EBH_EquipSlot::Legs,  TEXT("Pants"));
+	AddOutfit(EBH_EquipSlot::Feet,  TEXT("Boots"));
 	// bh.Armor.Give sets: item Blueprints /Game/BlackwoodHollow/Items/Armor/BI_Armor_<Prefix>_<Helm|Gloves|Chest|Pants|Boots>.
 	auto AddDebugSet = [this](const TCHAR* SetName, const TCHAR* Prefix)
 	{

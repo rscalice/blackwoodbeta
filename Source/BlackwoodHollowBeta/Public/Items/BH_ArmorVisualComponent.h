@@ -122,6 +122,11 @@ private:
 
 	/** What was last written per slot (nullptr = black) and whether masking was on, to skip redundant writes. */
 	TWeakObjectPtr<const UTexture2D> AppliedMasks[NumVisualSlots];
+
+	/** Mask texture resolved for each slot when its source last changed (nullptr = none / asset missing). */
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> SlotMasks[NumVisualSlots];
+
 	bool bAppliedMaskingOn = true;
 	bool bMasksApplied = false;
 
