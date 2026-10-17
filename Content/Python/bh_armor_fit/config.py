@@ -53,6 +53,9 @@ FIT = {
     "joint_gain": 2.0,            # joint factor = min(1, gain * min(weight on bone A, weight on bone B) of the joint)
     # near-skin weight transfer from the body (all bones, incl. twist / corrective), blended into the cleaned weights
     "transfer": True,
+    # which bones the transfer may use: "core_twist" folds every helper / corrective bone (side, bulge, mcp, pip, palm, Cor, kneeBack ...)
+    # into its nearest core ancestor (twist_01/02 bones are core); "all" keeps the body's weights on every bone (old behaviour)
+    "transfer_keep": "core_twist",
     "transfer_full_cm": 4.0,      # within this distance of the skin the body's weights are used as they are
     "transfer_fade_cm": 4.0,      # ... fading out to the cleaned weights over this much further distance
     "transfer_smooth_rings": 2,   # smoothing passes over the blended zone

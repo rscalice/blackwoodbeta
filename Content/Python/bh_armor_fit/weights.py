@@ -40,7 +40,8 @@ TRANSFER_ENABLED = bool(_FIT["transfer"])
 TRANSFER_FULL_CM = float(_FIT["transfer_full_cm"])
 TRANSFER_FADE_CM = float(_FIT["transfer_fade_cm"])
 TRANSFER_SMOOTH_RINGS = int(_FIT["transfer_smooth_rings"])
-TRANSFER_SIGNATURE = assets.stamp_of(TRANSFER_ENABLED, TRANSFER_FULL_CM, TRANSFER_FADE_CM, TRANSFER_SMOOTH_RINGS, "v1")
+TRANSFER_KEEP = str(_FIT.get("transfer_keep", "all"))
+TRANSFER_SIGNATURE = assets.stamp_of(TRANSFER_ENABLED, TRANSFER_FULL_CM, TRANSFER_FADE_CM, TRANSFER_SMOOTH_RINGS, TRANSFER_KEEP, "v2")
 
 _WEIGHTS = unreal.GeometryScript_BoneWeights
 _QUERIES = unreal.GeometryScript_MeshQueries
@@ -195,6 +196,10 @@ def transfer_near_skin(mesh, current, names, body_mesh_path):
     body, bvh = clearance._body(body_mesh_path)
     body_weights = _body_named_weights(body_mesh_path, body)
     index_of = {name: index for index, name in enumerate(names)}
+    keep_core = TRANSFER_KEEP == "core_twist"
+    if keep_core:
+        _, parents = bone_table(mesh)
+        targets = core_targets(names, parents)
     end = TRANSFER_FULL_CM + TRANSFER_FADE_CM
     result = dict(current)
     blended = set()
@@ -215,6 +220,8 @@ def transfer_near_skin(mesh, current, names, body_mesh_path):
             for name, weight in body_weights.get(corner, {}).items():
                 index = index_of.get(name)
                 if index is not None and share > 0.0:
+                    if keep_core:
+                        index = targets[index]  # helper / corrective bone -> nearest core ancestor
                     taken[index] = taken.get(index, 0.0) + weight * share
         if not taken:
             continue

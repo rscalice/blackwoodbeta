@@ -146,7 +146,7 @@ def _sanity_check(target, expected, body_bones):
         raise RuntimeError("bind pose differs from the body's by %.3f cm" % pose_delta)
     audit = weights.audit(result)
     # With the near-skin transfer on, weight on twist / corrective bones is expected (only near the skin).
-    non_core_bad = audit["non_core"] and not weights.TRANSFER_ENABLED
+    non_core_bad = audit["non_core"] and (not weights.TRANSFER_ENABLED or weights.TRANSFER_KEEP == "core_twist")
     if audit["missing"] or non_core_bad or audit["max_influences"] > weights.MAX_INFLUENCES:
         raise RuntimeError("weights not clean: %s" % audit)
     tris, want_tris = meshes.triangle_count(result), meshes.triangle_count(expected)
