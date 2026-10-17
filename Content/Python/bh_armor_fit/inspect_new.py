@@ -1,4 +1,4 @@
-﻿"""Read-only report of the new armor meshes: per material section triangle count, Z range, skin-underlay guess.
+"""Read-only report of the new armor meshes: per material section triangle count, Z range, skin-underlay guess.
 
 Run from the editor Python console:
     from bh_armor_fit import inspect_new; inspect_new.run()
@@ -23,33 +23,22 @@ DEFAULT_PATHS = [
 # Authoring body of the Fab packs plus every built body type (the BodyTypes/Reference folder holds only textures).
 AUTHORING_BODY = "/Game/Fab/Equipment/Polyphoria/CharacterParts_HeavyArmour/MH_Creator/SK_tal_nrw_base"
 _SKIN_WORDS = ("body", "skin", "synth", "nude", "underlay")
-_MATERIAL_FUNCTIONS = unreal.GeometryScript_MeshMaterialFunctions
+_MATERIAL_FUNCTIONS = unreal.GeometryScript_Materials  # script name of UGeometryScriptLibrary_MeshMaterialFunctions
 _QUERIES = unreal.GeometryScript_MeshQueries
 
 
-def _section_stats(mesh, section_count):
-    stats = {i: {"tris": 0, "zmin": 1e9, "zmax": -1e9} for i in range(section_count)}
-    for tri in _QUERIES.get_all_triangle_ids(mesh) if hasattr(_QUERIES, "get_all_triangle_ids") else range(_QUERIES.get_num_triangle_i_ds(mesh)):
-        if not _QUERIES.is_triangle_id(mesh, tri):
-            continue
-        material_id = _MATERIAL_FUNCTIONS.get_triangle_material_id(mesh, tri)
-        if isinstance(material_id, tuple):
-            material_id = material_id[0]
-        entry = stats.get(material_id)
-        if entry is None:
-            continue
-        indices = _QUERIES.get_triangle_indices(mesh, tri)
-        if isinstance(indices, tuple):
-            indices = indices[0]
-        for vertex in (indices.x, indices.y, indices.z):
-            position = _QUERIES.get_vertex_position(mesh, vertex)
-            if isinstance(position, tuple):
-                position = position[0]
-            entry["zmin"] = min(entry["zmin"], position.z)
-            entry["zmax"] = max(entry["zmax"], position.z)
-        entry["tris"] += 1
+def _section_stats(asset, section_count):
+    """Per section: re-read the mesh, delete every other section, measure what is left (proven helpers only)."""
+    stats = {}
+    for index in range(section_count):
+        mesh = meshes.keep_sections(meshes.read(asset), {index}, section_count)
+        tris = meshes.triangle_count(mesh)
+        if tris:
+            box = meshes.bounds(mesh)
+            stats[index] = {"tris": tris, "zmin": box.min.z, "zmax": box.max.z}
+        else:
+            stats[index] = {"tris": 0, "zmin": 0.0, "zmax": 0.0}
     return stats
-
 
 def run(paths=None):
     for path in paths or DEFAULT_PATHS:
@@ -62,7 +51,7 @@ def run(paths=None):
         box = meshes.bounds(mesh)
         height = max(box.max.z - box.min.z, 1e-6)
         unreal.log("%s %s: %d sections, %d tris, Z %.1f..%.1f" % (config.LOG_FIT, path, len(slots), meshes.triangle_count(mesh), box.min.z, box.max.z))
-        stats = _section_stats(mesh, len(slots))
+        stats = _section_stats(asset, len(slots))
         for index, (name, material) in enumerate(slots):
             entry = stats[index]
             label = ("%s %s" % (name, material.get_name() if material else "")).lower()
