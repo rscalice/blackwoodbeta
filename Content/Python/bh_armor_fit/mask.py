@@ -94,20 +94,35 @@ def _positions(mesh):
 
 def _triangles(mesh):
     """[(triangle id, (a, b, c))] of every live triangle."""
+    # Same call clearance._neighbours uses (proven). skip_gaps=False keeps list index == triangle id;
+    # freed ids come back as degenerate (-1 or repeated) entries and are skipped.
+    _, triangles, _gaps = _QUERIES.get_all_triangle_indices(mesh, False)
     result = []
-    for tri in range(_QUERIES.get_num_triangle_i_ds(mesh)):
-        if not _QUERIES.is_triangle_id(mesh, tri):
+    for tri, t in enumerate(triangles.convert_triangle_list_to_array()):
+        if t.x < 0 or t.x == t.y or t.y == t.z or t.x == t.z:
             continue
-        result.append((tri, weights._triangle_vertices(mesh, tri)))
+        result.append((tri, (t.x, t.y, t.z)))
     return result
 
 
+class _UVTri(object):
+    def __init__(self, a, b, c):
+        self.uv0, self.uv1, self.uv2 = a, b, c
+
+
 def _uv_triangle(mesh, triangle_id):
-    result = _UVS.get_mesh_uv_triangle(mesh, 0, triangle_id)
-    for value in result if isinstance(result, tuple) else (result,):
-        if hasattr(value, "uv0") and hasattr(value, "uv2"):
-            return value
-    raise RuntimeError("get_mesh_uv_triangle returned no UV triangle (does the body mesh have UV0?)")
+    """UV0 corners of a triangle. MeshQueries.get_triangle_u_vs -> (uv1, uv2, uv3, valid)."""
+    if hasattr(_QUERIES, "get_triangle_u_vs"):
+        result = _QUERIES.get_triangle_u_vs(mesh, 0, triangle_id)
+        uvs = [v for v in (result if isinstance(result, tuple) else (result,)) if isinstance(v, unreal.Vector2D)]
+        if len(uvs) >= 3:
+            return _UVTri(*uvs[:3])
+    if hasattr(_UVS, "get_mesh_uv_triangle"):
+        result = _UVS.get_mesh_uv_triangle(mesh, 0, triangle_id)
+        for value in result if isinstance(result, tuple) else (result,):
+            if hasattr(value, "uv0") and hasattr(value, "uv2"):
+                return value
+    raise RuntimeError("no UV triangle API worked (does the body mesh have UV0?)")
 
 
 def _welded(positions):
