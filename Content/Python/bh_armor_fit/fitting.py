@@ -5,6 +5,8 @@ each comes out as its own mesh. Pieces that need rigging are rigged first.
 """
 import time
 
+import unreal
+
 from . import assets, checks, config, harvest, meshes, metahuman, outfits, refbody, rigging
 from . import report as rpt
 
@@ -134,6 +136,10 @@ def _build_and_harvest(groups, group_outfits, body, label, run, started, reuse_b
 
 def _build(groups, group_outfits, body, set_name, label):
     """Build the set's outfits on the body type into its own folder (so the set can be re-harvested); returns the folder."""
+    # Outfit assets are always created fresh: regenerating them in place crashes UE 5.8 (FRenderResource HalfEdgeBuffer).
+    outfit_folder = "%s/%s" % (config.OUTFITS_ROOT, set_name)
+    if unreal.EditorAssetLibrary.does_directory_exist(outfit_folder):
+        unreal.EditorAssetLibrary.delete_directory(outfit_folder)
     wardrobe_items = [outfits.ensure(group_outfits[fit_id]) for fit_id in groups]
     mhc = assets.load(body.mhc_path)
     rpt.log(config.LOG_FIT, "%s ... building %d outfit(s) (locks the editor for a few minutes)" % (label, len(groups)))
