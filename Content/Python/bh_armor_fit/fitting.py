@@ -5,7 +5,7 @@ each comes out as its own mesh. Pieces that need rigging are rigged first.
 """
 import time
 
-from . import assets, checks, config, harvest, meshes, metahuman, outfits, rigging
+from . import assets, checks, config, harvest, meshes, metahuman, outfits, refbody, rigging
 from . import report as rpt
 
 
@@ -28,6 +28,12 @@ def fit_armor(sets=None, body_types=None, dry_run=False, force=False, reuse_buil
         rpt.warn(config.LOG_FIT, "Nothing matches sets=%s body_types=%s." % (sets, body_types))
         return run.finish(config.LOG_FIT)
     checks.preflight()
+    used = {p.source_mesh for p in pieces if p.set_name in selected_sets}
+    if any(scaled in used for scaled in refbody.SCALED):
+        if dry_run:
+            rpt.log(config.LOG_FIT, "scaled garments (refbody): would create / refresh them first")
+        else:
+            refbody.ensure_scaled()  # garments authored on a different-size body; stamped, so a no-op when up to date
     rig_names = [p.name for p in pieces if p.set_name in selected_sets and p.rigged_path]
     rigging.rig_into(run, rig_names, dry_run, force)
     jobs = [(s, b) for s in selected_sets for b in bodies]

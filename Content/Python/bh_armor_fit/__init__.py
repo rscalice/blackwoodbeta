@@ -10,6 +10,7 @@ Commands (also in the editor menu Blackwood Hollow > Armor Fit):
 Config lives in /Game/BlackwoodHollow/Equipment/ArmorFit (DT_BH_BodyTypes, DT_BH_ArmorPieces).
 """
 from .bodymat import apply_all as apply_body_material
+from .refbody import ensure_scaled as make_scaled_garments
 from .body_types import build_body_types, cancel_build_body_types
 from .fitting import fit_armor
 from .items import apply_to_items
@@ -18,6 +19,7 @@ from .rigging import rig_static_pieces
 
 __all__ = [
     "apply_body_material",
+    "make_scaled_garments",
     "apply_to_items",
     "build_body_types",
     "cancel_build_body_types",
