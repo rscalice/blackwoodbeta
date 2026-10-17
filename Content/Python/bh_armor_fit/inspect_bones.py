@@ -4,7 +4,15 @@
 """
 import unreal
 
-KEY = ["pelvis", "spine_03", "spine_05", "neck_01", "head", "clavicle_l", "upperarm_l", "lowerarm_l", "hand_l", "thigh_l", "calf_l", "foot_l"]
+KEY = ["pelvis", "spine_03", "spine_05", "neck_01", "head", "clavicle_l", "upperarm_l", "lowerarm_l", "hand_l", "thigh_l", "calf_l", "calf_twist_01_l", "foot_l", "ball_l", "foot_r"]
+BOOTS = [
+    ("BODY tal_nrw (source body)", "/Game/Fab/Equipment/Polyphoria/CharacterParts_HeavyArmour/MH_Creator/SK_tal_nrw_base"),
+    ("BODY MaleNormal Built_Fit", "/Game/BlackwoodHollow/Characters/BodyTypes/MaleNormal/Built_Fit/MHC_MaleNormal/Body/SKM_MHC_MaleNormal_BodyMesh"),
+    ("SRC BasicLeather Boots (SK_Mannequin)", "/Game/Fab/Equipment/BasicLeather/Boots"),
+    ("SRC Platemail Boots (works)", "/Game/Fab/Equipment/5-piece-platemail-metahuman-rigged/Platemail_Boots"),
+    ("FIT BasicLeather Boots", "/Game/BlackwoodHollow/Equipment/Armor/BasicLeather/SKM_BasicLeather_Boots_MaleNormal"),
+    ("FIT Platemail Boots", "/Game/BlackwoodHollow/Equipment/Armor/Platemail/SKM_Platemail_Boots_MaleNormal"),
+]
 MESHES = [
     ("BODY tal_nrw (source body)", "/Game/Fab/Equipment/Polyphoria/CharacterParts_HeavyArmour/MH_Creator/SK_tal_nrw_base"),
     ("BODY MaleNormal Built_Fit", "/Game/BlackwoodHollow/Characters/BodyTypes/MaleNormal/Built_Fit/MHC_MaleNormal/Body/SKM_MHC_MaleNormal_BodyMesh"),
@@ -53,12 +61,12 @@ def _positions(mesh):
     for key in KEY:
         match = next((n for n in names if n == key), None) or next((n for n in names if n.startswith(key)), None)
         if match:
-            out[key] = (match, component(index[match]).translation)
+            out[key] = (match, component(index[match]))
     return names, out
 
 
-def run():
-    for label, path in MESHES:
+def run(meshes=None):
+    for label, path in (meshes or MESHES):
         mesh = _find(path)
         if mesh is None:
             unreal.log_warning("[BH_Bones] %s missing: %s" % (label, path))
@@ -71,7 +79,7 @@ def run():
         unreal.log("[BH_Bones] %s  (%d bones, first %s) %s" % (label, len(names), names[:2], mesh.get_path_name()))
         for key in KEY:
             if key in pos:
-                n, v = pos[key]
-                unreal.log("[BH_Bones]     %-11s %-14s %7.1f %7.1f %7.1f" % (key, n, v.x, v.y, v.z))
+                n, tr = pos[key]; v = tr.translation; r = tr.rotation.rotator()
+                unreal.log("[BH_Bones]     %-15s %-18s %7.1f %7.1f %7.1f   rot p%6.1f y%6.1f r%6.1f" % (key, n, v.x, v.y, v.z, r.pitch, r.yaw, r.roll))
             else:
                 unreal.log("[BH_Bones]     %-11s (missing)" % key)
