@@ -30,6 +30,8 @@
 
 class UPrimitiveComponent;
 class USkeletalMeshComponent;
+class UMaterialInstanceDynamic;
+class UTexture2D;
 struct FBH_ArmorVisual;
 
 UCLASS(ClassGroup = (BlackwoodHollow), meta = (BlueprintSpawnableComponent))
@@ -101,6 +103,27 @@ private:
 	void ApplyHairHidden(AActor* VisualActor, bool bHide);
 	void ApplyBodyHiddenSlots(USkeletalMeshComponent* Body, const TSet<int32>& Desired);
 	void SyncCustomDepth(const USkeletalMeshComponent* Body) const;
+
+	/** Writes the per-slot BH_Mask_* textures to the body's dynamic material instances (black when a slot has no mask or bh.Armor.BodyMask is 0). */
+	void ApplyBodyMasks(USkeletalMeshComponent* Body, const UTexture2D* const (&DesiredMasks)[NumVisualSlots], bool bForce);
+
+	/** Lazily created 1x1 black texture used when a slot has no mask. */
+	UTexture2D* GetBlackMask();
+
+	/** Body material slots that get a dynamic instance; empty = every slot of the body. */
+	UPROPERTY(EditAnywhere, Category = "BlackwoodHollow|ArmorVisual")
+	TArray<int32> BodyMaskMaterialSlots;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> BlackMask;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> BodyMIDs;
+
+	/** What was last written per slot (nullptr = black) and whether masking was on, to skip redundant writes. */
+	TWeakObjectPtr<const UTexture2D> AppliedMasks[NumVisualSlots];
+	bool bAppliedMaskingOn = true;
+	bool bMasksApplied = false;
 
 	FSlotState SlotStates[NumVisualSlots];
 

@@ -18,10 +18,18 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerState.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Engine/Texture2D.h"
+#include "HAL/IConsoleManager.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogBHArmorVisual, Log, All);
+
+static TAutoConsoleVariable<int32> CVarBHArmorBodyMask(
+	TEXT("bh.Armor.BodyMask"), 1,
+	TEXT("1 = armor pieces write their body mask textures (BH_Mask_*) to the visual body material, 0 = all masks black (for comparison)."),
+	ECVF_Default);
 
 namespace BH_ArmorVisualComponent_Private
 {
@@ -133,6 +141,8 @@ void UBH_ArmorVisualComponent::ResetAllSlots()
 		ClearSlot(SlotIndex);
 	}
 	AppliedBodyHidden.Reset();
+	BodyMIDs.Reset();
+	bMasksApplied = false;
 	bHairStateValid = false;
 }
 
@@ -205,6 +215,7 @@ void UBH_ArmorVisualComponent::Refresh()
 	const UBH_RPGSettings* Settings = UBH_RPGSettings::Get();
 	bool bAnyHidesHair = false;
 	TSet<int32> DesiredBodyHidden;
+	const UTexture2D* DesiredMasks[NumVisualSlots] = {};
 
 	for (int32 SlotIndex = 0; SlotIndex < NumVisualSlots; ++SlotIndex)
 	{
@@ -235,6 +246,10 @@ void UBH_ArmorVisualComponent::Refresh()
 
 		if (Visual)
 		{
+			if (!Visual->BodyMask.IsNull())
+			{
+				DesiredMasks[SlotIndex] = Visual->BodyMask.LoadSynchronous();
+			}
 			bAnyHidesHair |= Visual->bHidesHair;
 			for (const int32 BodySlot : Visual->HiddenBodyMaterialSlots)
 			{
@@ -244,6 +259,7 @@ void UBH_ArmorVisualComponent::Refresh()
 	}
 
 	ApplyBodyHiddenSlots(Body, DesiredBodyHidden);
+	ApplyBodyMasks(Body, DesiredMasks, bBodyChanged);
 
 	if (!bHairStateValid || bHairHidden != bAnyHidesHair || bBodyChanged)
 	{
@@ -411,6 +427,100 @@ void UBH_ArmorVisualComponent::ApplyBodyHiddenSlots(USkeletalMeshComponent* Body
 		}
 	}
 	AppliedBodyHidden = Desired;
+}
+
+UTexture2D* UBH_ArmorVisualComponent::GetBlackMask()
+{
+	if (!BlackMask)
+	{
+		UTexture2D* Tex = UTexture2D::CreateTransient(1, 1, PF_B8G8R8A8);
+		if (Tex)
+		{
+			Tex->SRGB = false;
+			Tex->Filter = TF_Nearest;
+			FTexture2DMipMap& Mip = Tex->GetPlatformData()->Mips[0];
+			void* Data = Mip.BulkData.Lock(LOCK_READ_WRITE);
+			FMemory::Memzero(Data, 4);
+			Mip.BulkData.Unlock();
+			Tex->UpdateResource();
+			BlackMask = Tex;
+		}
+	}
+	return BlackMask;
+}
+
+void UBH_ArmorVisualComponent::ApplyBodyMasks(USkeletalMeshComponent* Body, const UTexture2D* const (&DesiredMasks)[NumVisualSlots], bool bForce)
+{
+	using namespace BH_ArmorVisualComponent_Private;
+	if (!Body)
+	{
+		return;
+	}
+
+	const bool bMaskingOn = CVarBHArmorBodyMask.GetValueOnGameThread() != 0;
+
+	bool bDirty = bForce || !bMasksApplied || bMaskingOn != bAppliedMaskingOn;
+	for (int32 i = 0; i < NumVisualSlots && !bDirty; ++i)
+	{
+		bDirty = AppliedMasks[i].Get() != DesiredMasks[i];
+	}
+	if (!bDirty)
+	{
+		return;
+	}
+
+	// One dynamic instance per body material slot, created once and kept (MIDs created earlier on this body are reused).
+	if (BodyMIDs.Num() == 0)
+	{
+		const int32 NumMaterials = Body->GetNumMaterials();
+		for (int32 MatIndex = 0; MatIndex < NumMaterials; ++MatIndex)
+		{
+			if (BodyMaskMaterialSlots.Num() > 0 && !BodyMaskMaterialSlots.Contains(MatIndex))
+			{
+				continue;
+			}
+			UMaterialInterface* Current = Body->GetMaterial(MatIndex);
+			if (!Current)
+			{
+				continue;
+			}
+			UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(Current);
+			if (!MID)
+			{
+				MID = Body->CreateAndSetMaterialInstanceDynamic(MatIndex);
+			}
+			if (MID)
+			{
+				BodyMIDs.Add(MID);
+			}
+		}
+	}
+
+	static const FName* const ParamNames[NumVisualSlots] =
+	{
+		&BH_ArmorMask::ParamHelm, &BH_ArmorMask::ParamChest, &BH_ArmorMask::ParamGloves, &BH_ArmorMask::ParamPants, &BH_ArmorMask::ParamBoots
+	};
+	UTexture2D* Black = GetBlackMask();
+
+	for (int32 i = 0; i < NumVisualSlots; ++i)
+	{
+		const UTexture2D* Wanted = bMaskingOn ? DesiredMasks[i] : nullptr;
+		UTexture* Tex = Wanted ? const_cast<UTexture2D*>(Wanted) : static_cast<UTexture*>(Black);
+		if (!Tex)
+		{
+			continue;
+		}
+		for (UMaterialInstanceDynamic* MID : BodyMIDs)
+		{
+			if (MID)
+			{
+				MID->SetTextureParameterValue(*ParamNames[i], Tex);
+			}
+		}
+		AppliedMasks[i] = DesiredMasks[i];
+	}
+	bAppliedMaskingOn = bMaskingOn;
+	bMasksApplied = true;
 }
 
 void UBH_ArmorVisualComponent::SyncCustomDepth(const USkeletalMeshComponent* Body) const
