@@ -173,13 +173,14 @@ def build_material(mat):
     # ---------- layer samples
     g_c = tex(TEX + "T_ground_grass_01_diffuse", uv_flat, C, 12, 0)
     g_n = tex(TEX + "T_ground_grass_01_normal", uv_flat, N, 12, 1)
-    g_m = tex(TEXV2 + "T_ground_grass_01_masks", uv_flat, M, 12, 2)
+    L = unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR  # STF masks are flagged colour, not Masks
+    g_m = tex(TEXV2 + "T_ground_grass_01_masks", uv_flat, L, 12, 2)
     d_c = tex(TEX + "T_ground_dirt_01_diffuse", uv_flat, C, 12, 4)
     d_n = tex(TEX + "T_ground_dirt_01_normal", uv_flat, N, 12, 5)
-    d_m = tex(TEXV2 + "T_ground_dirt_01_masks", uv_flat, M, 12, 6)
+    d_m = tex(TEXV2 + "T_ground_dirt_01_masks", uv_flat, L, 12, 6)
     r_c = tex(TEX + "T_ground_rock_01_diffuse", uv_rock, C, 12, 8)
     r_n = tex(TEX + "T_ground_rock_01_normal", uv_rock, N, 12, 9)
-    r_m = tex(TEXV2 + "T_ground_rock_01_masks", uv_rock, M, 12, 10)
+    r_m = tex(TEXV2 + "T_ground_rock_01_masks", uv_rock, L, 12, 10)
     # beach/sand: Megascans Rocky Sand (B = base colour, N = normal, ORM: R = AO, G = roughness)
     s_c = tex(SAND + "T_vmkecjj_4K_B", uv_flat, C, 12, 12)
     s_n = tex(SAND + "T_vmkecjj_4K_N", uv_flat, N, 12, 13)
@@ -207,23 +208,37 @@ def build_material(mat):
     land = mul(one_minus(beach, 17, 16), one_minus(rock, 17, 17), 18, 16)
     grass_m = mul(land, one_minus(dirt, 18, 18), 19, 17)
     dirt_m = mul(land, dirt, 19, 19)
+    # Named reroutes so the masks are easy to find and wire by hand if the scripted grass output fails.
+    def named(src, nm, y):
+        try:
+            r = node(unreal.MaterialExpressionNamedRerouteDeclaration, 20, y, name=nm)
+            link(src, r, "")
+            return r
+        except Exception:  # noqa
+            return src
+    grass_r = named(grass_m, "GrassMask", 17)
+    dirt_r = named(dirt_m, "DirtGrassMask", 19)
+    specs = [("Grass", "grass1_layer_grass", grass_r),
+             ("Flowers", "grass2_layer_flowers", grass_r),
+             ("DirtGrass", "dirt_layer_grass", dirt_r)]
+    go = node(unreal.MaterialExpressionLandscapeGrassOutput, 22, 17)
     try:
-        specs = [("Grass", "grass1_layer_grass", grass_m),
-                 ("Flowers", "grass2_layer_flowers", grass_m),
-                 ("DirtGrass", "dirt_layer_grass", dirt_m)]
         gi = []
         for nm, asset, _m in specs:
-            gt = load(GRASS + asset)
-            gi.append(unreal.GrassInput(name=nm, grass_type=gt))
-        go = node(unreal.MaterialExpressionLandscapeGrassOutput, 21, 17)
+            g = unreal.GrassInput()
+            g.set_editor_property("name", nm)
+            g.set_editor_property("grass_type", load(GRASS + asset))
+            gi.append(g)
         go.set_editor_property("grass_types", gi)
+        mel.recompile_material(mat)  # pins appear once the entries exist
         for nm, _a, m in specs:
             link(m, go, nm)
-        log("grass output created: Grass+Flowers on grass mask, DirtGrass on dirt mask")
+        log("grass output created: Grass+Flowers on GrassMask, DirtGrass on DirtGrassMask")
     except Exception as ex:  # noqa
-        err("GRASS OUTPUT FALLBACK: could not build LandscapeGrassOutput from script (%s). "
-            "Material works without foliage; add Landscape Grass Output by hand: Grass/Flowers <- "
-            "(1-beach)*(1-rock)*(1-dirt), DirtGrass <- (1-beach)*(1-rock)*dirt." % ex)
+        err("GRASS OUTPUT: wire by hand (%s). In M_BH_Landscape_Auto select the Landscape Grass Output node, "
+            "add 3 Grass Types: Grass=grass1_layer_grass, Flowers=grass2_layer_flowers, "
+            "DirtGrass=dirt_layer_grass (STF Base/LandscapeGrassType); connect GrassMask to Grass and Flowers, "
+            "DirtGrassMask to DirtGrass; Save." % ex)
 
     mel.layout_material_expressions(mat) if hasattr(mel, "layout_material_expressions") else None
     mel.recompile_material(mat)
