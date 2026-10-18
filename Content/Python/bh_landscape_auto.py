@@ -221,39 +221,55 @@ def build_material(mat):
 
     # ---------- grass output: nothing on beach / rock
     land = mul(one_minus(beach, 17, 16), one_minus(rock, 17, 17), 18, 16)
-    grass_m = mul(land, one_minus(dirt, 18, 18), 19, 17)
-    dirt_m = mul(land, dirt, 19, 19)
-    # Named reroutes so the masks are easy to find and wire by hand if the scripted grass output fails.
-    def named(src, nm, y):
-        try:
-            r = node(unreal.MaterialExpressionNamedRerouteDeclaration, 20, y, name=nm)
-            link(src, r, "")
-            return r
-        except Exception:  # noqa
-            return src
-    grass_r = named(grass_m, "GrassMask", 17)
-    dirt_r = named(dirt_m, "DirtGrassMask", 19)
-    specs = [("Grass", "grass1_layer_grass", grass_r),
-             ("Flowers", "grass2_layer_flowers", grass_r),
-             ("DirtGrass", "dirt_layer_grass", dirt_r)]
-    go = node(unreal.MaterialExpressionLandscapeGrassOutput, 22, 17)
+    # Mirrors STF v2 (M_landscape_pro_v2_no_tesselation): every grass type has its OWN input, each
+    # = (layer weight) x LandscapeVisibilityMask (the grass cutout for landscape holes).  Our
+    # procedural masks stand in for the paint-layer weights.  Grass must NOT be gated by the
+    # highland term: above HighlandHeight the surface is 100% "dirt", so a (1-dirt) grass mask is 0 there.
+    grass_m = mul(land, one_minus(dirt, 18, 18), 19, 17)             # grass / flowers
+    dirt_m = mul(mul(land, dirt, 19, 19), one_minus(high, 19, 20), 20, 19)   # weeds on dirt patches, lowland
+    forest_m = mul(land, high, 19, 21)                                # forest + nettles on high ground
+    specs = [("Grass", "grass1_layer_grass", grass_m),
+             ("GrassDirt", "grass1_layer_dirt_V2", grass_m),
+             ("Flowers", "grass2_layer_flowers", grass_m),
+             ("DirtGrass", "dirt_layer_grass", dirt_m),
+             ("ForestMain", "forest_layer_main_v2", forest_m),
+             ("ForestNettles", "forest_layer_nessels_v2", forest_m)]
+    go = node(unreal.MaterialExpressionLandscapeGrassOutput, 23, 18)
     try:
         gi = []
-        for nm, asset, _m in specs:
+        feeds = []
+        for i, (nm, asset, m) in enumerate(specs):
             g = unreal.GrassInput()
             g.set_editor_property("name", nm)
             g.set_editor_property("grass_type", load(GRASS + asset))
             gi.append(g)
+            # separate Multiply per pin: mask x visibility mask (own node each, like STF's StaticSwitch inputs)
+            vis = node(unreal.MaterialExpressionLandscapeVisibilityMask, 20, 23 + i * 2)
+            feeds.append(mul(m, vis, 21, 22 + i * 2))
         go.set_editor_property("grass_types", gi)
-        mel.recompile_material(mat)  # pins appear once the entries exist
-        for nm, _a, m in specs:
-            link(m, go, nm)
-        log("grass output created: Grass+Flowers on GrassMask, DirtGrass on DirtGrassMask")
+        # Set the connections straight on the entries: no recompile needed to expose the pins.
+        ok = True
+        try:
+            gi2 = go.get_editor_property("grass_types")
+            for g, f in zip(gi2, feeds):
+                inp = g.get_editor_property("input")
+                inp.set_editor_property("expression", f)
+                g.set_editor_property("input", inp)
+            go.set_editor_property("grass_types", gi2)
+            ok = all(g.get_editor_property("input").get_editor_property("expression") is not None
+                     for g in go.get_editor_property("grass_types"))
+        except Exception:  # noqa
+            ok = False
+        if not ok:  # fallback: pins only exist after a compile (one extra, but only if direct set fails)
+            mel.recompile_material(mat)
+            for (nm, _a, _m), f in zip(specs, feeds):
+                link(f, go, nm)
+        log("grass output created: %d entries, each with its own mask x visibility multiply" % len(specs))
     except Exception as ex:  # noqa
         err("GRASS OUTPUT: wire by hand (%s). In M_BH_Landscape_Auto select the Landscape Grass Output node, "
-            "add 3 Grass Types: Grass=grass1_layer_grass, Flowers=grass2_layer_flowers, "
-            "DirtGrass=dirt_layer_grass (STF Base/LandscapeGrassType); connect GrassMask to Grass and Flowers, "
-            "DirtGrassMask to DirtGrass; Save." % ex)
+            "add the Grass Types from STF Pack03 Base/LandscapeGrassType (grass1_layer_grass, "
+            "grass1_layer_dirt_V2, grass2_layer_flowers, dirt_layer_grass, forest_layer_main_v2, "
+            "forest_layer_nessels_v2) and feed each from its own mask x Landscape Visibility Mask; Save." % ex)
 
     mel.layout_material_expressions(mat) if hasattr(mel, "layout_material_expressions") else None
     mel.recompile_material(mat)
@@ -270,6 +286,14 @@ def main():
     if not mat:
         err("could not create material")
         return
+    # GPU safety: park every landscape on a cheap engine material while the heavy graph is rebuilt
+    # (a live recompile of this material on the whole landscape crashed the GPU).  The MI is assigned at the end.
+    sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+    cheap = eal.load_asset("/Engine/EngineMaterials/WorldGridMaterial")
+    pre = [a for a in sub.get_all_level_actors() if isinstance(a, unreal.LandscapeProxy)]
+    if cheap:
+        for a in pre:
+            a.set_editor_property("landscape_material", cheap)
     build_material(mat)
     eal.save_asset(MAT, only_if_is_dirty=False)
 
@@ -285,7 +309,6 @@ def main():
     mel.update_material_instance(mi)
     eal.save_asset(MI, only_if_is_dirty=False)
 
-    sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     lands = [a for a in sub.get_all_level_actors() if isinstance(a, unreal.LandscapeProxy)]
     if not lands:
         unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).load_level(LEVEL)
