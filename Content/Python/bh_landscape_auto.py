@@ -62,8 +62,41 @@ def load(path):
     return a
 
 
+def expr_count(mat):
+    try:
+        return mel.get_num_material_expressions(mat)
+    except Exception:  # noqa
+        return -1
+
+
+def clean_material(mat):
+    """delete_all_material_expressions has been seen to leave the previous build's nodes behind (the saved
+    material held 22 TextureSamples instead of 12), which desyncs the referenced-texture list from the
+    compiled one -> 'Requesting an invalid TextureIndex! (11 / 10)' and a material that never finishes
+    compiling.  Verify the graph is really empty; otherwise delete and recreate the asset (landscapes are
+    parked on WorldGridMaterial by now, so nothing references it)."""
+    for _ in range(3):
+        mel.delete_all_material_expressions(mat)
+        if expr_count(mat) == 0:
+            return mat
+    left = expr_count(mat)
+    log("delete_all left %d stale expressions; recreating %s" % (left, MAT))
+    mi_asset = load(MI) if eal.does_asset_exist(MI) else None
+    if mi_asset:
+        try:
+            mel.set_material_instance_parent(mi_asset, None)
+        except Exception:  # noqa
+            pass
+    if not eal.delete_asset(MAT):
+        err("could not delete stale %s; close its editor tab and rerun" % MAT)
+        return mat
+    new = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+        MAT_NAME, MAT_DIR, unreal.Material, unreal.MaterialFactoryNew())
+    log("recreated material, %d expressions" % expr_count(new))
+    return new or mat
+
+
 def build_material(mat):
-    mel.delete_all_material_expressions(mat)
     X = [0]
 
     def node(cls, x, y, **props):
@@ -260,10 +293,16 @@ def build_material(mat):
                      for g in go.get_editor_property("grass_types"))
         except Exception:  # noqa
             ok = False
-        if not ok:  # fallback: pins only exist after a compile (one extra, but only if direct set fails)
+        if not ok:  # fallback: pins only exist after a compile (cheap: landscape is parked on WorldGridMaterial)
             mel.recompile_material(mat)
             for (nm, _a, _m), f in zip(specs, feeds):
                 link(f, go, nm)
+        # Read back the real connections and fall back to pin links for any empty entry.
+        mel.recompile_material(mat)
+        for (nm, _a, _m), f, g in zip(specs, feeds, go.get_editor_property("grass_types")):
+            if g.get_editor_property("input").get_editor_property("expression") is None:
+                link(f, go, nm)
+                log("grass entry %s was unconnected, linked via pin" % nm)
         log("grass output created: %d entries, each with its own mask x visibility multiply" % len(specs))
     except Exception as ex:  # noqa
         err("GRASS OUTPUT: wire by hand (%s). In M_BH_Landscape_Auto select the Landscape Grass Output node, "
@@ -294,7 +333,9 @@ def main():
     if cheap:
         for a in pre:
             a.set_editor_property("landscape_material", cheap)
+    mat = clean_material(mat)
     build_material(mat)
+    log("material graph has %d expressions after build" % expr_count(mat))
     eal.save_asset(MAT, only_if_is_dirty=False)
 
     if eal.does_asset_exist(MI):
@@ -323,7 +364,8 @@ def main():
         a.set_editor_property("landscape_material", mi)
         log("landscape_material set on " + a.get_actor_label())
     unreal.EditorLoadingAndSavingUtils.save_packages([a.get_outermost() for a in lands], False)
-    log("done")
+    unreal.SystemLibrary.execute_console_command(None, "grass.FlushCache")
+    log("done (grass cache flushed)")
 
 
 main()
