@@ -14,9 +14,15 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
 #include "GameplayTagContainer.h"
+#include "Engine/TimerHandle.h"
 #include "Consumables/BH_ConsumableTypes.h"
 #include "Combat/BH_EnemyRank.h"
+#include "Player/BH_PartyStatus.h"
 #include "BH_PlayerState.generated.h"
+
+class UAbilitySystemComponent;
+class UBH_PlayerDeathComponent;
+struct FOnAttributeChangeData;
 
 class UNarrativeInventoryComponent;
 class UNarrativeItem;
@@ -88,6 +94,18 @@ public:
 	int32 GetPlayerSlot() const { return PlayerSlot; }
 
 	static constexpr int32 MaxPlayerSlots = 4;
+
+	// -- Partner panel data (13I-1) ----------------------------------------------------------------------------
+	/** Any machine. The replicated summary of this player (health, blight stacks, death state, combat, fracture, level). Always relevant, works beyond net cull distance. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Party")
+	const FBH_PartyMemberStatus& GetPartyStatus() const { return PartyStatus; }
+
+	/** Fires on the server when it writes a new status and on clients from the RepNotify. Throttled to at most 5 updates per second. */
+	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|Party")
+	FBH_OnPartyStatusChanged OnPartyStatusChanged;
+
+	/** Minimum seconds between status recomputes on the server (5 per second). */
+	static constexpr float PartyStatusInterval = 0.2f;
 
 	// -- Cause of death (13C) ------------------------------------------------------------------------------------
 	/** SERVER. Records what just killed this player. Killer null / not an enemy / bBlight = "Overwhelmed by the Blight". */
@@ -235,6 +253,14 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	/** 13I-1. Server-owned summary for the partner panel. */
+	UPROPERTY(ReplicatedUsing = OnRep_PartyStatus)
+	FBH_PartyMemberStatus PartyStatus;
+
+	UFUNCTION()
+	void OnRep_PartyStatus();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Inventory")
 	TObjectPtr<UNarrativeInventoryComponent> Inventory;
@@ -295,6 +321,33 @@ protected:
 	void ClientConsumableUseRefused(TSubclassOf<UNarrativeItem> ItemClass, EBH_ConsumableRefusal Reason);
 
 private:
+	// -- 13I-1 status tracking (server) --
+	void MarkPartyStatusDirty() { bPartyStatusDirty = true; }
+	void TickPartyStatus();
+	/** Binds the change sources of StatusPawn's ASC / death component (unbinding the old ones). Marks the status dirty. */
+	void RebindPartyStatusSources(APawn* NewStatusPawn);
+	void UnbindPartyStatusSources();
+	FBH_PartyMemberStatus BuildPartyStatus() const;
+	void HandleStatusAttributeChanged(const FOnAttributeChangeData& ChangeData);
+	void HandleStatusTagChanged(const FGameplayTag ChangedTag, int32 NewCount);
+
+	UFUNCTION()
+	void HandleStatusDeathPhase(EBH_DeathPhase NewPhase, EBH_DeathPhase OldPhase);
+
+	UFUNCTION()
+	void HandleStatusLevelUp(int32 NewLevel);
+
+	FTimerHandle PartyStatusTimer;
+	bool bPartyStatusDirty = true;
+	TWeakObjectPtr<APawn> StatusPawn;
+	TWeakObjectPtr<UAbilitySystemComponent> StatusASC;
+	TWeakObjectPtr<UBH_PlayerDeathComponent> StatusDeathComponent;
+	FDelegateHandle HealthHandle;
+	FDelegateHandle MaxHealthHandle;
+	FDelegateHandle BlightHandle;
+	FDelegateHandle CombatTagHandle;
+	FDelegateHandle FractureTagHandle;
+
 	/** Server: validates (except for null = unequip), writes the slot, notifies the UI and pushes the change to the pawn. */
 	bool ApplyFragmentSlot(int32 Slot, TSubclassOf<UAH_GA_FragmentBase> FragmentClass);
 

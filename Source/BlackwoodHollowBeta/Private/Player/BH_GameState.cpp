@@ -2,6 +2,7 @@
 
 #include "Player/BH_GameState.h"
 #include "Player/BH_PartyComponent.h"
+#include "Player/BH_PlayerState.h"
 #include "Beats/BH_BeatTrackerComponent.h"
 #include "Beats/BH_BeatNavigationComponent.h"
 #include "NarrativeComponent.h"
@@ -139,6 +140,7 @@ APlayerState* ABH_GameState::GetPartyLeaderState() const
 void ABH_GameState::AddPlayerState(APlayerState* PlayerState)
 {
 	Super::AddPlayerState(PlayerState);
+	OnPartyMembersChanged.Broadcast();
 
 	if (!HasAuthority() || !PlayerState || !PartyComponent)
 	{
@@ -165,7 +167,26 @@ void ABH_GameState::AddPlayerState(APlayerState* PlayerState)
 
 void ABH_GameState::RemovePlayerState(APlayerState* PlayerState)
 {
+	// 13I-1: tell the partner panel before the state is gone (it only needs the slot and the name), on every machine.
+	int32 LeavingSlot = 0;
+	FString LeavingName;
+	const bool bWasPlayer = PlayerState && !PlayerState->IsOnlyASpectator() && Cast<APlayerController>(PlayerState->GetOwner()) != nullptr;
+	if (const ABH_PlayerState* LeavingState = Cast<ABH_PlayerState>(PlayerState))
+	{
+		LeavingSlot = LeavingState->GetPlayerSlot();
+	}
+	if (PlayerState)
+	{
+		LeavingName = PlayerState->GetPlayerName();
+	}
+
 	Super::RemovePlayerState(PlayerState);
+
+	if (bWasPlayer || LeavingSlot > 0)
+	{
+		OnPartnerDisconnected.Broadcast(LeavingSlot, LeavingName);
+	}
+	OnPartyMembersChanged.Broadcast();
 
 	if (!HasAuthority() || !PlayerState)
 	{
@@ -266,6 +287,7 @@ bool ABH_GameState::TryRegisterPlayerState(APlayerState* PlayerState)
 		return false;
 	}
 
+	OnPartyMembersChanged.Broadcast();
 	UE_LOG(LogBHParty, Log, TEXT("Party: %s joined (%d member(s), leader %s)."), *GetNameSafe(PlayerState), PartyComponent->GetPartyMemberStates().Num(), *GetNameSafe(GetPartyLeaderState()));
 	return true;
 }

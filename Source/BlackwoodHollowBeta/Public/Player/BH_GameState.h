@@ -33,6 +33,12 @@ class APlayerController;
 /** Phase 12F. A world flag was set or cleared (any machine: the flag list replicates). */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnWorldFlagChanged, FName, Flag, bool, bIsSet);
 
+/** 13I-1. The party roster changed: a player state was added or removed (any machine), or a member was registered into the party (server). Rebuild the partner panel. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnPartyMembersChanged);
+
+/** 13I-1. A player left the session (any machine). Key the panel by PlayerSlot (stable 1..4, 0 = it was never assigned) and show "Disconnected" for UBH_PartyLibrary::DisconnectedDisplaySeconds (3 s). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnPartnerDisconnected, int32, PlayerSlot, const FString&, PlayerName);
+
 UCLASS()
 class BLACKWOODHOLLOWBETA_API ABH_GameState : public AGameStateBase
 {
@@ -81,6 +87,14 @@ public:
 	/** Any machine. True if the flag is currently set. */
 	UFUNCTION(BlueprintPure, Category = "BH|World")
 	bool HasWorldFlag(FName Flag) const { return WorldFlags.Contains(Flag); }
+
+	/** 13I-1. The roster changed (see FBH_OnPartyMembersChanged). */
+	UPROPERTY(BlueprintAssignable, Category = "BH|Party")
+	FBH_OnPartyMembersChanged OnPartyMembersChanged;
+
+	/** 13I-1. A player left (see FBH_OnPartnerDisconnected). */
+	UPROPERTY(BlueprintAssignable, Category = "BH|Party")
+	FBH_OnPartnerDisconnected OnPartnerDisconnected;
 
 	/** Any machine, after the flag list changed (the server fires it from SetWorldFlag, clients from the RepNotify). */
 	UPROPERTY(BlueprintAssignable, Category = "BH|World")
