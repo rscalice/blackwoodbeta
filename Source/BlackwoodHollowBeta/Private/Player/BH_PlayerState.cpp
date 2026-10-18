@@ -23,6 +23,7 @@
 #include "GameFramework/Character.h"
 #include "Player/BH_GameState.h"
 #include "Player/BH_PartyLibrary.h"
+#include "Player/BH_PartyStateSubsystem.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
@@ -689,6 +690,15 @@ void ABH_PlayerState::TickPartyStatus()
 		RebindPartyStatusSources(CurrentPawn);
 	}
 
+	// The combat grace expiring is a change too.
+	const UWorld* TickWorld = GetWorld();
+	const bool bNowInCombat = TickWorld && TickWorld->GetTimeSeconds() < CombatEngagedUntil;
+	if (bNowInCombat != bReportedInCombat)
+	{
+		bReportedInCombat = bNowInCombat;
+		bPartyStatusDirty = true;
+	}
+
 	if (!bPartyStatusDirty)
 	{
 		return;
@@ -711,7 +721,6 @@ void ABH_PlayerState::UnbindPartyStatusSources()
 		BoundASC->GetGameplayAttributeValueChangeDelegate(UAH_AttributeSet::GetHealthAttribute()).Remove(HealthHandle);
 		BoundASC->GetGameplayAttributeValueChangeDelegate(UAH_AttributeSet::GetMaxHealthAttribute()).Remove(MaxHealthHandle);
 		BoundASC->GetGameplayAttributeValueChangeDelegate(UAH_AttributeSet::GetBlightBuildupAttribute()).Remove(BlightHandle);
-		BoundASC->RegisterGameplayTagEvent(TAG_State_Combat_InCombat, EGameplayTagEventType::NewOrRemoved).Remove(CombatTagHandle);
 		BoundASC->RegisterGameplayTagEvent(TAG_State_Status_Fracture, EGameplayTagEventType::NewOrRemoved).Remove(FractureTagHandle);
 	}
 	if (UBH_PlayerDeathComponent* BoundDeath = StatusDeathComponent.Get())
@@ -721,7 +730,6 @@ void ABH_PlayerState::UnbindPartyStatusSources()
 	HealthHandle.Reset();
 	MaxHealthHandle.Reset();
 	BlightHandle.Reset();
-	CombatTagHandle.Reset();
 	FractureTagHandle.Reset();
 	StatusASC.Reset();
 	StatusDeathComponent.Reset();
@@ -748,7 +756,6 @@ void ABH_PlayerState::RebindPartyStatusSources(APawn* NewStatusPawn)
 	HealthHandle = PawnASC->GetGameplayAttributeValueChangeDelegate(UAH_AttributeSet::GetHealthAttribute()).AddUObject(this, &ABH_PlayerState::HandleStatusAttributeChanged);
 	MaxHealthHandle = PawnASC->GetGameplayAttributeValueChangeDelegate(UAH_AttributeSet::GetMaxHealthAttribute()).AddUObject(this, &ABH_PlayerState::HandleStatusAttributeChanged);
 	BlightHandle = PawnASC->GetGameplayAttributeValueChangeDelegate(UAH_AttributeSet::GetBlightBuildupAttribute()).AddUObject(this, &ABH_PlayerState::HandleStatusAttributeChanged);
-	CombatTagHandle = PawnASC->RegisterGameplayTagEvent(TAG_State_Combat_InCombat, EGameplayTagEventType::NewOrRemoved).AddUObject(this, &ABH_PlayerState::HandleStatusTagChanged);
 	FractureTagHandle = PawnASC->RegisterGameplayTagEvent(TAG_State_Status_Fracture, EGameplayTagEventType::NewOrRemoved).AddUObject(this, &ABH_PlayerState::HandleStatusTagChanged);
 
 	if (UBH_PlayerDeathComponent* PawnDeath = UBH_PlayerDeathComponent::Find(NewStatusPawn))
@@ -758,8 +765,25 @@ void ABH_PlayerState::RebindPartyStatusSources(APawn* NewStatusPawn)
 	}
 }
 
+void ABH_PlayerState::NotifyCombatEngaged()
+{
+	const UWorld* StateWorld = GetWorld();
+	if (!HasAuthority() || !StateWorld)
+	{
+		return;
+	}
+	const UBH_PartyStateSubsystem* PartyState = UBH_PartyStateSubsystem::Get(this);
+	const float Grace = PartyState ? PartyState->OutOfCombatGrace : 3.f;
+	CombatEngagedUntil = StateWorld->GetTimeSeconds() + Grace;
+}
+
 void ABH_PlayerState::HandleStatusAttributeChanged(const FOnAttributeChangeData& ChangeData)
 {
+	// Taking damage engages the player (same grace as the party flag).
+	if (ChangeData.Attribute == UAH_AttributeSet::GetHealthAttribute() && ChangeData.NewValue < ChangeData.OldValue)
+	{
+		NotifyCombatEngaged();
+	}
 	MarkPartyStatusDirty();
 }
 
@@ -794,9 +818,11 @@ FBH_PartyMemberStatus ABH_PlayerState::BuildPartyStatus() const
 		const float Fraction = CurrentMaxHealth > 0.f ? FMath::Clamp(CurrentHealth / CurrentMaxHealth, 0.f, 1.f) : 0.f;
 		Built.HealthFraction = FMath::RoundToFloat(Fraction * 100.f) / 100.f;
 		Built.BlightStacks = UBH_PartyLibrary::BlightBuildupToStacks(PawnASC->GetNumericAttribute(UAH_AttributeSet::GetBlightBuildupAttribute()));
-		Built.bInCombat = PawnASC->HasMatchingGameplayTag(TAG_State_Combat_InCombat);
 		Built.bFractured = PawnASC->HasMatchingGameplayTag(TAG_State_Status_Fracture);
 	}
+
+	const UWorld* StateWorld = GetWorld();
+	Built.bInCombat = StateWorld && StateWorld->GetTimeSeconds() < CombatEngagedUntil;
 
 	if (const UBH_PlayerDeathComponent* PawnDeath = StatusDeathComponent.Get())
 	{

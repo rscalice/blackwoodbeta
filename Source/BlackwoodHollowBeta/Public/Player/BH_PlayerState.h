@@ -104,6 +104,9 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|Party")
 	FBH_OnPartyStatusChanged OnPartyStatusChanged;
 
+	/** SERVER. This player is engaged right now (an aggroed enemy targets them, or they took damage): keeps bInCombat on until UBH_PartyStateSubsystem::OutOfCombatGrace passes. Called from the subsystem's Evaluate. */
+	void NotifyCombatEngaged();
+
 	/** Minimum seconds between status recomputes on the server (5 per second). */
 	static constexpr float PartyStatusInterval = 0.2f;
 
@@ -345,7 +348,8 @@ private:
 	FDelegateHandle HealthHandle;
 	FDelegateHandle MaxHealthHandle;
 	FDelegateHandle BlightHandle;
-	FDelegateHandle CombatTagHandle;
+	double CombatEngagedUntil = -1.0e9;
+	bool bReportedInCombat = false;
 	FDelegateHandle FractureTagHandle;
 
 	/** Server: validates (except for null = unequip), writes the slot, notifies the UI and pushes the change to the pawn. */
