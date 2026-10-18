@@ -198,6 +198,28 @@ bool FBH_P13F_LowHealthRuleTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ---- Combo finisher feel tier --------------------------------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBH_P13F_FinisherTierTest, "BlackwoodHollow.Phase13F.Finisher.TierMapping", BH_P13F_FLAGS)
+bool FBH_P13F_FinisherTierTest::RunTest(const FString& Parameters)
+{
+	// Last step of a multi-step combo only; a one-step attack (shield bash) has no finisher.
+	TestTrue(TEXT("Step 2 of 3 is the finisher"), UBH_CombatFeelLibrary::IsFinisherStep(2, 3));
+	TestFalse(TEXT("Step 0 of 3 is not"), UBH_CombatFeelLibrary::IsFinisherStep(0, 3));
+	TestFalse(TEXT("Step 1 of 3 is not"), UBH_CombatFeelLibrary::IsFinisherStep(1, 3));
+	TestTrue(TEXT("Step 3 of 4 is the finisher"), UBH_CombatFeelLibrary::IsFinisherStep(3, 4));
+	TestFalse(TEXT("A one-step attack has no finisher"), UBH_CombatFeelLibrary::IsFinisherStep(0, 1));
+	TestFalse(TEXT("No steps, no finisher"), UBH_CombatFeelLibrary::IsFinisherStep(0, 0));
+
+	// The floor lifts Light / Medium to Heavy and never lowers anything.
+	TestEqual(TEXT("Light finisher -> Heavy"), UBH_CombatFeelLibrary::ApplyFinisherFloor(EBH_ImpactTier::Light, true), EBH_ImpactTier::Heavy);
+	TestEqual(TEXT("Medium finisher -> Heavy"), UBH_CombatFeelLibrary::ApplyFinisherFloor(EBH_ImpactTier::Medium, true), EBH_ImpactTier::Heavy);
+	TestEqual(TEXT("Heavy finisher stays Heavy"), UBH_CombatFeelLibrary::ApplyFinisherFloor(EBH_ImpactTier::Heavy, true), EBH_ImpactTier::Heavy);
+	TestEqual(TEXT("Massive finisher stays Massive"), UBH_CombatFeelLibrary::ApplyFinisherFloor(EBH_ImpactTier::Massive, true), EBH_ImpactTier::Massive);
+	TestEqual(TEXT("Medium non-finisher stays Medium"), UBH_CombatFeelLibrary::ApplyFinisherFloor(EBH_ImpactTier::Medium, false), EBH_ImpactTier::Medium);
+	return true;
+}
+
 // ---- Lunge assist ------------------------------------------------------------------------------------------------------------
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBH_P13F_LungeDefaultsTest, "BlackwoodHollow.Phase13F.Lunge.NativeDefaults", BH_P13F_FLAGS)

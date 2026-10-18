@@ -1,6 +1,7 @@
 // Blackwood Hollow - combat identity for non-ABH_EnemyBase characters (implementation)
 
 #include "Combat/BH_CombatIdentityComponent.h"
+#include "Combat/BH_CombatFeel.h"
 #include "Combat/BH_StanceWatcherComponent.h"
 #include "Combat/BH_StanceComponent.h"
 #include "Combat/BH_EnemyRank.h"
@@ -292,6 +293,8 @@ void UBH_CombatIdentityComponent::ApplyCosmetics()
 			Mesh->SetOverlayMaterial(OverlayMaterial);
 		}
 	}
+	// Warm the hit-flash shader after the identity overlay is in place (it is restored next tick). Local, cosmetic.
+	UBH_CombatFeelLibrary::WarmHitFlash(Owner);
 }
 
 void UBH_CombatIdentityComponent::InitServer()

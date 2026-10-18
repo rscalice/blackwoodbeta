@@ -109,6 +109,8 @@ bool UBH_GCN_CombatHit::OnExecute_Implementation(AActor* MyTarget, const FGamepl
 	{
 		Tier = EBH_ImpactTier::Heavy;
 	}
+	// Final combo step (server-stamped tag): at least Heavy, so the impact light, strong mesh flash and Heavy shake fire.
+	Tier = UBH_CombatFeelLibrary::ApplyFinisherFloor(Tier, !bBlocked && Parameters.AggregatedSourceTags.HasTag(TAG_Combat_HitResult_Finisher));
 	UBH_CombatFeelLibrary::PlayImpactFeel(Attacker ? Attacker : Victim, Tier, Attacker, Victim, ImpactLocation, /*bEscalateForVictim*/ !bBlocked, false, /*bBlocked*/ bBlocked);
 
 	// 13F-1: the local HitFeedback event (surface, blight, outcome) for Blueprint sounds / sparks / shake / rumble; runs on every machine like this cue.

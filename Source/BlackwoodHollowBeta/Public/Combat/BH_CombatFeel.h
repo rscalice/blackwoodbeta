@@ -10,6 +10,9 @@
 //   Parry success ........................ Heavy, shake only for the parrier (bInstigatorOnlyShake).
 //   Posture broken ....................... Massive for the local player when they break someone or are broken.
 //   Kill ................................. a fatal hit is at least Heavy.
+//   Combo finisher ....................... the LAST step of a combo with 2+ steps is at least Heavy (tap, tap, BANG). The server stamps
+//                                          Combat.HitResult.Finisher on the cue's AggregatedSourceTags; not for blocked hits. Feel only:
+//                                          damage, posture and pushback keep using the damage tier.
 // Hit-stop uses the un-escalated tier; the shake uses the escalated one. Both come from DA_CombatFeel.
 //
 // TWO-FIGHTER ANIMATION FREEZE (the "hit-stop"): a cosmetic freeze of BOTH fighters' skeletal mesh animation, set on every
@@ -165,6 +168,10 @@ public:
 	/** Indexed by EBH_ImpactTier (Light, Medium, Heavy, Massive). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact")
 	TArray<FBH_ImpactTierSettings> Tiers;
+
+	/** Victim mesh hit-flash material (M_BH_HitFlash). A hard reference so it is always loaded; if null, StartMeshFlash falls back to LoadObject. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact")
+	TObjectPtr<UMaterialInterface> HitFlashMaterial;
 
 	/** Multiplies every shake (together with CVar bh.Combat.ShakeScale). Accessibility hook. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact", meta = (ClampMin = "0.0"))
@@ -354,6 +361,22 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
 	static EBH_ImpactTier Escalate(EBH_ImpactTier Tier);
+
+	/** True for the last step of a combo of at least two steps (a one-step attack such as the shield bash has no finisher). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
+	static bool IsFinisherStep(int32 ComboStep, int32 NumComboSteps);
+
+	/** A finisher plays at least the Heavy tier; any other hit (or a higher tier) is returned unchanged. Feel only. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
+	static EBH_ImpactTier ApplyFinisherFloor(EBH_ImpactTier Tier, bool bFinisher);
+
+	/**
+	 * Warm-up for the hit flash so the first real flash is not skipped while the shader / PSO compiles: puts a 0-intensity
+	 * M_BH_HitFlash MID in the overlay slot of Actor's visible non-weapon skeletal meshes and restores each previous overlay on the next
+	 * tick. Local and cosmetic only (no-op on dedicated servers).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel")
+	static void WarmHitFlash(AActor* Actor);
 
 	/** The low-health threshold as a health fraction (DA_CombatFeel LowHealthThreshold, 0.30 by default). */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")

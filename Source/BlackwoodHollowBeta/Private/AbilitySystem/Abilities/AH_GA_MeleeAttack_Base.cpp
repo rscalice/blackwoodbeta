@@ -706,6 +706,12 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 			// Lets the cue pick the blocked (metal on metal) FX instead of the flesh FX.
 			CueParams.AggregatedSourceTags.AddTag(TAG_Combat_HitResult_Blocked);
 		}
+		// Final step of a multi-step combo: the cue plays at least the Heavy feel tier (tap, tap, BANG). Server-stamped like Fatal, so
+		// every machine agrees. Cosmetic only: damage, posture and pushback are not touched.
+		else if (UBH_CombatFeelLibrary::IsFinisherStep(ComboStep, ComboSectionNames.Num()))
+		{
+			CueParams.AggregatedSourceTags.AddTag(TAG_Combat_HitResult_Finisher);
+		}
 		// Server-evaluated after the damage GE ran: clients' copy of the victim's Health may not have replicated when the cue fires.
 		if (TargetASC->HasMatchingGameplayTag(TAG_State_Combat_Dead)
 			|| (TargetASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetHealthAttribute()) && TargetASC->GetNumericAttribute(UAH_AttributeSet::GetHealthAttribute()) <= 0.f))

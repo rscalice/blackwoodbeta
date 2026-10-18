@@ -92,6 +92,8 @@ void ABH_CharacterBase::BeginPlay()
 	Super::BeginPlay();
 
 	InitAbilitySystem();
+	// Pre-compile the hit-flash overlay shader so the first flash of a fresh session is not skipped (local, cosmetic, no-op on dedicated servers).
+	UBH_CombatFeelLibrary::WarmHitFlash(this);
 	if (HasAuthority())
 	{
 		GrantDefaultAbilities();
