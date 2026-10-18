@@ -36,6 +36,10 @@ DEFAULTS = {
     "NoiseScale": 0.0008,    # 1/cm  (~12 m features)
     "NoiseStrength": 0.6,    # 0 = hard clean edges, 1 = very ragged
     "UVScale": 0.0033,       # 1/cm  (~3 m tile)
+    "SandUVScale": 0.0025,   # 1/cm  (~4 m tile)
+    "SandBrightness": 0.7,   # base-colour multiplier for the sand
+    "MacroScale": 0.00005,   # 1/cm  (~200 m light/dark variation, hides tiling)
+    "MacroStrength": 0.3,    # 0 = off, 0.3 = +/-30% brightness
 }
 
 mel = unreal.MaterialEditingLibrary
@@ -182,9 +186,11 @@ def build_material(mat):
     r_n = tex(TEX + "T_ground_rock_01_normal", uv_rock, N, 12, 9)
     r_m = tex(TEXV2 + "T_ground_rock_01_masks", uv_rock, L, 12, 10)
     # beach/sand: Megascans Rocky Sand (B = base colour, N = normal, ORM: R = AO, G = roughness)
-    s_c = tex(SAND + "T_vmkecjj_4K_B", uv_flat, C, 12, 12)
-    s_n = tex(SAND + "T_vmkecjj_4K_N", uv_flat, N, 12, 13)
-    s_m = tex(SAND + "T_vmkecjj_4K_ORM", uv_flat, M, 12, 14)
+    uv_sand = mul(wxy, sp("SandUVScale", 10, 12), 11, 12)
+    s_raw = tex(SAND + "T_vmkecjj_4K_B", uv_sand, C, 12, 12)
+    s_c = mul(s_raw, sp("SandBrightness", 12, 15), 13, 13)
+    s_n = tex(SAND + "T_vmkecjj_4K_N", uv_sand, N, 12, 13)
+    s_m = tex(SAND + "T_vmkecjj_4K_ORM", uv_sand, M, 12, 14)
     log("beach layer = Megascans Rocky_Sand_vmkecjj")
 
     # ---------- blend: grass -> dirt -> beach -> rock (cliff overrides everything)
@@ -199,6 +205,15 @@ def build_material(mat):
                   comp(s_m, 13, 22, g=True), comp(r_m, 13, 23, r=True), 8)
     ao = blend(comp(g_m, 13, 24, g=True), comp(d_m, 13, 25, g=True),
                comp(s_m, 13, 26, r=True), comp(r_m, 13, 27, g=True), 12)
+    # macro variation: broad light/dark noise so texture repeats don't line up
+    mpos = mul(wp, sp("MacroScale", 14, 30), 15, 30)
+    mnoise = node(unreal.MaterialExpressionNoise, 16, 30, scale=1.0, levels=2,
+                  output_min=0.0, output_max=1.0, turbulence=False)
+    link(mpos, mnoise, "Position")
+    mstr2 = mul(sp("MacroStrength", 16, 31), node(unreal.MaterialExpressionConstant, 16, 32, r=2.0), 17, 31)
+    centred = add(mnoise, node(unreal.MaterialExpressionConstant, 17, 30, r=-0.5), 18, 30)
+    macro = add(mul(centred, mstr2, 19, 30), node(unreal.MaterialExpressionConstant, 19, 31, r=1.0), 20, 30)
+    col = mul(col, macro, 21, 0)
     mel.connect_material_property(col, "", MP.MP_BASE_COLOR)
     mel.connect_material_property(nrm, "", MP.MP_NORMAL)
     mel.connect_material_property(rough, "", MP.MP_ROUGHNESS)
