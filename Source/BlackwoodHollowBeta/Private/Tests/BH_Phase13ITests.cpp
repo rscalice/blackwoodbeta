@@ -7,6 +7,7 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include "Beats/BH_BeatNavigationComponent.h"
 #include "Player/BH_PartyLibrary.h"
 #include "Player/BH_PartyStatus.h"
 
@@ -64,6 +65,32 @@ bool FBH_P13I_StatusStructTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("copy is equal"), Changed == Fresh);
 	Changed.BlightStacks = 3;
 	TestTrue(TEXT("a field change is detected"), Changed != Fresh);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBH_P13I_DeadMarkerTintTest, "BlackwoodHollow.Phase13I.DeadMarker.Tint", BH_P13I_FLAGS)
+bool FBH_P13I_DeadMarkerTintTest::RunTest(const FString& Parameters)
+{
+	TestFalse(TEXT("phase 0 (alive) is not the dead look"), UBH_BeatNavigationComponent::IsDeadLookPhase(0));
+	TestTrue(TEXT("phase 1 (dead)"), UBH_BeatNavigationComponent::IsDeadLookPhase(1));
+	TestTrue(TEXT("phase 2 (awaiting choice)"), UBH_BeatNavigationComponent::IsDeadLookPhase(2));
+	TestTrue(TEXT("phase 3 (waiting for revive)"), UBH_BeatNavigationComponent::IsDeadLookPhase(3));
+
+	const FLinearColor Slot(0.2f, 0.4f, 0.6f, 1.f);
+	const float Speed = 6.f;
+	const float HalfPi = UE_PI * 0.5f;
+
+	// sin = -1 (clock*speed = -pi/2): pulse 0 = the slot colour. sin = +1 (pi/2): pulse 1 = white. Alpha always 1.
+	const FLinearColor Trough = UBH_BeatNavigationComponent::ComputeDeadTint(Slot, -HalfPi / Speed, Speed);
+	TestTrue(TEXT("trough is the slot colour"), Trough.Equals(Slot, 0.001f));
+	const FLinearColor Peak = UBH_BeatNavigationComponent::ComputeDeadTint(Slot, HalfPi / Speed, Speed);
+	TestTrue(TEXT("peak is white"), Peak.Equals(FLinearColor::White, 0.001f));
+	for (int32 Step = 0; Step < 50; ++Step)
+	{
+		const FLinearColor Tint = UBH_BeatNavigationComponent::ComputeDeadTint(Slot, Step * 0.1f, Speed);
+		TestEqual(TEXT("alpha stays 1"), Tint.A, 1.f);
+		TestTrue(TEXT("never darker than the slot colour"), Tint.R >= Slot.R - 0.001f && Tint.G >= Slot.G - 0.001f && Tint.B >= Slot.B - 0.001f);
+	}
 	return true;
 }
 

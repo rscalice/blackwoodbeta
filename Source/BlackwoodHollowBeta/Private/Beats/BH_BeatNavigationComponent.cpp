@@ -145,11 +145,11 @@ void UBH_BeatNavigationComponent::TickComponent(float DeltaTime, ELevelTick Tick
 		TimeSincePulseApply = 0.f;
 		for (TPair<TWeakObjectPtr<APlayerState>, FPartnerProxy>& Pair : Partners)
 		{
-			if (Pair.Value.Phase == 1)
+			if (Pair.Value.Phase > 0)
 			{
 				if (UNavigationMarkerComponent* Marker = Pair.Value.Marker.Get())
 				{
-					Marker->SetIconTint(GetPartnerTint(Pair.Value.Slot, 1));
+					Marker->SetIconTint(GetPartnerTint(Pair.Value.Slot, static_cast<uint8>(Pair.Value.Phase)));
 					Marker->RefreshMarker();
 				}
 			}
@@ -218,21 +218,12 @@ FLinearColor UBH_BeatNavigationComponent::GetPartnerTint(const int32 Slot, const
 {
 	// The slot icons are already coloured, so they are drawn untinted; without an icon the slot colour tints the stock marker.
 	const FLinearColor Base = GetSlotIcon(Slot).IsNull() ? GetSlotColor(Slot) : FLinearColor::White;
-	switch (DeathPhase)
+	if (IsDeadLookPhase(DeathPhase))
 	{
-	case 0:
-		// Alive: solid.
-		return Base;
-	case 1:
-		{
-			// Downed: pulsing.
-			const float Pulse = 0.5f + 0.5f * FMath::Sin(PulseClock * DownedPulseSpeed);
-			return FLinearColor(Base.R, Base.G, Base.B, FMath::Lerp(0.35f, 1.f, Pulse));
-		}
-	default:
-		// Dead or waiting for a revive: greyed, 40% opacity.
-		return FLinearColor(Base.R * 0.45f, Base.G * 0.45f, Base.B * 0.45f, 0.4f);
+		// Dead / awaiting choice / waiting for a revive: full alpha, brightness pulses between the slot colour and white.
+		return ComputeDeadTint(GetSlotColor(Slot), PulseClock, DownedPulseSpeed);
 	}
+	return Base; // alive: solid
 }
 
 void UBH_BeatNavigationComponent::ApplyPartnerLook(FPartnerProxy& Proxy, const int32 Slot, const uint8 DeathPhase)
@@ -242,8 +233,15 @@ void UBH_BeatNavigationComponent::ApplyPartnerLook(FPartnerProxy& Proxy, const i
 	{
 		return;
 	}
+	const bool bWasDeadLook = Proxy.Phase > 0 && IsDeadLookPhase(static_cast<uint8>(Proxy.Phase));
 	Proxy.Slot = Slot;
 	Proxy.Phase = DeathPhase;
+	// A downed / dead partner also shows on screen over the body (like the objective); back to the compass only when alive again.
+	// Only touched when the dead/alive state flips, so a living partner's marker is never re-registered.
+	if (bWasDeadLook != IsDeadLookPhase(DeathPhase))
+	{
+		Marker->SetDomain(MakeDomain(true, IsDeadLookPhase(DeathPhase)));
+	}
 	const TSoftObjectPtr<UTexture2D> Icon = GetSlotIcon(Slot);
 	if (!Icon.IsNull())
 	{
@@ -380,6 +378,10 @@ void UBH_BeatNavigationComponent::RefreshPartners(const APlayerController* Playe
 			Proxy.Slot = Slot;
 			Proxy.Phase = Ping.DeathPhase;
 			Proxy.Marker = CreateMarker(Spawned, FText::FromString(Player->GetPlayerName()), GetPartnerTint(Slot, Ping.DeathPhase), GetSlotIcon(Slot));
+			if (IsDeadLookPhase(Ping.DeathPhase) && Proxy.Marker.IsValid())
+			{
+				Proxy.Marker->SetDomain(MakeDomain(true, true)); // already down when first seen
+			}
 		}
 		else
 		{

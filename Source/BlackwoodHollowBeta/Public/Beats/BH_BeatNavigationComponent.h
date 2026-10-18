@@ -81,6 +81,16 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Beat|Navigation", meta = (ClampMin = "0.1"))
 	float DownedPulseSpeed = 6.f;
 
+	/** Phase 13I-2 (pure): a partner with a non-zero death phase gets the dead look (pulsing tint + on-screen marker). */
+	static bool IsDeadLookPhase(const uint8 DeathPhase) { return DeathPhase != 0; }
+
+	/** Phase 13I-2 (pure): the dead partner's tint. Alpha is always 1; the colour pulses between SlotColor and white at Speed rad/s. */
+	static FLinearColor ComputeDeadTint(const FLinearColor& SlotColor, const float Clock, const float Speed)
+	{
+		const float Pulse = 0.5f + 0.5f * FMath::Sin(Clock * Speed);
+		return FLinearColor(FMath::Lerp(SlotColor.R, 1.f, Pulse), FMath::Lerp(SlotColor.G, 1.f, Pulse), FMath::Lerp(SlotColor.B, 1.f, Pulse), 1.f);
+	}
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -113,7 +123,7 @@ private:
 	FLinearColor GetPaletteColor(FName Token, const FLinearColor& Fallback) const;
 	/** The palette colour of a player slot (tokens PlayerSlot1..4). */
 	FLinearColor GetSlotColor(int32 Slot) const;
-	/** Marker tint for a partner: alive = solid, downed (phase 1) = pulsing, dead or waiting for a revive (phase 2+) = grey at 40%. */
+	/** Marker tint for a partner: alive = solid; any non-zero death phase (dead, awaiting choice, waiting for revive) = full alpha, brightness pulsing slot colour <-> white. */
 	FLinearColor GetPartnerTint(int32 Slot, uint8 DeathPhase) const;
 	TSoftObjectPtr<UTexture2D> GetSlotIcon(int32 Slot) const;
 	/** Sets the icon and tint for the partner's slot and state, and refreshes the marker. */
