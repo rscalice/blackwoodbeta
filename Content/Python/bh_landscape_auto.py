@@ -280,30 +280,17 @@ def build_material(mat):
             vis = node(unreal.MaterialExpressionLandscapeVisibilityMask, 20, 23 + i * 2)
             feeds.append(mul(m, vis, 21, 22 + i * 2))
         go.set_editor_property("grass_types", gi)
-        # Set the connections straight on the entries: no recompile needed to expose the pins.
-        ok = True
-        try:
-            gi2 = go.get_editor_property("grass_types")
-            for g, f in zip(gi2, feeds):
-                inp = g.get_editor_property("input")
-                inp.set_editor_property("expression", f)
-                g.set_editor_property("input", inp)
-            go.set_editor_property("grass_types", gi2)
-            ok = all(g.get_editor_property("input").get_editor_property("expression") is not None
-                     for g in go.get_editor_property("grass_types"))
-        except Exception:  # noqa
-            ok = False
-        if not ok:  # fallback: pins only exist after a compile (cheap: landscape is parked on WorldGridMaterial)
-            mel.recompile_material(mat)
-            for (nm, _a, _m), f in zip(specs, feeds):
-                link(f, go, nm)
-        # Read back the real connections and fall back to pin links for any empty entry.
+        # GrassInput.Input is protected in Python, so connect through the named pins. The pins only
+        # exist after a compile (cheap: the landscape is parked on WorldGridMaterial meanwhile).
         mel.recompile_material(mat)
-        for (nm, _a, _m), f, g in zip(specs, feeds, go.get_editor_property("grass_types")):
-            if g.get_editor_property("input").get_editor_property("expression") is None:
-                link(f, go, nm)
-                log("grass entry %s was unconnected, linked via pin" % nm)
-        log("grass output created: %d entries, each with its own mask x visibility multiply" % len(specs))
+        linked = 0
+        for (nm, _a, _m), f in zip(specs, feeds):
+            if mel.connect_material_expressions(f, "", go, nm):
+                linked += 1
+            else:
+                err("grass pin %s not linked" % nm)
+        log("grass output created: %d entries, %d linked, each with its own mask x visibility multiply"
+            % (len(specs), linked))
     except Exception as ex:  # noqa
         err("GRASS OUTPUT: wire by hand (%s). In M_BH_Landscape_Auto select the Landscape Grass Output node, "
             "add the Grass Types from STF Pack03 Base/LandscapeGrassType (grass1_layer_grass, "
