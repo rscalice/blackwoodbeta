@@ -22,6 +22,7 @@ STF = "/Game/Fab/STF/Pack03-LandscapePro/"
 TEX = STF + "Environment/Landscape/Landscape/"
 TEXV2 = TEX + "v2/"
 GRASS = STF + "Base/LandscapeGrassType/"
+SAND = "/Game/Fab/Megascans/Surfaces/Rocky_Sand_vmkecjj/High/vmkecjj_tier_1/Textures/"
 
 # name -> default (cm / degrees / 0-1)
 DEFAULTS = {
@@ -179,11 +180,11 @@ def build_material(mat):
     r_c = tex(TEX + "T_ground_rock_01_diffuse", uv_rock, C, 12, 8)
     r_n = tex(TEX + "T_ground_rock_01_normal", uv_rock, N, 12, 9)
     r_m = tex(TEXV2 + "T_ground_rock_01_masks", uv_rock, M, 12, 10)
-    # beach/sand: no sand set in STF -> dirt_01 tinted pale (SandTint)
-    tint = node(unreal.MaterialExpressionVectorParameter, 12, 12, parameter_name="SandTint",
-                default_value=unreal.LinearColor(1.9, 1.7, 1.25, 1.0), group="BH Auto")
-    s_c = mul(d_c, tint, 13, 12)
-    log("beach layer = STF dirt_01 tinted via SandTint (no sand texture in STF pack)")
+    # beach/sand: Megascans Rocky Sand (B = base colour, N = normal, ORM: R = AO, G = roughness)
+    s_c = tex(SAND + "T_vmkecjj_4K_B", uv_flat, C, 12, 12)
+    s_n = tex(SAND + "T_vmkecjj_4K_N", uv_flat, N, 12, 13)
+    s_m = tex(SAND + "T_vmkecjj_4K_ORM", uv_flat, M, 12, 14)
+    log("beach layer = Megascans Rocky_Sand_vmkecjj")
 
     # ---------- blend: grass -> dirt -> beach -> rock (cliff overrides everything)
     def blend(g, d, s, r, y, out_pin=""):
@@ -191,11 +192,12 @@ def build_material(mat):
         b = lerp(a, s, beach, 15, y)
         return lerp(b, r, rock, 16, y)
     col = blend(g_c, d_c, s_c, r_c, 0)
-    nrm = blend(g_n, d_n, d_n, r_n, 4)
+    nrm = blend(g_n, d_n, s_n, r_n, 4)
+    # STF masks: R = roughness, G = AO; Megascans ORM: R = AO, G = roughness
     rough = blend(comp(g_m, 13, 20, r=True), comp(d_m, 13, 21, r=True),
-                  comp(d_m, 13, 22, r=True), comp(r_m, 13, 23, r=True), 8)
+                  comp(s_m, 13, 22, g=True), comp(r_m, 13, 23, r=True), 8)
     ao = blend(comp(g_m, 13, 24, g=True), comp(d_m, 13, 25, g=True),
-               comp(d_m, 13, 26, g=True), comp(r_m, 13, 27, g=True), 12)
+               comp(s_m, 13, 26, r=True), comp(r_m, 13, 27, g=True), 12)
     mel.connect_material_property(col, "", MP.MP_BASE_COLOR)
     mel.connect_material_property(nrm, "", MP.MP_NORMAL)
     mel.connect_material_property(rough, "", MP.MP_ROUGHNESS)
