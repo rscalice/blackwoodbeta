@@ -351,6 +351,14 @@ def main():
             % (a.get_actor_label(), o.z - e.z, o.z + e.z, DEFAULTS["BeachHeightMax"]))
         a.set_editor_property("landscape_material", mi)
         log("landscape_material set on " + a.get_actor_label())
+        # ROOT CAUSE of "no grass anywhere": ALandscape.bGrassEnabled (Details > Grass > Grass Enabled) was
+        # saved as False on L_WreckageShallows_Landscape (engine default True).  ALandscapeProxy::UpdateGrass
+        # returns before building any grass component when the parent ALandscape has it off, whatever the
+        # material's grass outputs say (stat Foliage: Grass Update ticks, 0 instances).  Force it back on.
+        if isinstance(a, unreal.Landscape):
+            if not a.get_grass_enabled():
+                log("%s had Grass Enabled = False; enabling (this is why nothing spawned)" % a.get_actor_label())
+            a.set_grass_enabled(True, True)
     unreal.EditorLoadingAndSavingUtils.save_packages([a.get_outermost() for a in lands], False)
     unreal.SystemLibrary.execute_console_command(None, "grass.FlushCache")
     log("done (grass cache flushed)")
