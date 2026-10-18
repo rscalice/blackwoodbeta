@@ -277,8 +277,9 @@ def build_material(mat):
             g.set_editor_property("grass_type", load(GRASS + asset))
             gi.append(g)
             # separate Multiply per pin: mask x visibility mask (own node each, like STF's StaticSwitch inputs)
-            vis = node(unreal.MaterialExpressionLandscapeVisibilityMask, 20, 23 + i * 2)
-            feeds.append(mul(m, vis, 21, 22 + i * 2))
+            # No LandscapeVisibilityMask: Island 1 has no visibility (hole) layer, and the mask appears to
+            # zero every entry in the grass pass (nothing spawned with it; dirt rocks spawned without it).
+            feeds.append(mul(m, node(unreal.MaterialExpressionConstant, 20, 23 + i * 2, r=1.0), 21, 22 + i * 2))
         go.set_editor_property("grass_types", gi)
         # GrassInput.Input is protected in Python, so connect through the named pins. The pins only
         # exist after a compile (cheap: the landscape is parked on WorldGridMaterial meanwhile).
