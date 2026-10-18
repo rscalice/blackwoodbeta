@@ -19,7 +19,7 @@
 class UInputAction;
 
 /** What makes a hint fire. The server evaluates all of these; none of them is decided by a client. */
-UENUM(BlueprintType)
+UENUM(BlueprintType, meta = (ScriptName = "BH_HintTriggerType")) // Python name: avoids the clash with class ABH_HintTrigger
 enum class EBH_HintTrigger : uint8
 {
 	/** Never fires by itself. Fired by key from code or Blueprint (UBH_HintLibrary::TriggerHintKey) or by an ABH_HintTrigger volume that references the asset. */

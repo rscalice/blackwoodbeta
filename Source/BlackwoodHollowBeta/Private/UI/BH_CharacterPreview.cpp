@@ -46,6 +46,7 @@ ABH_CharacterPreview* ABH_CharacterPreview::SpawnPreview(UObject* WorldContextOb
 	ABH_CharacterPreview* Preview = World->SpawnActor<ABH_CharacterPreview>(ABH_CharacterPreview::StaticClass(), FTransform::Identity, Params);
 	if (Preview)
 	{
+		Preview->EnsureRenderTarget();
 		Preview->SetTargetPawn(Pawn);
 	}
 	return Preview;
