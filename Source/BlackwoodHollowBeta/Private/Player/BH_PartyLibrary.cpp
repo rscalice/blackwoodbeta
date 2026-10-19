@@ -123,6 +123,13 @@ TArray<ABH_PlayerState*> UBH_PartyLibrary::GetPartnerPlayerStates(const UObject*
 	const APlayerState* LocalState = LocalPC ? LocalPC->PlayerState.Get() : nullptr;
 
 	TArray<ABH_PlayerState*> Partners;
+	if (!LocalState)
+	{
+		// Local PlayerState not assigned to the controller yet (typical on a client's first frames).
+		// Without it we cannot tell who 'me' is, so listing everybody would show the local player as a
+		// partner. Return nothing; callers poll and rebuild once the PlayerState is valid.
+		return Partners;
+	}
 	for (APlayerState* MemberState : GetPartyPlayerStates(WorldContext))
 	{
 		ABH_PlayerState* BHState = Cast<ABH_PlayerState>(MemberState);
