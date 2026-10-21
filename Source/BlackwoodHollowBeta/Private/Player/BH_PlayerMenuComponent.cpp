@@ -185,7 +185,19 @@ bool UBH_PlayerMenuComponent::ExecuteEquip(UNarrativeItem* Item, EBH_EquipSlot S
 
 	if (UBH_WeaponItem* Weapon = Cast<UBH_WeaponItem>(Item))
 	{
-		return UBH_EquipmentLibrary::EquipWeaponToSlot(PlayerPawn, Weapon, Slot, OutReason);
+		// The menu asks for the first empty compatible slot, which may be an off hand locked by a two-handed main weapon
+		// (Greatsword equipped first -> Longsword / Kite Shield "to Off A" were refused). Resolve to the slot the player means.
+		const EBH_EquipSlot ResolvedSlot = UBH_PlayerMenuLibrary::ResolveWeaponEquipSlot(PlayerPawn, Weapon, Slot);
+		if (ResolvedSlot != Slot)
+		{
+			if (!UBH_PlayerMenuLibrary::IsEquipSlotAllowed(PS->IsWeaponSetBUnlocked(), ResolvedSlot, OutReason))
+			{
+				return false;
+			}
+			UE_LOG(LogBHPlayerMenu, Log, TEXT("Equip %s: %s redirected to %s (off hand locked by a two-handed main weapon)"), *Weapon->GetFriendlyName(),
+				*UBH_PlayerMenuLibrary::GetEquipSlotDisplayName(Slot).ToString(), *UBH_PlayerMenuLibrary::GetEquipSlotDisplayName(ResolvedSlot).ToString());
+		}
+		return UBH_EquipmentLibrary::EquipWeaponToSlot(PlayerPawn, Weapon, ResolvedSlot, OutReason);
 	}
 
 	if (UBH_ArmorItem* Armor = Cast<UBH_ArmorItem>(Item))

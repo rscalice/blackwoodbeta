@@ -86,6 +86,42 @@ bool UBH_PlayerMenuLibrary::CanEquipToSlot(const ABH_PlayerState* PlayerState, E
 	return IsEquipSlotAllowed(PlayerState && PlayerState->IsWeaponSetBUnlocked(), Slot, OutReason);
 }
 
+EBH_EquipSlot UBH_PlayerMenuLibrary::ResolveWeaponEquipSlot(const APawn* Pawn, const UNarrativeItem* Item, EBH_EquipSlot RequestedSlot)
+{
+	const UBH_WeaponItem* Weapon = Cast<UBH_WeaponItem>(Item);
+	const UBH_LoadoutComponent* Loadout = UBH_LoadoutComponent::FindLoadoutComponent(Pawn);
+	if (!Weapon || !Loadout || !UBH_EquipmentLibrary::IsWeaponSlot(RequestedSlot) || !UBH_EquipmentLibrary::IsOffHandSlot(RequestedSlot))
+	{
+		return RequestedSlot;
+	}
+
+	// Only an off hand sitting under a two-handed main weapon (that is not this item) needs a different slot.
+	const EBH_LoadoutSet Set = UBH_EquipmentLibrary::GetSlotLoadoutSet(RequestedSlot);
+	const UBH_WeaponItem* Main = Loadout->GetItemInSlot(UBH_EquipmentLibrary::GetMainSlot(Set));
+	if (!Main || Main == Weapon || Main->GripType != EBH_WeaponGripType::TwoHanded)
+	{
+		return RequestedSlot;
+	}
+
+	if (Weapon->GripType == EBH_WeaponGripType::OneHanded)
+	{
+		return UBH_EquipmentLibrary::GetMainSlot(Set); // the sword takes the main hand over from the two-hander
+	}
+
+	if (Weapon->GripType == EBH_WeaponGripType::OffHand)
+	{
+		const EBH_LoadoutSet OtherSet = (Set == EBH_LoadoutSet::A) ? EBH_LoadoutSet::B : EBH_LoadoutSet::A;
+		const ABH_PlayerState* PlayerState = Cast<ABH_PlayerState>(Pawn->GetPlayerState());
+		FText Unused;
+		const EBH_EquipSlot OtherOff = UBH_EquipmentLibrary::GetOffSlot(OtherSet);
+		if (CanEquipToSlot(PlayerState, OtherOff, Unused) && !Loadout->IsOffHandLocked(OtherSet))
+		{
+			return OtherOff;
+		}
+	}
+	return RequestedSlot; // nowhere better: the server refuses it with the "off hand is locked" reason
+}
+
 // ---------------------------------------------------------------------------
 // Items
 // ---------------------------------------------------------------------------
@@ -226,6 +262,7 @@ bool UBH_PlayerMenuLibrary::GetItemStatDeltas(APawn* Pawn, UNarrativeItem* Item,
 		{
 			return false;
 		}
+		TargetSlot = ResolveWeaponEquipSlot(Pawn, Item, TargetSlot); // preview the slot the server will really use
 		const EBH_LoadoutSet Set = UBH_EquipmentLibrary::GetSlotLoadoutSet(TargetSlot);
 		EBH_LoadoutSet ActiveSet = EBH_LoadoutSet::A;
 		const bool bCounts = !Loadout->GetActiveLoadoutSet(ActiveSet) || ActiveSet == Set;
