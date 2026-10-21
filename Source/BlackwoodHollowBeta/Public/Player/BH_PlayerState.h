@@ -37,6 +37,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnFragmentSlotsChanged, int32, S
 /** Broadcast (server and every client) when one of the per-player progression gates changes: weapon set B unlock, learned Overload Burst, respawn attunement. For UI. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnProgressionGatesChanged);
 
+/** Issue #120: broadcast (server and every client, from the RepNotify) the moment this player learns Overload Burst. For the Heart page. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnOverloadBurstLearned);
+
 /** Broadcast on the OWNING player's machine when a consumable use was refused (nothing consumed). Wire a toast / sound to it. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnConsumableUseRefused, TSubclassOf<UNarrativeItem>, ItemClass, EBH_ConsumableRefusal, Reason);
 
@@ -209,6 +212,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|Progression")
 	FBH_OnProgressionGatesChanged OnProgressionGatesChanged;
 
+	/** Issue #120. Fires once on every machine when HasLearnedOverloadBurst flips to true (server: in GrantOverloadBurst; clients: from the RepNotify). */
+	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|Progression")
+	FBH_OnOverloadBurstLearned OnOverloadBurstLearned;
+
 	// Debug RPCs: declared in every build (UHT forbids UFUNCTION inside #if); bodies are compiled out of Shipping.
 	// -- Debug RPCs (non-shipping) -------------------------------------------------------------
 	// The bh.* console commands (BH_RPGDebugCommands.cpp) call these from a client window; they act on the SERVER world exactly like
@@ -298,8 +305,12 @@ protected:
 	bool bWeaponSetBUnlocked = true;
 
 	/** Phase 12F. Set by the Warden obelisk (or bh.Skills.GrantBurst). */
-	UPROPERTY(ReplicatedUsing = OnRep_ProgressionGates)
+	UPROPERTY(ReplicatedUsing = OnRep_OverloadBurstLearned)
 	bool bOverloadBurstLearned = false;
+
+	/** Issue #120: fires OnOverloadBurstLearned (when learned) and the general OnProgressionGatesChanged. */
+	UFUNCTION()
+	void OnRep_OverloadBurstLearned();
 
 	/** Phase 12F. Respawn hubs (ABH_RespawnPoint::HubName) this player has touched. */
 	UPROPERTY(ReplicatedUsing = OnRep_ProgressionGates)

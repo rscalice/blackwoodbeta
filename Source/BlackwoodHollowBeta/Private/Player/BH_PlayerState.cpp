@@ -167,7 +167,7 @@ bool ABH_PlayerState::GrantOverloadBurst()
 		bOverloadBurstLearned = true;
 		UBH_HintLibrary::TriggerHintKey(this, TEXT("Skill.OverloadBurst"));
 		ForceNetUpdate();
-		OnRep_ProgressionGates();
+		OnRep_OverloadBurstLearned(); // the server does not get the RepNotify
 	}
 	return bEquipped;
 }
@@ -201,6 +201,15 @@ bool ABH_PlayerState::AttuneHub(FName HubName, bool bRetireStarterPoints)
 void ABH_PlayerState::OnRep_ProgressionGates()
 {
 	OnProgressionGatesChanged.Broadcast();
+}
+
+void ABH_PlayerState::OnRep_OverloadBurstLearned()
+{
+	if (bOverloadBurstLearned)
+	{
+		OnOverloadBurstLearned.Broadcast();
+	}
+	OnRep_ProgressionGates(); // keep the general gates delegate firing exactly as before
 }
 
 // ============================================================================
