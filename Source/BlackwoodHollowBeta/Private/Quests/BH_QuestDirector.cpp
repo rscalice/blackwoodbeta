@@ -868,7 +868,20 @@ bool UBH_QuestDirector::DebugSkipCurrentQuest()
 		return false;
 	}
 	UE_LOG(LogBHQuestDirector, Log, TEXT("bh.Quest.Skip: succeeding %s."), *GetNameSafe(Target->GetClass()));
-	Target->SucceedQuest(NSLOCTEXT("BlackwoodHollow", "QuestSkipped", "Quest skipped (debug)."));
+	// UQuest::SucceedQuest is protected in C++ but BlueprintCallable, so call it through reflection (debug path only).
+	UFunction* SucceedFunc = Target->FindFunction(TEXT("SucceedQuest"));
+	if (!SucceedFunc)
+	{
+		UE_LOG(LogBHQuestDirector, Warning, TEXT("bh.Quest.Skip: UQuest::SucceedQuest not found."));
+		return false;
+	}
+	struct FSucceedQuestParams
+	{
+		FText QuestSucceededMessage;
+	};
+	FSucceedQuestParams SucceedParams;
+	SucceedParams.QuestSucceededMessage = NSLOCTEXT("BlackwoodHollow", "QuestSkipped", "Quest skipped (debug).");
+	Target->ProcessEvent(SucceedFunc, &SucceedParams);
 	return true;
 }
 
