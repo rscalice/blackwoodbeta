@@ -804,7 +804,12 @@ void UBH_PlayerDeathComponent::ServerRespawnAtHub_Implementation()
 	// Phase 12F: a point with bAppliesFracture false (the Wreck Camp) is free: nobody can repair Fracture on the beach yet.
 	if (bPointAppliesFracture)
 	{
-		const int32 Fractured = UBH_FractureLibrary::ApplyFractureToParty(this);
+		// Issue #99: only members who attuned a Fracture-applying point (Port Vanguard) are fractured; the respawner always is.
+		int32 Fractured = UBH_FractureLibrary::ApplyFractureToParty(this, /*bOnlyAttuned*/ true);
+		if (UBH_FractureLibrary::ApplyFracture(UBH_FractureLibrary::ResolveASC(GetOwner())))
+		{
+			++Fractured;
+		}
 		UE_LOG(LogBHCombat, Log, TEXT("%s: hub respawn, %d party member(s) fractured."), *GetNameSafe(GetOwner()), Fractured);
 	}
 	else
@@ -1389,7 +1394,8 @@ void UBH_PlayerDeathComponent::ServerDebugFracture_Implementation(bool bApply, b
 	{
 		if (bApply)
 		{
-			UBH_FractureLibrary::ApplyFractureToParty(this);
+			// Debug force-applies to the whole party, attuned or not (issue #99 filter bypassed on purpose).
+			UBH_FractureLibrary::ApplyFractureToParty(this, /*bOnlyAttuned*/ false);
 		}
 		else
 		{

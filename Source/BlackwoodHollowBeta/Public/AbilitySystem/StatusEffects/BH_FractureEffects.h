@@ -74,9 +74,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Fracture")
 	static bool RemoveFracture(UAbilitySystemComponent* ASC);
 
-	/** Applies Fracture to every party member (authority only; includes the living partners and the caller). @return members newly fractured. */
+	/**
+	 * Applies Fracture to the party (authority only; includes the living partners and the caller). @return members newly fractured.
+	 * Issue #99: with bOnlyAttuned (the default, used by the hub respawn) a member is skipped (and logged) unless they have attuned a
+	 * Fracture-applying respawn point (Port Vanguard). The debug command passes false to force the whole party.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Fracture", meta = (WorldContext = "WorldContext"))
-	static int32 ApplyFractureToParty(const UObject* WorldContext);
+	static int32 ApplyFractureToParty(const UObject* WorldContext, bool bOnlyAttuned = true);
 
 	/** The ASC of a pawn / controller / player state (pawn first, then its player state). Null for anything else. */
 	static UAbilitySystemComponent* ResolveASC(const AActor* Actor);

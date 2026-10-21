@@ -132,6 +132,19 @@ public:
 	 */
 	ABH_RespawnPoint* FindNearestForPlayer(const FVector& Location, const APlayerState* PlayerState) const;
 
+	/**
+	 * Issue #99. True when PlayerState has attuned at least one registered point that applies Fracture (Port Vanguard on Island 1).
+	 * bAttunedByDefault camps never count (they are attuned for everybody and have bAppliesFracture false). Reads AttunedHubs on the
+	 * ABH_PlayerState, so no hub name is hard-coded. Server only (the registry does not exist on pure clients).
+	 */
+	bool HasAttunedFracturePoint(const APlayerState* PlayerState) const;
+
+	/** The pure decision behind HasAttunedFracturePoint for ONE point: it counts only if it applies Fracture, is not attuned by default, and the player attuned it. */
+	static bool DoesPointMakePlayerFractureEligible(bool bPointAppliesFracture, bool bPointAttunedByDefault, bool bAttunedForPlayer)
+	{
+		return bPointAppliesFracture && !bPointAttunedByDefault && bAttunedForPlayer;
+	}
+
 	int32 GetNumPoints() const { return Points.Num(); }
 
 private:

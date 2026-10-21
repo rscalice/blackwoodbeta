@@ -255,6 +255,23 @@ ABH_RespawnPoint* UBH_RespawnPointSubsystem::FindNearestForPlayer(const FVector&
 	return BestAttuned ? BestAttuned : FindNearest(Location);
 }
 
+bool UBH_RespawnPointSubsystem::HasAttunedFracturePoint(const APlayerState* PlayerState) const
+{
+	if (!PlayerState)
+	{
+		return false;
+	}
+	for (const TWeakObjectPtr<ABH_RespawnPoint>& Weak : Points)
+	{
+		const ABH_RespawnPoint* Point = Weak.Get();
+		if (Point && DoesPointMakePlayerFractureEligible(Point->bAppliesFracture, Point->bAttunedByDefault, Point->IsAttunedFor(PlayerState)))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 ABH_RespawnPoint* UBH_RespawnPointSubsystem::FindNearest(const FVector& Location) const
 {
 	ABH_RespawnPoint* Best = nullptr;

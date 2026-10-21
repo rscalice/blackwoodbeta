@@ -7,7 +7,9 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerState.h"
 #include "GameplayEffectComponents/TargetTagsGameplayEffectComponent.h"
+#include "AbilitySystem/BH_GameplayTags.h"
 #include "Player/BH_PartyLibrary.h"
+#include "Player/BH_RespawnPoint.h"
 #include "UObject/UObjectGlobals.h"
 
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Status_Fracture, "State.Status.Fracture",
@@ -122,11 +124,18 @@ bool UBH_FractureLibrary::RemoveFracture(UAbilitySystemComponent* ASC)
 	return bWasFractured;
 }
 
-int32 UBH_FractureLibrary::ApplyFractureToParty(const UObject* WorldContext)
+int32 UBH_FractureLibrary::ApplyFractureToParty(const UObject* WorldContext, bool bOnlyAttuned)
 {
 	int32 NewlyFractured = 0;
-	UBH_PartyLibrary::ForEachPartyMember(WorldContext, [&NewlyFractured](APlayerState& PlayerState, APawn* MemberPawn)
+	const UBH_RespawnPointSubsystem* Registry = UBH_RespawnPointSubsystem::Get(WorldContext);
+	UBH_PartyLibrary::ForEachPartyMember(WorldContext, [&NewlyFractured, Registry, bOnlyAttuned](APlayerState& PlayerState, APawn* MemberPawn)
 	{
+		// Issue #99: nobody is fractured for a death they cannot repair. No registry (pure client) means nobody is eligible.
+		if (bOnlyAttuned && !(Registry && Registry->HasAttunedFracturePoint(&PlayerState)))
+		{
+			UE_LOG(LogBHCombat, Log, TEXT("Fracture skipped for %s: they have not attuned a Fracture-applying respawn point."), *GetNameSafe(&PlayerState));
+			return;
+		}
 		UAbilitySystemComponent* MemberASC = ResolveASC(MemberPawn);
 		if (!MemberASC)
 		{
