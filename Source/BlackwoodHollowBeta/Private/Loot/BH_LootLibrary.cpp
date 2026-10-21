@@ -10,6 +10,7 @@
 #include "Player/BH_PlayerDeathComponent.h"
 #include "Player/BH_PlayerState.h"
 #include "Progression/BH_RPGSettings.h"
+#include "Quests/BH_QuestDirector.h"
 #include "InventoryComponent.h"
 #include "NarrativeItem.h"
 #include "Engine/World.h"
@@ -116,6 +117,7 @@ namespace BH_LootLibrary_Private
 		if (Given > 0)
 		{
 			UBH_LootLibrary::NotifyItemGrantedHints(PlayerState, ItemClass);
+			UBH_QuestDirector::ReportItemTaken(PlayerState, ItemClass, Given); // 14A-1: an enemy drop is a pickup, TakeItem(<item class>)
 		}
 		if (Given > 0 && Entry.bAutoEquip)
 		{

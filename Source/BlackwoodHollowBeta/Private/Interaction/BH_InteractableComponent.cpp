@@ -2,6 +2,8 @@
 
 #include "Interaction/BH_InteractableComponent.h"
 #include "Interaction/BH_InteractionSubsystem.h"
+#include "Quests/BH_QuestDirector.h"
+#include "Quests/BH_QuestEvents.h"
 #include "Components/MeshComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
@@ -161,6 +163,8 @@ void UBH_InteractableComponent::NotifyInteractionCompleted(APawn* InteractingPaw
 		OwnerInterface->BH_OnInteractionCompleted(InteractingPawn);
 	}
 	OnInteractionCompleted.Broadcast(InteractingPawn);
+	// 14A-1: Interact(<first actor tag, else actor name>): any interactable (an NPC, a lever) can finish a quest task.
+	UBH_QuestDirector::ReportQuestEvent(this, FName(BH_QuestEvents::Interact), UBH_QuestDirector::MakeActorArgument(GetOwner(), NAME_None));
 }
 
 void UBH_InteractableComponent::DebugReset()

@@ -5,6 +5,8 @@
 #include "Interaction/BH_InteractorComponent.h"
 #include "Loot/BH_LootLibrary.h"
 #include "Player/BH_PlayerState.h"
+#include "Quests/BH_QuestDirector.h"
+#include "Quests/BH_QuestEvents.h"
 #include "NarrativeItem.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
@@ -107,6 +109,7 @@ void ABH_LootContainer::BH_OnInteractionCompleted(APawn* InteractingPawn)
 				if (Result.AmountGiven > 0 && Result.ItemClass)
 				{
 					UBH_LootLibrary::NotifyItemGrantedHints(PlayerState, Result.ItemClass);
+					UBH_QuestDirector::ReportItemTaken(this, Result.ItemClass, Result.AmountGiven); // 14A-1: TakeItem(<item class>)
 				}
 			}
 		}
@@ -127,6 +130,7 @@ void ABH_LootContainer::BH_OnInteractionCompleted(APawn* InteractingPawn)
 
 	LootedKeys.Add(UBH_LootLibrary::GetPlayerKey(PlayerState));
 	UBH_BeatTrackerComponent::ReportChecklistItem(this, PlayerState, ChecklistItemId); // no-op when the id is None
+	UBH_QuestDirector::ReportQuestEvent(this, FName(BH_QuestEvents::OpenContainer), UBH_QuestDirector::MakeActorArgument(this, ChecklistItemId)); // 14A-1
 
 	if (!bOpened)
 	{

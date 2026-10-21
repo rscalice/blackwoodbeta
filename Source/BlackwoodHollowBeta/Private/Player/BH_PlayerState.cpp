@@ -24,6 +24,8 @@
 #include "Player/BH_GameState.h"
 #include "Player/BH_PartyLibrary.h"
 #include "Player/BH_PartyStateSubsystem.h"
+#include "Quests/BH_QuestDirector.h"
+#include "Quests/BH_QuestEvents.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
@@ -168,6 +170,7 @@ bool ABH_PlayerState::GrantOverloadBurst()
 		UBH_HintLibrary::TriggerHintKey(this, TEXT("Skill.OverloadBurst"));
 		ForceNetUpdate();
 		OnRep_OverloadBurstLearned(); // the server does not get the RepNotify
+		UBH_QuestDirector::ReportQuestEvent(this, FName(BH_QuestEvents::LearnSkill), BH_QuestEvents::SkillOverloadBurst); // 14A-1: LearnSkill(OverloadBurst)
 	}
 	return bEquipped;
 }
@@ -179,10 +182,12 @@ bool ABH_PlayerState::AttuneHub(FName HubName, bool bRetireStarterPoints)
 		return false;
 	}
 	bool bChanged = false;
+	bool bNewHub = false;
 	if (!AttunedHubs.Contains(HubName))
 	{
 		AttunedHubs.Add(HubName);
 		bChanged = true;
+		bNewHub = true;
 	}
 	if (bRetireStarterPoints && !bStarterPointsRetired)
 	{
@@ -194,6 +199,10 @@ bool ABH_PlayerState::AttuneHub(FName HubName, bool bRetireStarterPoints)
 		ForceNetUpdate();
 		OnRep_ProgressionGates();
 		UE_LOG(LogBHCombat, Log, TEXT("%s attuned respawn hub '%s' (starter points retired: %s)."), *GetPlayerName(), *HubName.ToString(), bStarterPointsRetired ? TEXT("yes") : TEXT("no"));
+		if (bNewHub)
+		{
+			UBH_QuestDirector::ReportQuestEvent(this, FName(BH_QuestEvents::Attune), HubName.ToString()); // 14A-1: Attune(<hub>), once per player per hub
+		}
 	}
 	return bChanged;
 }

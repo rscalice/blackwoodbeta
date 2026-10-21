@@ -7,6 +7,7 @@
 #include "Progression/BH_ProgressionComponent.h"
 #include "Progression/BH_RPGSettings.h"
 #include "Loot/BH_LootLibrary.h"
+#include "Quests/BH_QuestDirector.h"
 #include "Combat/BH_WeaponLoadoutDataAsset.h"
 #include "Combat/BH_CombatIdentityComponent.h"
 #include "Characters/BH_EnemyResetComponent.h"
@@ -346,6 +347,7 @@ void ABH_EnemyBase::HandleHealthZero(AActor* Killer)
 	// XP first (positions are read now, before a subclass ragdolls / despawns the body).
 	UBH_ProgressionComponent::GrantKillXP(this, GetXPReward());
 	UBH_LootLibrary::GrantEnemyDrops(this, DropTable); // Phase 11C: same living-player-in-range rule as the XP
+	UBH_QuestDirector::ReportEnemyKill(this); // Phase 14A-1: Kill(<identity>) for the party's quests
 
 	OnDeathNative(Killer);
 	K2_OnDeath(Killer);

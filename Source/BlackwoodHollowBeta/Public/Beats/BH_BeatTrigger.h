@@ -14,6 +14,7 @@
 #include "GameplayTagContainer.h"
 #include "BH_BeatTrigger.generated.h"
 
+class APlayerState;
 class UBoxComponent;
 
 UCLASS(Blueprintable)
@@ -32,6 +33,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat")
 	bool bRequirePlayerControlled = true;
 
+	/**
+	 * Phase 14A-1. When set, a player-controlled pawn walking in also reports the quest event EnterArea(QuestAreaId) (once per player per volume), so a
+	 * Narrative quest task can wait for "reach the basin". Independent of BeatToComplete (leave that empty for a volume that only serves quests).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quest")
+	FName QuestAreaId;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat")
 	TObjectPtr<UBoxComponent> Box;
 
@@ -40,4 +48,8 @@ protected:
 
 	UFUNCTION()
 	void HandleBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+
+private:
+	/** Players that already reported QuestAreaId for this volume (server). */
+	TSet<TWeakObjectPtr<APlayerState>> AreaReportedBy;
 };

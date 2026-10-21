@@ -7,6 +7,8 @@
 #include "GameFramework/Pawn.h"
 #include "Net/UnrealNetwork.h"
 #include "Player/BH_GameState.h"
+#include "Quests/BH_QuestDirector.h"
+#include "Quests/BH_QuestEvents.h"
 #include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogBHBeaconRelight, Log, All);
@@ -144,5 +146,6 @@ void ABH_BeaconRelight::BH_OnInteractionCompleted(APawn* InteractingPawn)
 		RefreshLitState();
 	}
 	UE_LOG(LogBHBeaconRelight, Log, TEXT("%s relit by %s (flag %s)."), *GetNameSafe(this), *GetNameSafe(InteractingPawn), *WorldFlagName.ToString());
+	UBH_QuestDirector::ReportQuestEvent(this, FName(BH_QuestEvents::Relight), UBH_QuestDirector::MakeActorArgument(this, WorldFlagName)); // 14A-1: Relight(<beacon id = its world flag>)
 	BP_OnRelit(InteractingPawn);
 }

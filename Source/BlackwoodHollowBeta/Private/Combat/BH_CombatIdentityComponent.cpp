@@ -13,6 +13,7 @@
 #include "AbilitySystem/BH_CombatFunctionLibrary.h"
 #include "Progression/BH_ProgressionComponent.h"
 #include "Loot/BH_LootLibrary.h"
+#include "Quests/BH_QuestDirector.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemInterface.h"
 #include "Abilities/GameplayAbility.h"
@@ -402,6 +403,7 @@ void UBH_CombatIdentityComponent::HandleHealthZero(AActor* Killer)
 	{
 		UBH_ProgressionComponent::GrantKillXP(OwnerActor, GetXPReward()); // positions are read now, before the body ragdolls / despawns
 		UBH_LootLibrary::GrantEnemyDrops(OwnerActor, DropTable); // Phase 11C
+		UBH_QuestDirector::ReportEnemyKill(OwnerActor); // Phase 14A-1: Kill(<identity>) for the party's quests
 
 		// The server (and a listen-server host) gets no RepNotify: ragdoll here; clients do it in OnRep_Dead.
 		SyncRagdollToDeadState(DeathVelocity);

@@ -7,6 +7,8 @@
 #include "Interaction/BH_InteractorComponent.h"
 #include "Items/BH_WeaponItem.h"
 #include "Loot/BH_LootLibrary.h"
+#include "Quests/BH_QuestDirector.h"
+#include "Quests/BH_QuestEvents.h"
 #include "NarrativeItem.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
@@ -95,6 +97,8 @@ void ABH_WeaponCache::BH_OnInteractionCompleted(APawn* InteractingPawn)
 
 	TakenKeys.Add(UBH_LootLibrary::GetPlayerKey(TakerState));
 	UBH_BeatTrackerComponent::ReportChecklistItem(this, TakerState, ChecklistItemId); // no-op when the id is None
+	UBH_QuestDirector::ReportQuestEvent(this, FName(BH_QuestEvents::OpenContainer), UBH_QuestDirector::MakeActorArgument(this, ChecklistItemId)); // 14A-1
+	UBH_QuestDirector::ReportItemTaken(this, WeaponClass, 1); // 14A-1: TakeItem(<weapon class>)
 	ForceNetUpdate();
 	OnRep_TakenKeys(); // the server does not get the RepNotify
 
