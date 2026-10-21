@@ -21,6 +21,7 @@ UAH_GA_OverloadBurst::UAH_GA_OverloadBurst()
 	CooldownDuration = 45.f;
 	CooldownTags.AddTag(TAG_Cooldown_Fragment_OverloadBurst);
 	FragmentName = NSLOCTEXT("BlackwoodHollow", "Fragment_OverloadBurst", "Overload Burst");
+	Description = GetDefaultOverloadBurstDescription();
 	SlotIndexHint = 0;
 	FragmentCategory = TAG_Fragment_Category_Offensive;
 }

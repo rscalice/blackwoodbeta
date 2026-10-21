@@ -43,6 +43,20 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fragment|UI")
 	TObjectPtr<UTexture2D> FragmentIcon;
 
+	/** Issue #121. Player-facing description shown on the Heart-Fragment page of the Player Menu. Class default; read it from the CDO. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Fragment|UI", meta = (MultiLine = "true"))
+	FText Description;
+
+	/** Issue #121. Default menu texts for the three launch skills. Overload Burst's C++ class sets its own; Blight Aegis / Resonance Pulse Blueprint children copy theirs from here (or type their own). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Fragments")
+	static FText GetDefaultOverloadBurstDescription();
+
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Fragments")
+	static FText GetDefaultBlightAegisDescription();
+
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Fragments")
+	static FText GetDefaultResonancePulseDescription();
+
 	/**
 	 * Phase 8B: category of this fragment (Fragment.Category.Vitality / Offensive / BlightResist). A Heart-Fragment slot
 	 * only accepts fragments whose category matches the slot's restriction (see ABH_PlayerState::CanEquipInSlot).

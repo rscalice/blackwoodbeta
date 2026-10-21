@@ -17,6 +17,24 @@ UAH_GA_FragmentBase::UAH_GA_FragmentBase()
 	ActivationBlockedTags.AddTag(TAG_State_Combat_Dead);
 }
 
+FText UAH_GA_FragmentBase::GetDefaultOverloadBurstDescription()
+{
+	return NSLOCTEXT("BlackwoodHollow", "Fragment_OverloadBurst_Desc",
+		"Unleash a high-impact radial wave of Warden energy that vaporizes volumetric Blight fog and staggers nearby corrupted enemies.");
+}
+
+FText UAH_GA_FragmentBase::GetDefaultBlightAegisDescription()
+{
+	return NSLOCTEXT("BlackwoodHollow", "Fragment_BlightAegis_Desc",
+		"Summon a personal barrier of crystalline resonance that drastically cuts incoming Blight build-up for a short duration.");
+}
+
+FText UAH_GA_FragmentBase::GetDefaultResonancePulseDescription()
+{
+	return NSLOCTEXT("BlackwoodHollow", "Fragment_ResonancePulse_Desc",
+		"Emit a low-frequency wave that deals flat posture damage and interrupts heavy attacks. In co-op, it resonates with your partner's fragment and shares your Aegis protection.");
+}
+
 const FGameplayTagContainer* UAH_GA_FragmentBase::GetCooldownTags() const
 {
 	MergedCooldownTags.Reset();
