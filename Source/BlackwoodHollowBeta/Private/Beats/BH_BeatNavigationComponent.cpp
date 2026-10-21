@@ -17,6 +17,9 @@
 #include "NarrativeNavigationComponent.h"
 #include "NavigationMarkerComponent.h"
 #include "Player/BH_PlayerState.h"
+#include "Quests/BH_QuestDirector.h"
+#include "Quests/BH_QuestTarget.h"
+#include "Quests/BH_QuestTypes.h"
 
 namespace
 {
@@ -106,7 +109,7 @@ void UBH_BeatNavigationComponent::EndPlay(const EEndPlayReason::Type EndPlayReas
 
 void UBH_BeatNavigationComponent::DestroyAllMarkers()
 {
-	for (TPair<TWeakObjectPtr<ABH_BeatTarget>, FTargetMarker>& Pair : TargetMarkers)
+	for (TPair<TWeakObjectPtr<AActor>, FTargetMarker>& Pair : TargetMarkers)
 	{
 		if (UNavigationMarkerComponent* Marker = Pair.Value.Marker.Get())
 		{
@@ -182,7 +185,7 @@ void UBH_BeatNavigationComponent::Refresh()
 	{
 		return;
 	}
-	RefreshObjective(PlayerController, Tracker);
+	RefreshObjective(PlayerController, Tracker, UBH_QuestDirector::Get(this));
 	RefreshPartners(PlayerController, Tracker);
 }
 
@@ -270,7 +273,7 @@ UNavigationMarkerComponent* UBH_BeatNavigationComponent::CreateMarker(AActor* Ow
 	return Marker;
 }
 
-void UBH_BeatNavigationComponent::RefreshObjective(const APlayerController* PlayerController, UBH_BeatTrackerComponent* Tracker)
+void UBH_BeatNavigationComponent::RefreshObjective(const APlayerController* PlayerController, UBH_BeatTrackerComponent* Tracker, UBH_QuestDirector* Director)
 {
 	UWorld* World = GetWorld();
 	FBH_ObjectiveInfo Info;
@@ -286,14 +289,18 @@ void UBH_BeatNavigationComponent::RefreshObjective(const APlayerController* Play
 		Viewer = Pawn->GetActorLocation();
 	}
 
-	for (TActorIterator<ABH_BeatTarget> It(World); It; ++It)
+	// Quest objective (14A-1) wins over the beat tracker when the director has one.
+	FBH_QuestObjective QuestObjective;
+	const bool bQuestDriven = Director && Director->GetCurrentObjective(QuestObjective);
+
+	// Shared by beat and quest targets: creates the marker on first sight and applies the compass / screen state.
+	auto ApplyTarget = [this, &Viewer](AActor* Target, const FText& Label, const bool bIsCurrent, const bool bWorldMarkerAllowed, const float HideDistance)
 	{
-		ABH_BeatTarget* Target = *It;
 		FTargetMarker& Entry = TargetMarkers.FindOrAdd(Target);
 		if (!Entry.Marker.IsValid())
 		{
 			// The quest icon is already coloured (yellow), so it is drawn untinted; without it the stock marker is tinted Bone.
-			Entry.Marker = CreateMarker(Target, Info.ObjectiveText, ObjectiveIcon.IsNull() ? GetPaletteColor(TEXT("Bone"), FLinearColor(0.791f, 0.716f, 0.578f)) : FLinearColor::White, ObjectiveIcon);
+			Entry.Marker = CreateMarker(Target, Label, ObjectiveIcon.IsNull() ? GetPaletteColor(TEXT("Bone"), FLinearColor(0.791f, 0.716f, 0.578f)) : FLinearColor::White, ObjectiveIcon);
 			if (UNavigationMarkerComponent* Created = Entry.Marker.Get())
 			{
 				Created->SetDomain(MakeDomain(false, false));
@@ -304,35 +311,56 @@ void UBH_BeatNavigationComponent::RefreshObjective(const APlayerController* Play
 		UNavigationMarkerComponent* Marker = Entry.Marker.Get();
 		if (!Marker)
 		{
-			continue;
+			return;
 		}
 
-		// This target is the active objective when its position is the one the tracker resolved, and the gate is open.
-		const bool bIsCurrent = bHasObjective && Info.bGateOpen && Tracker->IsTargetActive(Target); // every target of the beat (checklist items drop out once this player did them)
-
 		bool bWantScreen = false;
-		if (bIsCurrent && Info.bShowWorldMarker)
+		if (bIsCurrent && bWorldMarkerAllowed)
 		{
 			const double Distance = FVector::Dist(Viewer, Target->GetActorLocation());
-			const double Limit = Tracker->WorldMarkerHideDistance + (Entry.bOnScreen ? 0.0 : WorldMarkerHysteresis);
+			const double Limit = HideDistance + (Entry.bOnScreen ? 0.0 : WorldMarkerHysteresis);
 			bWantScreen = Distance > Limit;
 		}
 
-		const bool bTextChanged = bIsCurrent && !Entry.DisplayText.EqualTo(Info.ObjectiveText);
+		const bool bTextChanged = bIsCurrent && !Entry.DisplayText.EqualTo(Label);
 		if (bIsCurrent != Entry.bOnCompass || bWantScreen != Entry.bOnScreen || bTextChanged)
 		{
 			if (bIsCurrent)
 			{
 				// Name first: the Navigator builds the marker widgets at (re-)registration, so the text must already be right.
-				Marker->SetLocationDisplayName(Info.ObjectiveText);
-				Entry.DisplayText = Info.ObjectiveText;
+				Marker->SetLocationDisplayName(Label);
+				Entry.DisplayText = Label;
 			}
 			Marker->SetDomain(MakeDomain(bIsCurrent, bWantScreen));
 			Entry.bOnCompass = bIsCurrent;
 			Entry.bOnScreen = bWantScreen;
 		}
+	};
+
+	for (TActorIterator<ABH_BeatTarget> It(World); It; ++It)
+	{
+		ABH_BeatTarget* Target = *It;
+		// While a quest drives the compass, beat targets are inactive. Otherwise: the target is current when the tracker says so and the gate is open
+		// (every target of the beat; checklist items drop out once this player did them).
+		const bool bIsCurrent = !bQuestDriven && bHasObjective && Info.bGateOpen && Tracker->IsTargetActive(Target);
+		ApplyTarget(Target, Info.ObjectiveText, bIsCurrent, Info.bShowWorldMarker, Tracker->WorldMarkerHideDistance);
 	}
-	if (bHasObjective)
+
+	for (TActorIterator<ABH_QuestTarget> It(World); It; ++It)
+	{
+		ABH_QuestTarget* Target = *It;
+		FText Label;
+		bool bGateOpen = false;
+		bool bShowWorld = false;
+		const bool bIsCurrent = bQuestDriven && Director->ResolveTarget(Target, QuestObjective, Label, bGateOpen, bShowWorld) && bGateOpen;
+		ApplyTarget(Target, bIsCurrent ? Label : FText::GetEmpty(), bIsCurrent, bShowWorld, Tracker->WorldMarkerHideDistance);
+	}
+
+	if (bQuestDriven)
+	{
+		LastObjectiveText = QuestObjective.ObjectiveText;
+	}
+	else if (bHasObjective)
 	{
 		LastObjectiveText = Info.ObjectiveText;
 	}

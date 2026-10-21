@@ -2,7 +2,9 @@
 // Target: Unreal Engine 5.8 (C++), UMG
 //
 // Parent of WBP_QuestTracker. Shows the current beat's objective text (DT_BH_Beats, via UBH_BeatTrackerComponent on the game state).
-// Phase 14 fills the same slot from quests later. Local and cosmetic: the beat is replicated, the text is looked up on each machine.
+// Phase 14A-1: when UBH_QuestDirector (game state) has a current quest objective the slot shows it instead: the header becomes the quest title and
+// the objective text is up to 3 lines with "(n/m)" counts. With no quest objective it falls back to the beat text and HeaderText (14A-3 retires that).
+// Local and cosmetic: the quest / beat state is replicated, the text is looked up on each machine.
 // Named widgets (all optional):
 //   Panel_Root    UWidget    whole slot; collapsed while there is no objective
 //   Txt_Header    UTextBlock "OBJECTIVE" (TS_Header)
@@ -17,6 +19,7 @@
 
 class UTextBlock;
 class UBH_BeatTrackerComponent;
+class UBH_QuestDirector;
 
 UCLASS(Abstract, Blueprintable)
 class BLACKWOODHOLLOWBETA_API UBH_QuestTrackerWidget : public UUserWidget
@@ -55,11 +58,15 @@ private:
 	UFUNCTION()
 	void HandleBeatChanged(FGameplayTag NewBeat, FGameplayTag OldBeat);
 
+	UFUNCTION()
+	void HandleQuestObjectiveChanged();
+
 	void TryBind();
 	void Unbind();
 	void Refresh();
 
 	TWeakObjectPtr<UBH_BeatTrackerComponent> BoundTracker;
+	TWeakObjectPtr<UBH_QuestDirector> BoundDirector;
 	FText ObjectiveText;
 	float RetryTimer = 0.f;
 	bool bHadText = false;

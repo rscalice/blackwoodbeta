@@ -17,6 +17,10 @@
 //    P4 Red; same on every machine) and the state shows by look: alive = solid, downed = pulsing, dead / waiting for a revive = grey at 40%.
 //    The current-beat objective uses the YellowQuestMarker icon.
 //  * The stock compass fades markers out beyond 150 m; the fade distances of our markers are pushed out to the whole island.
+//  * QUEST OBJECTIVE (Phase 14A-1): when UBH_QuestDirector has an active objective (a party quest in progress) the markers come from it instead of the
+//    beat tracker: every placed ABH_QuestTarget whose Quest.Target.* tag is pointed at by an open objective line gets the compass marker (gate rule,
+//    15 m world-marker hide distance and its 2 m hysteresis exactly as for beats; the label is the line text with its "(n/m)" count). With no quest
+//    objective the beat tracker drives ABH_BeatTarget markers as before (14A-3 retires that path). Partner markers are untouched.
 
 #pragma once
 
@@ -28,7 +32,9 @@ class AActor;
 class APlayerController;
 class APlayerState;
 class ABH_BeatTarget;
+class ABH_QuestTarget;
 class UBH_BeatTrackerComponent;
+class UBH_QuestDirector;
 class UNarrativeNavigationComponent;
 class UNavigationMarkerComponent;
 class UTexture2D;
@@ -117,7 +123,7 @@ private:
 	};
 
 	void Refresh();
-	void RefreshObjective(const APlayerController* PlayerController, UBH_BeatTrackerComponent* Tracker);
+	void RefreshObjective(const APlayerController* PlayerController, UBH_BeatTrackerComponent* Tracker, UBH_QuestDirector* Director);
 	void RefreshPartners(const APlayerController* PlayerController, const UBH_BeatTrackerComponent* Tracker);
 	UNavigationMarkerComponent* CreateMarker(AActor* Owner, const FText& Name, const FLinearColor& Tint, const TSoftObjectPtr<UTexture2D>& Icon) const;
 	FLinearColor GetPaletteColor(FName Token, const FLinearColor& Fallback) const;
@@ -130,7 +136,8 @@ private:
 	void ApplyPartnerLook(FPartnerProxy& Proxy, int32 Slot, uint8 DeathPhase);
 	void DestroyAllMarkers();
 
-	TMap<TWeakObjectPtr<ABH_BeatTarget>, FTargetMarker> TargetMarkers;
+	/** One marker per placed target actor (an ABH_BeatTarget or, since 14A-1, an ABH_QuestTarget). */
+	TMap<TWeakObjectPtr<AActor>, FTargetMarker> TargetMarkers;
 	TMap<TWeakObjectPtr<APlayerState>, FPartnerProxy> Partners;
 
 	FText LastObjectiveText;
