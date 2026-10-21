@@ -1,6 +1,7 @@
 // Blackwood Hollow - Player Menu helpers (Phase 13G-0, implementation)
 
 #include "UI/BH_PlayerMenuLibrary.h"
+#include "UI/BH_ItemIconSettings.h"
 #include "Items/BH_ArmorItem.h"
 #include "Items/BH_WeaponItem.h"
 #include "Combat/BH_LoadoutComponent.h"
@@ -153,13 +154,27 @@ UTexture2D* UBH_PlayerMenuLibrary::GetItemIcon(TSubclassOf<UNarrativeItem> ItemC
 			}
 		}
 	}
+	// Issue #122: a pin left empty falls back to the project-wide default for the category (UBH_ItemIconSettings).
+	const UBH_ItemIconSettings* IconSettings = UBH_ItemIconSettings::Get();
+	UTexture2D* PinFallback = nullptr;
+	const TSoftObjectPtr<UTexture2D>* DefaultFallback = nullptr;
 	switch (GetItemCategory(ItemClass))
 	{
-	case EBH_ItemCategory::Weapon:     return WeaponFallback;
-	case EBH_ItemCategory::Armor:      return ArmorFallback;
-	case EBH_ItemCategory::Consumable: return ConsumableFallback;
-	default:                           return OtherFallback;
+	case EBH_ItemCategory::Weapon:     PinFallback = WeaponFallback;     DefaultFallback = &IconSettings->WeaponFallback; break;
+	case EBH_ItemCategory::Armor:      PinFallback = ArmorFallback;      DefaultFallback = &IconSettings->ArmorFallback; break;
+	case EBH_ItemCategory::Consumable: PinFallback = ConsumableFallback; DefaultFallback = &IconSettings->ConsumableFallback; break;
+	default:                           PinFallback = OtherFallback;      DefaultFallback = &IconSettings->OtherFallback; break;
 	}
+	if (PinFallback)
+	{
+		return PinFallback;
+	}
+	return DefaultFallback && !DefaultFallback->IsNull() ? DefaultFallback->LoadSynchronous() : nullptr;
+}
+
+UTexture2D* UBH_PlayerMenuLibrary::GetItemIconDefault(TSubclassOf<UNarrativeItem> ItemClass)
+{
+	return GetItemIcon(ItemClass, nullptr, nullptr, nullptr, nullptr);
 }
 
 bool UBH_PlayerMenuLibrary::GetItemBonuses(const UNarrativeItem* Item, FBH_EquipStatBonuses& OutBonuses)

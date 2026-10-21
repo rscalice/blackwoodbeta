@@ -125,6 +125,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|PlayerMenu")
 	static UTexture2D* GetItemIcon(TSubclassOf<UNarrativeItem> ItemClass, UTexture2D* WeaponFallback, UTexture2D* ArmorFallback, UTexture2D* ConsumableFallback, UTexture2D* OtherFallback);
 
+	/**
+	 * Issue #122. GetItemIcon with no fallback pins: the Thumbnail, else the category default from Project Settings > Game >
+	 * "Blackwood Hollow Item Icons" (UBH_ItemIconSettings). GetItemIcon itself also uses those defaults for any pin left empty.
+	 */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|PlayerMenu")
+	static UTexture2D* GetItemIconDefault(TSubclassOf<UNarrativeItem> ItemClass);
+
 	/** Attack Power / Defense / Max Stamina bonuses of a weapon or armor item. @return false (and zeros) for any other item. */
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|PlayerMenu")
 	static bool GetItemBonuses(const UNarrativeItem* Item, FBH_EquipStatBonuses& OutBonuses);
