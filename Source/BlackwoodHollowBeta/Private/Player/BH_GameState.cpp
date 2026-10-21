@@ -5,6 +5,8 @@
 #include "Player/BH_PlayerState.h"
 #include "Beats/BH_BeatTrackerComponent.h"
 #include "Beats/BH_BeatNavigationComponent.h"
+#include "Quests/BH_QuestDirector.h"
+#include "Quests/BH_QuestEvents.h"
 #include "NarrativeComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -20,6 +22,7 @@ ABH_GameState::ABH_GameState()
 	PartyComponent = CreateDefaultSubobject<UBH_PartyComponent>(TEXT("PartyComponent"));
 	BeatTracker = CreateDefaultSubobject<UBH_BeatTrackerComponent>(TEXT("BeatTracker"));
 	BeatNavigation = CreateDefaultSubobject<UBH_BeatNavigationComponent>(TEXT("BeatNavigation"));
+	QuestDirector = CreateDefaultSubobject<UBH_QuestDirector>(TEXT("QuestDirector"));
 }
 
 void ABH_GameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -57,6 +60,11 @@ void ABH_GameState::SetWorldFlag(FName Flag, bool bValue)
 	ForceNetUpdate();
 	LastBroadcastFlags = WorldFlags;
 	OnWorldFlagChanged.Broadcast(Flag, bValue); // the server does not get the RepNotify
+	if (bValue && QuestDirector)
+	{
+		// Phase 14A-1: WorldFlag(<flag>). Covers the barricade, the Span Gate and every other flag; a quest can wait for any of them.
+		QuestDirector->ReportEvent(FName(BH_QuestEvents::WorldFlag), Flag.ToString());
+	}
 }
 
 void ABH_GameState::OnRep_WorldFlags()

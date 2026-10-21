@@ -27,6 +27,7 @@
 class UBH_PartyComponent;
 class UBH_BeatTrackerComponent;
 class UBH_BeatNavigationComponent;
+class UBH_QuestDirector;
 class UNarrativeComponent;
 class APlayerController;
 
@@ -58,6 +59,10 @@ public:
 	/** The party's current beat, objective and partner pings (Phase 13B+). Any machine. */
 	UFUNCTION(BlueprintPure, Category = "BH|Beat")
 	UBH_BeatTrackerComponent* GetBeatTracker() const { return BeatTracker; }
+
+	/** The party quest director (Phase 14A-1): begins party quests, takes gameplay events, gives the UI the current quest objective. Any machine. */
+	UFUNCTION(BlueprintPure, Category = "BH|Quest")
+	UBH_QuestDirector* GetQuestDirector() const { return QuestDirector; }
 
 	/** Any machine: the party is in combat (replicated copy of UBH_PartyStateSubsystem::IsPartyInCombat). */
 	UFUNCTION(BlueprintPure, Category = "BH|Party")
@@ -109,6 +114,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Beat")
 	TObjectPtr<UBH_BeatTrackerComponent> BeatTracker;
+
+	/** Party quests and the quest event vocabulary (Phase 14A-1). Replicated component; see BH_QuestDirector.h. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Quest")
+	TObjectPtr<UBH_QuestDirector> QuestDirector;
 
 	/** Local-only bridge from the beat state to Narrative Navigator markers (Phase 13B+). Does nothing on a dedicated server. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Beat")
