@@ -65,6 +65,7 @@ UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_PostureBroken, "GameplayCu
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_GameplayCue_Combat_Hit_ShieldBash, "GameplayCue.Combat.Hit.ShieldBash", "Cosmetic cue: a shield bash connected (heavier, metallic variant of the Hit cue).");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Combat_HitResult_Blocked, "Combat.HitResult.Blocked", "Flag carried in FGameplayCueParameters::AggregatedSourceTags: the victim blocked this hit.");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Combat_HitResult_Fatal, "Combat.HitResult.Fatal", "Flag carried in FGameplayCueParameters::AggregatedSourceTags: the victim's Health was zero after this hit's damage (set on the server, so every machine agrees).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_Combat_HitResult_Finisher, "Combat.HitResult.Finisher", "Flag carried in FGameplayCueParameters::AggregatedSourceTags: this hit came from the FINAL step of a multi-step melee combo (set on the server, so every machine agrees). The hit cue plays at least the Heavy feel tier for it; cosmetic only.");
 
 // Phase 7A
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_State_Combat_Dodging, "State.Combat.Dodging", "A dodge ability is active (granted by UAH_GA_Dodge).");
@@ -252,3 +253,9 @@ void FBH_GameplayTags::AddAllTags()
 	AddTag(State_Weapon_Drawn, "State.Weapon.Drawn", "Weapon is drawn (combat locomotion).");
 	AddTag(State_Weapon_Sheathed, "State.Weapon.Sheathed", "Weapon is sheathed (relaxed locomotion).");
 }
+
+// UI.Layer.* (Phase 13B)
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_UI_Layer_Game, "UI.Layer.Game", "Non-activatable HUD layer of the primary layout (AddHUDWidget).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_UI_Layer_GameMenu, "UI.Layer.GameMenu", "Activatable stack for in-game overlays above the HUD.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_UI_Layer_Menu, "UI.Layer.Menu", "Activatable stack for full menus (player menu).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_UI_Layer_Modal, "UI.Layer.Modal", "Activatable stack for confirmations and popups; always on top.");

@@ -25,6 +25,9 @@
 #include "GameFramework/PlayerState.h"
 #include "HAL/IConsoleManager.h"
 #include "Sound/SoundBase.h"
+#include "TimerManager.h"
+#include "Materials/MaterialInterface.h"
+#include "UObject/ConstructorHelpers.h"
 
 DEFINE_LOG_CATEGORY(LogBHFeel);
 
@@ -38,6 +41,12 @@ static TAutoConsoleVariable<int32> CVarBHCombatFeelDebug(
 	TEXT("bh.CombatFeel.Debug"),
 	0,
 	TEXT("1 = log every controller rumble, parry punch (FOV kick) and directional shake at Log level (LogBHFeel). For testing."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarBHRumbleEnabled(
+	TEXT("bh.Rumble.Enabled"),
+	1,
+	TEXT("Player setting: 1 = controller rumble on (default), 0 = off. Read by UBH_CombatFeelLibrary::PlayRumble together with DA_CombatFeel bEnableRumble. The 13H Controls toggle sets it via SetRumbleEnabled."),
 	ECVF_Default);
 
 namespace
@@ -139,19 +148,26 @@ namespace
 		return true;
 	}
 
+	// The hit-flash material: DA_CombatFeel's hard reference first, LoadObject as the fallback (null = asset missing).
+	UMaterialInterface* GetHitFlashBase()
+	{
+		if (!GHitFlashBase.IsValid())
+		{
+			UMaterialInterface* Configured = UBH_CombatFeelSettings::Get()->HitFlashMaterial;
+			GHitFlashBase = Configured ? Configured : LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/BlackwoodHollow/Characters/Enemies/Materials/M_BH_HitFlash.M_BH_HitFlash"), nullptr, LOAD_NoWarn);
+		}
+		return GHitFlashBase.Get();
+	}
+
 	void StartMeshFlash(AActor* Victim, EBH_ImpactTier Tier)
 	{
 		if (!Victim)
 		{
 			return;
 		}
-		if (!GHitFlashBase.IsValid())
+		if (!GetHitFlashBase())
 		{
-			GHitFlashBase = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/BlackwoodHollow/Characters/Enemies/Materials/M_BH_HitFlash.M_BH_HitFlash"), nullptr, LOAD_NoWarn);
-			if (!GHitFlashBase.IsValid())
-			{
-				return; // asset missing: no mesh flash
-			}
+			return; // asset missing: no mesh flash
 		}
 
 		// Tier -> peak emissive, duration and tint (white at Light, warmer as the hit gets heavier).
@@ -234,6 +250,10 @@ const TArray<TObjectPtr<USoundBase>>& UBH_VoiceSetDataAsset::GetSounds(EBH_Voice
 UBH_CombatFeelSettings::UBH_CombatFeelSettings()
 {
 	Tiers.SetNum(4);
+
+	// Hit-flash material as a hard reference (a saved DA_CombatFeel without the property picks this up). Null if the asset moves: StartMeshFlash falls back to LoadObject.
+	static ConstructorHelpers::FObjectFinderOptional<UMaterialInterface> HitFlashFinder(TEXT("/Game/BlackwoodHollow/Characters/Enemies/Materials/M_BH_HitFlash.M_BH_HitFlash"));
+	HitFlashMaterial = HitFlashFinder.Get();
 
 	// Animation freeze (hit-stop) and pushback: separate properties (not Tiers[]) so an already-saved DA_CombatFeel picks up these defaults.
 	FreezeDurationByTier = { 0.06f, 0.09f, 0.13f, 0.18f };
@@ -327,6 +347,71 @@ EBH_ImpactTier UBH_CombatFeelLibrary::TierForHit(float Damage, float PostureMult
 EBH_ImpactTier UBH_CombatFeelLibrary::Escalate(EBH_ImpactTier Tier)
 {
 	return static_cast<EBH_ImpactTier>(FMath::Min(static_cast<int32>(Tier) + 1, static_cast<int32>(EBH_ImpactTier::Massive)));
+}
+
+bool UBH_CombatFeelLibrary::IsFinisherStep(int32 ComboStep, int32 NumComboSteps)
+{
+	return NumComboSteps >= 2 && ComboStep == NumComboSteps - 1;
+}
+
+EBH_ImpactTier UBH_CombatFeelLibrary::ApplyFinisherFloor(EBH_ImpactTier Tier, bool bFinisher)
+{
+	return (bFinisher && Tier < EBH_ImpactTier::Heavy) ? EBH_ImpactTier::Heavy : Tier;
+}
+
+void UBH_CombatFeelLibrary::WarmHitFlash(AActor* Actor)
+{
+	UWorld* World = Actor ? Actor->GetWorld() : nullptr;
+	if (!World || World->GetNetMode() == NM_DedicatedServer)
+	{
+		return;
+	}
+	UMaterialInterface* FlashBase = GetHitFlashBase();
+	if (!FlashBase)
+	{
+		return;
+	}
+
+	TArray<USkeletalMeshComponent*> Meshes;
+	Actor->GetComponents<USkeletalMeshComponent>(Meshes);
+	for (USkeletalMeshComponent* SkelMesh : Meshes)
+	{
+		// Same filter as StartMeshFlash; a mesh with a live flash is already compiled and must not be disturbed.
+		if (!SkelMesh || !SkelMesh->GetSkeletalMeshAsset() || !SkelMesh->IsVisible() || SkelMesh->ComponentHasTag(FName(TEXT("BH.Weapon"))) || GMeshFlashes.Contains(SkelMesh))
+		{
+			continue;
+		}
+		UMaterialInstanceDynamic* WarmMID = UMaterialInstanceDynamic::Create(FlashBase, SkelMesh);
+		if (!WarmMID)
+		{
+			continue;
+		}
+		WarmMID->SetScalarParameterValue(TEXT("Intensity"), 0.f);
+		const TWeakObjectPtr<UMaterialInterface> PreviousOverlay = SkelMesh->GetOverlayMaterial();
+		SkelMesh->SetOverlayMaterial(WarmMID);
+
+		// Next tick: the overlay has been rendered once (shader / PSO requested); put the previous one back unless someone replaced it meanwhile.
+		const TWeakObjectPtr<USkeletalMeshComponent> WeakMesh = SkelMesh;
+		const TWeakObjectPtr<UMaterialInstanceDynamic> WeakWarm = WarmMID;
+		World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateLambda([WeakMesh, WeakWarm, PreviousOverlay]()
+		{
+			USkeletalMeshComponent* RestoreMesh = WeakMesh.Get();
+			if (RestoreMesh && RestoreMesh->GetOverlayMaterial() == WeakWarm.Get())
+			{
+				RestoreMesh->SetOverlayMaterial(PreviousOverlay.Get());
+			}
+		}));
+	}
+}
+
+float UBH_CombatFeelLibrary::GetLowHealthThreshold()
+{
+	return FMath::Clamp(UBH_CombatFeelSettings::Get()->LowHealthThreshold, 0.f, 1.f);
+}
+
+bool UBH_CombatFeelLibrary::IsLowHealth(float Health, float MaxHealth)
+{
+	return MaxHealth > 0.f && Health > 0.f && Health <= MaxHealth * GetLowHealthThreshold();
 }
 
 void UBH_CombatFeelLibrary::ApplyTierFreeze(AActor* Actor, EBH_ImpactTier Tier, float Factor, bool bBlocked)
@@ -522,7 +607,7 @@ UCameraShakeBase* UBH_CombatFeelLibrary::PlayDirectionalBiasShake(APlayerControl
 void UBH_CombatFeelLibrary::PlayRumble(APlayerController* PC, const FBH_RumbleSpec& Spec)
 {
 	const UBH_CombatFeelSettings* Settings = UBH_CombatFeelSettings::Get();
-	if (!PC || !PC->IsLocalController() || !Settings->bEnableRumble || Spec.Duration <= 0.f || (Spec.Large <= 0.f && Spec.Small <= 0.f))
+	if (!PC || !PC->IsLocalController() || !Settings->bEnableRumble || !IsRumbleEnabled() || Spec.Duration <= 0.f || (Spec.Large <= 0.f && Spec.Small <= 0.f))
 	{
 		return;
 	}
@@ -539,6 +624,17 @@ void UBH_CombatFeelLibrary::PlayRumble(APlayerController* PC, const FBH_RumbleSp
 	{
 		UE_LOG(LogBHFeel, Log, TEXT("Rumble: pc=%s large=%.2f small=%.2f duration=%.2f"), *GetNameSafe(PC), Spec.Large, Spec.Small, Spec.Duration);
 	}
+}
+
+bool UBH_CombatFeelLibrary::IsRumbleEnabled()
+{
+	return CVarBHRumbleEnabled.GetValueOnAnyThread() != 0;
+}
+
+void UBH_CombatFeelLibrary::SetRumbleEnabled(bool bEnabled)
+{
+	// SetByCode: above the ini/game-setting levels, below the console, so typing "bh.Rumble.Enabled 0" still works for testing.
+	CVarBHRumbleEnabled.AsVariable()->Set(bEnabled ? 1 : 0, ECVF_SetByCode);
 }
 
 void UBH_CombatFeelLibrary::PlayParryPunch(APlayerController* PC)

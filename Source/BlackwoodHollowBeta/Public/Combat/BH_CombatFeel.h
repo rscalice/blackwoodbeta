@@ -10,6 +10,9 @@
 //   Parry success ........................ Heavy, shake only for the parrier (bInstigatorOnlyShake).
 //   Posture broken ....................... Massive for the local player when they break someone or are broken.
 //   Kill ................................. a fatal hit is at least Heavy.
+//   Combo finisher ....................... the LAST step of a combo with 2+ steps is at least Heavy (tap, tap, BANG). The server stamps
+//                                          Combat.HitResult.Finisher on the cue's AggregatedSourceTags; not for blocked hits. Feel only:
+//                                          damage, posture and pushback keep using the damage tier.
 // Hit-stop uses the un-escalated tier; the shake uses the escalated one. Both come from DA_CombatFeel.
 //
 // TWO-FIGHTER ANIMATION FREEZE (the "hit-stop"): a cosmetic freeze of BOTH fighters' skeletal mesh animation, set on every
@@ -166,6 +169,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact")
 	TArray<FBH_ImpactTierSettings> Tiers;
 
+	/** Victim mesh hit-flash material (M_BH_HitFlash). A hard reference so it is always loaded; if null, StartMeshFlash falls back to LoadObject. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact")
+	TObjectPtr<UMaterialInterface> HitFlashMaterial;
+
 	/** Multiplies every shake (together with CVar bh.Combat.ShakeScale). Accessibility hook. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact", meta = (ClampMin = "0.0"))
 	float ShakeScaleMultiplier = 1.f;
@@ -295,6 +302,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Impact|Rumble")
 	FBH_RumbleSpec PostureBreakRumble;
 
+	// -- Low health (13F-1) ------------------------------------------------------------
+
+	/**
+	 * Health fraction (0..1) at or below which the player counts as low on health: the heartbeat MetaSound and the desaturated edge
+	 * vignette (13F-2..4) start here. 0.30 = 30% (Robert, 2026-10-15). Read it through UBH_CombatFeelLibrary::GetLowHealthThreshold / IsLowHealth.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "LowHealth", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float LowHealthThreshold = 0.30f;
+
 	// -- Voice ----------------------------------------------------------------
 
 	/** Voice set for player-controlled pawns (enemies use UBH_CombatIdentityComponent::VoiceSet). */
@@ -346,6 +362,30 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
 	static EBH_ImpactTier Escalate(EBH_ImpactTier Tier);
 
+	/** True for the last step of a combo of at least two steps (a one-step attack such as the shield bash has no finisher). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
+	static bool IsFinisherStep(int32 ComboStep, int32 NumComboSteps);
+
+	/** A finisher plays at least the Heavy tier; any other hit (or a higher tier) is returned unchanged. Feel only. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
+	static EBH_ImpactTier ApplyFinisherFloor(EBH_ImpactTier Tier, bool bFinisher);
+
+	/**
+	 * Warm-up for the hit flash so the first real flash is not skipped while the shader / PSO compiles: puts a 0-intensity
+	 * M_BH_HitFlash MID in the overlay slot of Actor's visible non-weapon skeletal meshes and restores each previous overlay on the next
+	 * tick. Local and cosmetic only (no-op on dedicated servers).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel")
+	static void WarmHitFlash(AActor* Actor);
+
+	/** The low-health threshold as a health fraction (DA_CombatFeel LowHealthThreshold, 0.30 by default). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
+	static float GetLowHealthThreshold();
+
+	/** True when Health is above zero and at or below MaxHealth * the low-health threshold (a dead or unset player is not "low"). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
+	static bool IsLowHealth(float Health, float MaxHealth);
+
 	/**
 	 * Hit-stop on Instigator + Victim (every machine), camera shake for the LOCAL player only (when they are instigator or victim,
 	 * or within SpectatorShakeRadius with distance falloff, capped at SpectatorShakeScale), and a brief flash light on Heavy+.
@@ -385,9 +425,17 @@ public:
 	 */
 	static UCameraShakeBase* PlayDirectionalBiasShake(APlayerController* PC, const FVector& FromDirection, float Scale);
 
-	/** Plays Spec on PC's controller (local controllers only; honours UBH_CombatFeelSettings::bEnableRumble). */
+	/** Plays Spec on PC's controller (local controllers only; honours UBH_CombatFeelSettings::bEnableRumble and the player's IsRumbleEnabled()). */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel")
 	static void PlayRumble(APlayerController* PC, const FBH_RumbleSpec& Spec);
+
+	/** The player's rumble setting (CVar bh.Rumble.Enabled, default on). Every native rumble and PlayRumble check it; a Blueprint that plays its own force feedback should too. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Feel")
+	static bool IsRumbleEnabled();
+
+	/** Sets the player's rumble setting. The 13H Controls toggle calls this on startup and on change (persistence belongs to the settings save). */
+	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel")
+	static void SetRumbleEnabled(bool bEnabled);
 
 	/** Parry success for the local parrier PC: strong short shake, FOV punch and the parry rumble. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|Feel")

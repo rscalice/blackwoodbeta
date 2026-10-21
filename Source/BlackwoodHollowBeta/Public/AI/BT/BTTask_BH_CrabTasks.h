@@ -154,10 +154,11 @@ protected:
 	virtual EBTNodeResult::Type AbortTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
 };
 
-/** Chase Target memory: seconds spent chasing. */
+/** Chase Target memory: seconds spent chasing, and whether the task is steering directly (MoveTo failed / partial / invalid path). */
 struct FBTBHChaseMemory
 {
 	float Elapsed = 0.f;
+	bool bDirectSteering = false;
 };
 
 UCLASS(meta = (DisplayName = "BH Chase Target"))
@@ -179,10 +180,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Task", meta = (ClampMin = "0.5"))
 	float MaxChaseTime = 4.f;
 
+	/**
+	 * Phase 13-0b. When MoveTo fails (request failed, no nav mesh), the path is partial or invalid, or the move ends short of the target, the task
+	 * stays InProgress and steers straight at the target with AddMovementInput every tick instead of failing. Still ends on AcceptanceRadius
+	 * (Succeeded), a lost target or MaxChaseTime (Failed).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Task")
+	bool bDirectMoveFallback = true;
+
 protected:
 	virtual EBTNodeResult::Type ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
 	virtual void TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds) override;
 	virtual EBTNodeResult::Type AbortTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
+	virtual void OnMessage(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, FName Message, int32 RequestID, bool bSuccess) override;
 };
 
 /** Wait memory: seconds left. */

@@ -25,11 +25,19 @@
 #include "BH_GameState.generated.h"
 
 class UBH_PartyComponent;
+class UBH_BeatTrackerComponent;
+class UBH_BeatNavigationComponent;
 class UNarrativeComponent;
 class APlayerController;
 
 /** Phase 12F. A world flag was set or cleared (any machine: the flag list replicates). */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnWorldFlagChanged, FName, Flag, bool, bIsSet);
+
+/** 13I-1. The party roster changed: a player state was added or removed (any machine), or a member was registered into the party (server). Rebuild the partner panel. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnPartyMembersChanged);
+
+/** 13I-1. A player left the session (any machine). Key the panel by PlayerSlot (stable 1..4, 0 = it was never assigned) and show "Disconnected" for UBH_PartyLibrary::DisconnectedDisplaySeconds (3 s). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnPartnerDisconnected, int32, PlayerSlot, const FString&, PlayerName);
 
 UCLASS()
 class BLACKWOODHOLLOWBETA_API ABH_GameState : public AGameStateBase
@@ -46,6 +54,10 @@ public:
 	/** The party component (any machine; its member list replicates). */
 	UFUNCTION(BlueprintPure, Category = "BH|Party")
 	UBH_PartyComponent* GetPartyComponent() const { return PartyComponent; }
+
+	/** The party's current beat, objective and partner pings (Phase 13B+). Any machine. */
+	UFUNCTION(BlueprintPure, Category = "BH|Beat")
+	UBH_BeatTrackerComponent* GetBeatTracker() const { return BeatTracker; }
 
 	/** Any machine: the party is in combat (replicated copy of UBH_PartyStateSubsystem::IsPartyInCombat). */
 	UFUNCTION(BlueprintPure, Category = "BH|Party")
@@ -76,6 +88,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|World")
 	bool HasWorldFlag(FName Flag) const { return WorldFlags.Contains(Flag); }
 
+	/** 13I-1. The roster changed (see FBH_OnPartyMembersChanged). */
+	UPROPERTY(BlueprintAssignable, Category = "BH|Party")
+	FBH_OnPartyMembersChanged OnPartyMembersChanged;
+
+	/** 13I-1. A player left (see FBH_OnPartnerDisconnected). */
+	UPROPERTY(BlueprintAssignable, Category = "BH|Party")
+	FBH_OnPartnerDisconnected OnPartnerDisconnected;
+
 	/** Any machine, after the flag list changed (the server fires it from SetWorldFlag, clients from the RepNotify). */
 	UPROPERTY(BlueprintAssignable, Category = "BH|World")
 	FBH_OnWorldFlagChanged OnWorldFlagChanged;
@@ -86,6 +106,13 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Party")
 	TObjectPtr<UBH_PartyComponent> PartyComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Beat")
+	TObjectPtr<UBH_BeatTrackerComponent> BeatTracker;
+
+	/** Local-only bridge from the beat state to Narrative Navigator markers (Phase 13B+). Does nothing on a dedicated server. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BH|Beat")
+	TObjectPtr<UBH_BeatNavigationComponent> BeatNavigation;
 
 	/** The set flags. Replicated. */
 	UPROPERTY(ReplicatedUsing = OnRep_WorldFlags)

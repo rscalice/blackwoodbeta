@@ -80,7 +80,7 @@ def copy_bones(source_mesh, mesh):
 
 
 def write_skeletal(mesh, package, skeleton, materials, slot_names):
-    """Create the skeletal mesh at `package` (or overwrite it in place) with the reference pose `mesh` carries.
+    """Create the skeletal mesh at `package` (an existing asset is deleted first, never overwritten) with the reference pose `mesh` carries.
 
     The reference pose must be the bone proportions on `mesh` (the body the armor was fitted to), not the
     Skeleton asset's own reference pose, which belongs to a different MetaHuman body. Overwriting in place
@@ -89,18 +89,9 @@ def write_skeletal(mesh, package, skeleton, materials, slot_names):
     reads the ASSET's reference pose, not the written mesh data.
     """
     if assets.exists(package):
-        target = assets.load(package)
-        target.modify(True)
-        options = unreal.GeometryScriptCopyMeshToAssetOptions()
-        options.set_editor_property("replace_materials", True)
-        options.set_editor_property("new_materials", materials)
-        options.set_editor_property("new_material_slot_names", slot_names)
-        _, outcome = _ASSET_UTILS.copy_mesh_to_skeletal_mesh(mesh, target, options, unreal.GeometryScriptMeshWriteLOD())
-        if outcome == _SUCCESS and asset_bind_pose_delta(target, mesh) <= BIND_POSE_TOLERANCE_CM:
-            return target
-        target = None
+        # Never overwrite in place: it keeps stale render / skin data (boots stuck in the rest pose).
         if not unreal.EditorAssetLibrary.delete_asset(package):
-            raise RuntimeError("Could not replace %s (wrong reference pose and delete failed)" % package)
+            raise RuntimeError("Could not delete %s before re-creating it" % package)
     assets.ensure_folder(package.rsplit("/", 1)[0])
     options = unreal.GeometryScriptCreateNewSkeletalMeshAssetOptions()
     options.set_editor_property("use_mesh_bone_proportions", True)

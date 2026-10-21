@@ -74,6 +74,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|DeathPrompt|Text")
 	FText RevivePromptText = NSLOCTEXT("BlackwoodHollow", "DeathRevivePrompt", "Hold to revive");
 
+	/** 13C. Cause-of-death line. {Killer} = "Veteran Ashen Guard" (rank omitted for Common). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|DeathPrompt|Text")
+	FText CauseFormat = NSLOCTEXT("BlackwoodHollow", "DeathCauseFormat", "Slain by {Killer}");
+
+	/** 13C. Cause line when the Blight (or an unknown source) killed the player. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|DeathPrompt|Text")
+	FText CauseBlightText = NSLOCTEXT("BlackwoodHollow", "DeathCauseBlight", "Overwhelmed by the Blight");
+
 	// -- Behaviour -----------------------------------------------------------------------------------
 
 	/** Collapse the widget while the player is alive and no revive is in progress / possible. */
@@ -111,6 +119,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BH|DeathPrompt")
 	float GetReviveFraction() const { return ReviveFraction; }
 
+	/** 13C. One line naming what killed the local player (from ABH_PlayerState::GetDeathCause). */
+	UFUNCTION(BlueprintPure, Category = "BH|DeathPrompt")
+	FText GetDeathCauseText() const;
+
 	// -- Events ----------------------------------------------------------------------------------------
 
 	/** The local player's death phase changed (also fires once on bind). */
@@ -132,6 +144,10 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "BH|DeathPrompt", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> Txt_Prompt;
+
+	/** 13C. The cause-of-death line. */
+	UPROPERTY(BlueprintReadOnly, Category = "BH|DeathPrompt", meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Txt_Cause;
 
 	UPROPERTY(BlueprintReadOnly, Category = "BH|DeathPrompt", meta = (BindWidgetOptional))
 	TObjectPtr<UButton> Btn_Respawn;

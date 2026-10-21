@@ -1,10 +1,14 @@
 // Blackwood Hollow - Core combat AttributeSet (implementation)
 
 #include "AbilitySystem/AH_AttributeSet.h"
+#include "Hints/BH_HintLibrary.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Abilities/AH_GA_Block.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
 #include "Combat/BH_CombatFeel.h"
+#include "Player/BH_PlayerState.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerState.h"
 #include "Progression/BH_RPGSettings.h"
 #include "GameplayCueManager.h"
 #include "GameplayEffectTypes.h"
@@ -224,6 +228,21 @@ bool UAH_AttributeSet::PreGameplayEffectExecute(FGameplayEffectModCallbackData& 
 		}
 	}
 
+	// -- Perfect block -------------------------------------------------------
+	// UAH_GA_Block decided on the hit event (server clock, arc) that this hit landed inside its ParryWindow and ran
+	// the parry outcome; the damage is thrown out here, like a timed parry.
+	if (Data.EvaluatedData.Attribute == GetIncomingDamageAttribute()
+		&& Data.Target.HasMatchingGameplayTag(FBH_GameplayTags::Get().State_Combat_Blocking))
+	{
+		if (UAH_GA_Block* PerfectBlock = UAH_GA_Block::FindActiveBlock(&Data.Target))
+		{
+			if (PerfectBlock->ConsumePerfectBlock(Data.EffectSpec.GetContext().GetOriginalInstigator()))
+			{
+				return false;
+			}
+		}
+	}
+
 	// -- Block mitigation ---------------------------------------------------
 	// While UAH_GA_Block is active (State.Combat.Blocking) and the attacker is
 	// inside its frontal arc, cut the damage and convert part of it into
@@ -327,6 +346,14 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 
 		if (DamageDone > 0.f && NewHealth <= 0.f && TargetASC && !TargetASC->HasMatchingGameplayTag(Tags.State_Combat_Dead))
 		{
+			// 13C: remember what killed a player (the death prompt names it). Blight DoT or no enemy instigator = "Overwhelmed by the Blight".
+			if (const APawn* DeadPawn = Cast<APawn>(TargetActor))
+			{
+				if (ABH_PlayerState* DeadState = Cast<ABH_PlayerState>(DeadPawn->GetPlayerState()))
+				{
+					DeadState->RecordDeathCause(Instigator, BH_AttributeSetBlightPrivate::IsBlightSpec(Data.EffectSpec));
+				}
+			}
 			OnHealthZero.Broadcast(Instigator);
 			// Replicated loose tag (TagOnly): UpdateTagMap also bumps the authority's own count, so the server sees it too.
 			TargetASC->AddLooseGameplayTag(Tags.State_Combat_Dead, 1, EGameplayTagReplicationState::TagOnly);
@@ -350,6 +377,13 @@ void UAH_AttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbac
 
 		if (NewHealth <= 0.f)
 		{
+			if (const APawn* DeadPawn = Cast<APawn>(TargetActor))
+			{
+				if (ABH_PlayerState* DeadState = Cast<ABH_PlayerState>(DeadPawn->GetPlayerState()))
+				{
+					DeadState->RecordDeathCause(Instigator, false);
+				}
+			}
 			OnHealthZero.Broadcast(Instigator);
 			if (TargetASC)
 			{
@@ -442,6 +476,15 @@ void UAH_AttributeSet::HandlePostureDepleted(UAbilitySystemComponent* TargetASC,
 	// Replicated loose tag (TagOnly) so every machine sees the broken state; UAH_GA_PostureBreak clears it on the server.
 	TargetASC->AddLooseGameplayTag(Tags.State_Combat_PostureBroken, 1, EGameplayTagReplicationState::TagOnly);
 	OnPostureBroken.Broadcast(Instigator);
+
+	// 13E: the first posture break a player causes on an enemy teaches the mechanic. Players breaking each other do not count.
+	if (const APawn* TargetPawn = Cast<APawn>(TargetActor))
+	{
+		if (!TargetPawn->IsPlayerControlled())
+		{
+			UBH_HintLibrary::TriggerHintKey(Instigator, TEXT("Combat.PostureBreak"));
+		}
+	}
 
 	// Cosmetic cue (replicated): shatter VFX/SFX on every machine. Server-side only (this runs from GE execution).
 	{

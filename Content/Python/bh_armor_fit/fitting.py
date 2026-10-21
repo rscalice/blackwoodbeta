@@ -5,17 +5,23 @@ each comes out as its own mesh. Pieces that need rigging are rigged first.
 """
 import time
 
-from . import assets, checks, config, harvest, meshes, metahuman, outfits, rigging
+import unreal
+
+from . import assets, checks, config, harvest, meshes, metahuman, outfits, refbody, rigging
 from . import report as rpt
 
 
-def fit_armor(sets=None, body_types=None, dry_run=False, force=False, reuse_builds=False):
+def fit_armor(sets=None, body_types=None, dry_run=False, force=False, reuse_builds=False, posed_check=None):
     """Fit the given sets (default all) to the given body types (default all).
 
     Up-to-date pieces are skipped unless `force`. A dry run reports what would be built or skipped.
     With `reuse_builds` no MetaHuman build runs: the finals are re-harvested from the outfit meshes
     an earlier build left in the body type's Built_Fit folder.
+    `posed_check=True` adds the report-only posed poke-through check per piece (slow); None keeps config.FIT["posed_check"].
+    Each harvested piece also gets its body mask texture (T_BHMask_<Set>_<Slot>_<Body>, see mask.py).
     """
+    if posed_check is not None:
+        config.FIT["posed_check"] = bool(posed_check)
     pieces = config.load_pieces()
     selected_sets = [s for s in config.set_names(pieces) if sets is None or s in sets]
     bodies = [b for b in config.load_body_types() if body_types is None or b.name in body_types]
@@ -24,6 +30,12 @@ def fit_armor(sets=None, body_types=None, dry_run=False, force=False, reuse_buil
         rpt.warn(config.LOG_FIT, "Nothing matches sets=%s body_types=%s." % (sets, body_types))
         return run.finish(config.LOG_FIT)
     checks.preflight()
+    used = {p.source_mesh for p in pieces if p.set_name in selected_sets}
+    if any(scaled in used for scaled in refbody.SCALED):
+        if dry_run:
+            rpt.log(config.LOG_FIT, "scaled garments (refbody): would create / refresh them first")
+        else:
+            refbody.ensure_scaled()  # garments authored on a different-size body; stamped, so a no-op when up to date
     rig_names = [p.name for p in pieces if p.set_name in selected_sets and p.rigged_path]
     rigging.rig_into(run, rig_names, dry_run, force)
     jobs = [(s, b) for s in selected_sets for b in bodies]
@@ -79,6 +91,9 @@ def _all_up_to_date(groups, group_outfits, body):
         for piece in group:
             if assets.read_stamp(piece.final_path(body)) != harvest.piece_stamp(piece, body, outfit):
                 return False
+            mask_package = piece.mask_path(body)
+            if mask_package and assets.read_stamp(mask_package) != harvest.piece_stamp(piece, body, outfit):
+                return False  # mask missing or from an older fit
     return True
 
 
@@ -121,6 +136,10 @@ def _build_and_harvest(groups, group_outfits, body, label, run, started, reuse_b
 
 def _build(groups, group_outfits, body, set_name, label):
     """Build the set's outfits on the body type into its own folder (so the set can be re-harvested); returns the folder."""
+    # Outfit assets are always created fresh: regenerating them in place crashes UE 5.8 (FRenderResource HalfEdgeBuffer).
+    outfit_folder = "%s/%s" % (config.OUTFITS_ROOT, set_name)
+    if unreal.EditorAssetLibrary.does_directory_exist(outfit_folder):
+        unreal.EditorAssetLibrary.delete_directory(outfit_folder)
     wardrobe_items = [outfits.ensure(group_outfits[fit_id]) for fit_id in groups]
     mhc = assets.load(body.mhc_path)
     rpt.log(config.LOG_FIT, "%s ... building %d outfit(s) (locks the editor for a few minutes)" % (label, len(groups)))

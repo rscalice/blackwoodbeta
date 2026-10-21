@@ -2,8 +2,12 @@
 
 #include "Components/BH_TelegraphComponent.h"
 #include "Components/DecalComponent.h"
+#include "Combat/BH_EnemyRank.h"
+#include "UI/BH_EnemyReadability.h"
+#include "UI/BH_EnemyReadabilitySettings.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "NiagaraComponent.h"
@@ -152,6 +156,19 @@ void UBH_TelegraphComponent::SpawnVisuals()
 		return;
 	}
 
+	const EBH_EnemyArchetype Archetype = UBH_EnemyRankLibrary::GetArchetype(GetOwner());
+	const bool bHasRank = UBH_EnemyRankLibrary::HasRankData(GetOwner());
+	const FLinearColor ArchetypeColor = UBH_EnemyReadabilityLibrary::GetArchetypeTelegraphColor(Archetype);
+
+	if (bHasRank)
+	{
+		// One sound per archetype, at the telegraph (empty in the settings = silent).
+		if (USoundBase* Sound = UBH_EnemyReadabilityLibrary::GetTelegraphSound(Archetype))
+		{
+			UGameplayStatics::PlaySoundAtLocation(World, Sound, TelegraphLocation, UBH_EnemyReadabilitySettings::Get()->TelegraphSoundVolume);
+		}
+	}
+
 	if (!DecalMaterial.IsNull())
 	{
 		if (UMaterialInterface* Material = DecalMaterial.LoadSynchronous())
@@ -162,6 +179,10 @@ void UBH_TelegraphComponent::SpawnVisuals()
 			if (DecalComp)
 			{
 				DecalMID = DecalComp->CreateDynamicMaterialInstance();
+				if (DecalMID && bHasRank && !ColorParameterName.IsNone())
+				{
+					DecalMID->SetVectorParameterValue(ColorParameterName, ArchetypeColor);
+				}
 			}
 		}
 	}
@@ -175,6 +196,10 @@ void UBH_TelegraphComponent::SpawnVisuals()
 			if (NiagaraComp && !RadiusParameterName.IsNone())
 			{
 				NiagaraComp->SetVariableFloat(RadiusParameterName, TelegraphRadius);
+			}
+			if (NiagaraComp && bHasRank && !ColorParameterName.IsNone())
+			{
+				NiagaraComp->SetVariableLinearColor(ColorParameterName, ArchetypeColor);
 			}
 		}
 	}

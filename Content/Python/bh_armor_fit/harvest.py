@@ -9,7 +9,8 @@ harvested copy gets the source's slot names back before the piece's materials ar
 Every harvested mesh is re-skinned to core bones (weights.clean) and then pushed out of the body skin
 (clearance.push_out) before it is written.
 """
-from . import assets, clearance, meshes, weights
+from . import assets, clearance, config, mask, meshes, posed, weights, winding
+from . import report as rpt
 
 SANITY_BOUNDS_CM = 10.0
 # Vertex counts are not comparable: the source and built meshes split vertices at seams differently
@@ -63,7 +64,9 @@ def piece_stamp(piece, body, outfit):
     return assets.stamp_of(
         outfit.expected_stamp(),
         weights.SIGNATURE,
+        weights.TRANSFER_SIGNATURE,
         clearance.SIGNATURE,
+        mask.SIGNATURE,
         assets.read_stamp(body.body_mesh_path),
         piece.sections_to_keep,
         sorted(piece.material_overrides.items()),
@@ -82,24 +85,46 @@ def harvest_piece(piece, built_package, body, outfit, skeleton, body_bones):
     built_slots = meshes.slots(built)
     final = piece.final_path(body)
     if piece.sections_to_keep:
-        target, expected = _write_split(piece, source, source_slots, built, built_slots, final, skeleton, body)
+        target, expected, mesh = _write_split(piece, source, source_slots, built, built_slots, final, skeleton, body)
     else:
-        target, expected = _write_whole(piece, source, source_slots, built_package, built_slots, final, skeleton, body)
+        target, expected, mesh = _write_whole(piece, source, source_slots, built_package, built_slots, final, skeleton, body)
     unmatched = meshes.apply_material_overrides(target, piece.material_overrides)
     if unmatched:
         raise RuntimeError("material override slot(s) %s not on %s" % (unmatched, final))
     detail = _sanity_check(target, expected, body_bones)
-    assets.write_stamp(target, piece_stamp(piece, body, outfit))
+    stamp = piece_stamp(piece, body, outfit)
+    assets.write_stamp(target, stamp)
     assets.save([final])
+    detail += _mask_and_posed(piece, body, mesh, stamp)
+    detail += winding.check(mesh, body.body_mesh_path, piece.name)
     return detail
+
+
+def _mask_and_posed(piece, body, mesh, stamp):
+    """Bake the body mask of the finished piece; optionally run the report-only posed check. Returns text for the report.
+
+    A failing mask bake is logged and reported but does not undo the mesh (re-run with reuse_builds to retry it).
+    """
+    label = piece.name
+    try:
+        package, summary, flags, data = mask.bake(piece, body, mesh, stamp, label)
+    except Exception as exc:  # noqa: BLE001
+        rpt.error(config.LOG_FIT, "%s mask bake FAILED: %s" % (label, exc))
+        return "; MASK FAILED: %s" % exc
+    if not package:
+        return "; no mask"
+    text = "; mask %s (%d / %d body vertex groups covered)" % (package.rsplit("/", 1)[-1], summary["covered"], summary["body_groups"])
+    if config.FIT.get("posed_check") and flags is not None:
+        text += "; " + posed.check(mesh, body.body_mesh_path, flags, data, label)
+    return text
 
 
 def _write_whole(piece, source, source_slots, built_package, built_slots, final, skeleton, body):
     expected = meshes.read(source)
-    mesh, _ = weights.clean(meshes.read(assets.load(built_package)), piece.name)
+    mesh, _ = weights.clean(meshes.read(assets.load(built_package)), piece.name, body.body_mesh_path)
     mesh, _ = clearance.push_out(mesh, body.body_mesh_path, piece.name)
     target = meshes.write_skeletal(mesh, final, skeleton, [m for _, m in built_slots], [n for n, _ in source_slots])
-    return target, expected
+    return target, expected, mesh
 
 
 def _write_split(piece, source, source_slots, built, built_slots, final, skeleton, body):
@@ -109,9 +134,9 @@ def _write_split(piece, source, source_slots, built, built_slots, final, skeleto
     mesh = meshes.keep_sections(meshes.read(built), keep, len(built_slots))
     mesh, materials = meshes.compact_sections(mesh, [m for _, m in built_slots])
     names = [source_slots[i][0] for i in sorted(keep)]
-    mesh, _ = weights.clean(mesh, piece.name)
+    mesh, _ = weights.clean(mesh, piece.name, body.body_mesh_path)
     mesh, _ = clearance.push_out(mesh, body.body_mesh_path, piece.name)
-    return meshes.write_skeletal(mesh, final, skeleton, materials, names), expected
+    return meshes.write_skeletal(mesh, final, skeleton, materials, names), expected, mesh
 
 
 def _sanity_check(target, expected, body_bones):
@@ -121,13 +146,16 @@ def _sanity_check(target, expected, body_bones):
     if pose_delta > meshes.BIND_POSE_TOLERANCE_CM:
         raise RuntimeError("bind pose differs from the body's by %.3f cm" % pose_delta)
     audit = weights.audit(result)
-    if audit["missing"] or audit["non_core"] or audit["max_influences"] > weights.MAX_INFLUENCES:
+    # With the near-skin transfer on, weight on twist / corrective bones is expected (only near the skin).
+    non_core_bad = audit["non_core"] and (not weights.TRANSFER_ENABLED or weights.TRANSFER_KEEP == "core_twist")
+    if audit["missing"] or non_core_bad or audit["max_influences"] > weights.MAX_INFLUENCES:
         raise RuntimeError("weights not clean: %s" % audit)
     tris, want_tris = meshes.triangle_count(result), meshes.triangle_count(expected)
     if not _tris_match(tris, want_tris):
         raise RuntimeError("triangle count %d differs from source %d by more than %.1f%%" % (tris, want_tris, SANITY_TRIANGLE_TOLERANCE * 100))
     if not meshes.bounds_within(meshes.bounds(result), meshes.bounds(expected), SANITY_BOUNDS_CM):
         raise RuntimeError("bounds moved more than %s cm from the source" % SANITY_BOUNDS_CM)
-    return "%d tris (source %d), bounds within %s cm, bind pose delta %.4f cm, core-bone weights only" % (
-        tris, want_tris, SANITY_BOUNDS_CM, pose_delta
+    return "%d tris (source %d), bounds within %s cm, bind pose delta %.4f cm, %s" % (
+        tris, want_tris, SANITY_BOUNDS_CM, pose_delta,
+        "%d / %d vertices with non-core (near-skin) weights" % (audit["non_core"], audit["vertices"]) if weights.TRANSFER_ENABLED else "core-bone weights only",
     )

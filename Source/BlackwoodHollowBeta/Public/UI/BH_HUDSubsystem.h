@@ -70,6 +70,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
 	AActor* GetPresentedBoss() const { return PresentedBoss.Get(); }
 
+	/** 13E. True for WindowSeconds after the boss bar began presenting an enemy (the title card). First-time hints hold back during it. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|HUD")
+	bool IsBossIntroActive(float WindowSeconds) const;
+
 	/**
 	 * Phase 9: level-up flourish. Tells the main HUD (On Level Up event) and, when UBH_HUDWidget::bShowNativeLevelUpText is set,
 	 * shows a plain "Level N" text for LevelUpTextSeconds (~2 s). Safe to call before the HUD exists (the native text still shows).
@@ -88,10 +92,16 @@ public:
 	/** Seconds the native "Level N" text stays up. */
 	static constexpr float LevelUpTextSeconds = 2.f;
 
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
 private:
 	void ApplyVisibility();
+
+	/** Phase 13C: puts the main HUD into the primary layout's Game layer (when the layout exists and the setting is on). */
+	bool AttachMainHUDToLayout();
+	void HandleLayoutReady();
+	FDelegateHandle LayoutReadyHandle;
 
 	// -- Boss bar ---------------------------------------------------------------
 	void StartBossWatch();
@@ -99,6 +109,10 @@ private:
 	void OnAnyAggroChanged(UBH_CombatIdentityComponent* Source, AActor* NewTarget);
 	/** Phase 12G: the same event for ABH_EnemyBase enemies (the Elite crab). */
 	void OnAnyEnemyAggroSeen(ABH_EnemyBase* Enemy, AActor* NewTarget);
+
+	/** Phase 13D: Veteran growl / Elite stinger / Boss horn when a ranked enemy starts fighting the LOCAL pawn (once per enemy per cooldown). */
+	void TryPlayAggroCue(AActor* Enemy, AActor* NewTarget);
+	TMap<TWeakObjectPtr<AActor>, double> AggroCueTimes;
 	/** Picks the nearest living boss aggroed on the local pawn and shows / schedules the hide of the bar accordingly. */
 	void EvaluateBoss();
 	void ShowBossBar(AActor* Boss);
@@ -109,6 +123,9 @@ private:
 	TObjectPtr<UBH_BossHealthBarWidget> BossBar;
 
 	TWeakObjectPtr<AActor> PresentedBoss;
+
+	/** 13E. FPlatformTime::Seconds() when the bar last started presenting a new enemy. */
+	double BossPresentedAt = -1.0e9;
 	FTimerHandle BossScanTimer;
 	FTimerHandle BossHideTimer;
 	FDelegateHandle AggroHandle;

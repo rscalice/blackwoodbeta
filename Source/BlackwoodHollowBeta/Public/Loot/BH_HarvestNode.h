@@ -86,4 +86,7 @@ private:
 	TObjectPtr<UStaticMesh> LiveMesh;
 
 	FTimerHandle RegrowTimer;
+
+	/** 13C (#14). Server only. Yield the last harvester could not carry; the node stays harvestable until all of it was taken. 0 = none. */
+	int32 PendingYield = 0;
 };

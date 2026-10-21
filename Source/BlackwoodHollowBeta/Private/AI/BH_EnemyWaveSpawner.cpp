@@ -249,6 +249,10 @@ void ABH_EnemyWaveSpawner::BeginWave(int32 WaveIndex)
 			FBH_PendingWaveSpawn Pending;
 			Pending.EnemyClass = Entry.EnemyClass;
 			Pending.EnemyLevel = FMath::Max(1, Entry.EnemyLevel);
+			if (i < Entry.BonusDropCount)
+			{
+				Pending.BonusDrops = Entry.BonusDrops;
+			}
 			PendingSpawns.Add(Pending);
 		}
 	}
@@ -278,7 +282,7 @@ void ABH_EnemyWaveSpawner::SpawnNext()
 
 	const FBH_PendingWaveSpawn Next = PendingSpawns[0];
 	PendingSpawns.RemoveAt(0);
-	SpawnEnemy(Next.EnemyClass, SpawnedInWave, Next.EnemyLevel);
+	SpawnEnemy(Next.EnemyClass, SpawnedInWave, Next.EnemyLevel, Next.BonusDrops);
 	++SpawnedInWave;
 
 	if (PendingSpawns.IsEmpty())
@@ -349,7 +353,7 @@ FVector ABH_EnemyWaveSpawner::ResolveSpawnLocation(TSubclassOf<APawn> EnemyClass
 	return Floor + FVector(0.f, 0.f, HalfHeight + 2.f);
 }
 
-APawn* ABH_EnemyWaveSpawner::SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 SpawnIndex, int32 EnemyLevel)
+APawn* ABH_EnemyWaveSpawner::SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 SpawnIndex, int32 EnemyLevel, const TArray<FBH_DropEntry>& BonusDrops)
 {
 	if (!GetWorld() || !EnemyClass)
 	{
@@ -364,7 +368,8 @@ APawn* ABH_EnemyWaveSpawner::SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 Spa
 	Slot.EnemyClass = EnemyClass;
 	Slot.EnemyLevel = FMath::Max(1, EnemyLevel);
 	Slot.SpawnTransform = FTransform(Rotation, Location);
-	Slot.Pawn = SpawnEnemyAt(Slot.EnemyClass, Slot.SpawnTransform, Slot.EnemyLevel);
+	Slot.BonusDrops = BonusDrops;
+	Slot.Pawn = SpawnEnemyAt(Slot.EnemyClass, Slot.SpawnTransform, Slot.EnemyLevel, Slot.BonusDrops);
 	APawn* Spawned = Slot.Pawn.Get();
 	if (Spawned)
 	{
@@ -373,7 +378,7 @@ APawn* ABH_EnemyWaveSpawner::SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 Spa
 	return Spawned;
 }
 
-APawn* ABH_EnemyWaveSpawner::SpawnEnemyAt(TSubclassOf<APawn> EnemyClass, const FTransform& SpawnTransform, int32 EnemyLevel)
+APawn* ABH_EnemyWaveSpawner::SpawnEnemyAt(TSubclassOf<APawn> EnemyClass, const FTransform& SpawnTransform, int32 EnemyLevel, const TArray<FBH_DropEntry>& BonusDrops)
 {
 	UWorld* World = GetWorld();
 	if (!World || !EnemyClass)
@@ -398,6 +403,7 @@ APawn* ABH_EnemyWaveSpawner::SpawnEnemyAt(TSubclassOf<APawn> EnemyClass, const F
 		EnemyBase->EnemyLevel = FMath::Max(1, EnemyLevel);
 		EnemyBase->CombatTeam = EBH_CombatTeam::Enemies;
 		EnemyBase->bResetOnDeath = false;
+		EnemyBase->DropTable.Entries.Append(BonusDrops); // scripted story drops of this wave entry (server only: the spawner only runs there)
 	}
 	else
 	{
@@ -419,6 +425,7 @@ APawn* ABH_EnemyWaveSpawner::SpawnEnemyAt(TSubclassOf<APawn> EnemyClass, const F
 	if (Identity)
 	{
 		Identity->CombatTeam = EBH_CombatTeam::Enemies;
+		Identity->DropTable.Entries.Append(BonusDrops);
 		Identity->OnDeath.AddDynamic(this, &ABH_EnemyWaveSpawner::HandleEnemyDeath);
 	}
 	else
@@ -457,7 +464,7 @@ void ABH_EnemyWaveSpawner::HandlePartyWiped()
 		{
 			continue; // still alive: its own UBH_EnemyResetComponent healed it and sent it home
 		}
-		if (APawn* Fresh = SpawnEnemyAt(Slot.EnemyClass, Slot.SpawnTransform, Slot.EnemyLevel))
+		if (APawn* Fresh = SpawnEnemyAt(Slot.EnemyClass, Slot.SpawnTransform, Slot.EnemyLevel, Slot.BonusDrops))
 		{
 			Slot.Pawn = Fresh;
 			++Respawned;

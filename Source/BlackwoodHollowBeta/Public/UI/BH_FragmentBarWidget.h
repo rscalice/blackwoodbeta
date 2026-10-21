@@ -22,6 +22,9 @@ class ABH_PlayerState;
 class UAbilitySystemComponent;
 class UAH_GA_FragmentBase;
 class UTexture2D;
+class UImage;
+class USoundBase;
+class UMaterialInstanceDynamic;
 
 /** Snapshot of one fragment slot for UI binding. */
 USTRUCT(BlueprintType)
@@ -64,6 +67,10 @@ struct BLACKWOODHOLLOWBETA_API FBH_FragmentSlotView
 
 	UPROPERTY(BlueprintReadOnly, Category = "Fragment")
 	bool bOnCooldown = false;
+
+	/** Phase 13C: no fragment equipped. Slots 2 and 3 are locked until Phase 14 unlocks them; the bar shows the locked look. */
+	UPROPERTY(BlueprintReadOnly, Category = "Fragment")
+	bool bLocked = true;
 };
 
 UCLASS(Abstract, Blueprintable)
@@ -107,6 +114,24 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|FragmentBar")
 	bool IsSlotOnCooldown(int32 SlotIndex) const;
 
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|FragmentBar")
+	bool IsSlotLocked(int32 SlotIndex) const;
+
+	/** True while any slot cools down, and for ReadyHold seconds after one became ready (the quiet HUD keeps the bar up for the flash). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|FragmentBar")
+	bool IsBusy(float ReadyHold = 1.5f) const;
+
+	/** Played (2D) when a slot becomes ready. Empty = silent. Set a ui_medieval_free / SmallSoundKit sound on WBP_FragmentBar. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|FragmentBar")
+	TSoftObjectPtr<USoundBase> ReadySound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|FragmentBar", meta = (ClampMin = "0.0"))
+	float ReadySoundVolume = 0.6f;
+
+	/** Scalar parameter of the sweep material (Sweep_Slot0..2 images): 1 right after use, 0 when ready. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|FragmentBar")
+	FName SweepProgressParameter = TEXT("Progress");
+
 	/** Forces a full re-read of slot content and cooldowns and fires both K2 events. */
 	UFUNCTION(BlueprintCallable, Category = "BlackwoodHollow|FragmentBar")
 	void RefreshAll();
@@ -124,6 +149,25 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "BlackwoodHollow|FragmentBar", meta = (DisplayName = "On Cooldowns Updated"))
 	void K2_OnCooldownsUpdated();
 
+	/** A slot's cooldown just ended: play the ready flash here (the sound is played natively from ReadySound). */
+	UFUNCTION(BlueprintImplementableEvent, Category = "BlackwoodHollow|FragmentBar", meta = (DisplayName = "On Slot Ready"))
+	void K2_OnSlotReady(int32 SlotIndex);
+
+	// Optional visuals, bound by name (Phase 13C): a radial cooldown sweep per slot (an Image whose brush is a material with the
+	// SweepProgressParameter scalar) and a locked-slot overlay per slot (shown while the slot is locked).
+	UPROPERTY(BlueprintReadOnly, Transient, meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Sweep_Slot0;
+	UPROPERTY(BlueprintReadOnly, Transient, meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Sweep_Slot1;
+	UPROPERTY(BlueprintReadOnly, Transient, meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Sweep_Slot2;
+	UPROPERTY(BlueprintReadOnly, Transient, meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Lock_Slot0;
+	UPROPERTY(BlueprintReadOnly, Transient, meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Lock_Slot1;
+	UPROPERTY(BlueprintReadOnly, Transient, meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Lock_Slot2;
+
 private:
 	UFUNCTION()
 	void HandleSlotsChanged(int32 SlotIndex);
@@ -139,6 +183,14 @@ private:
 	TArray<FBH_FragmentSlotView> SlotViews;
 
 	TWeakObjectPtr<ABH_PlayerState> BoundPlayerState;
+	void UpdateSlotVisuals();
+	void FlushReadySlots();
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> SweepMIDs;
+
+	TArray<int32> PendingReadySlots;
+	double LastReadyTime = -1000.0;
 	float CooldownPollTimer = 0.f;
 	bool bAnyOnCooldownLastPoll = false;
 };

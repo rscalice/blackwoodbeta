@@ -14,13 +14,22 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
 #include "GameplayTagContainer.h"
+#include "Engine/TimerHandle.h"
 #include "Consumables/BH_ConsumableTypes.h"
+#include "Combat/BH_EnemyRank.h"
+#include "Player/BH_PartyStatus.h"
 #include "BH_PlayerState.generated.h"
+
+class UAbilitySystemComponent;
+class UBH_PlayerDeathComponent;
+struct FOnAttributeChangeData;
 
 class UNarrativeInventoryComponent;
 class UNarrativeItem;
 class UAH_GA_FragmentBase;
 class UBH_ProgressionComponent;
+class UBH_PlayerHintComponent;
+class UBH_PlayerMenuComponent;
 
 /** Broadcast (server and owning client) when a fragment slot changes. SlotIndex -1 = several / unknown slots changed. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnFragmentSlotsChanged, int32, SlotIndex);
@@ -30,6 +39,26 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnProgressionGatesChanged);
 
 /** Broadcast on the OWNING player's machine when a consumable use was refused (nothing consumed). Wire a toast / sound to it. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnConsumableUseRefused, TSubclassOf<UNarrativeItem>, ItemClass, EBH_ConsumableRefusal, Reason);
+
+/** 13C. What killed the player last, for the death prompt. Epoch changes on every death so two identical deaths still replicate. */
+USTRUCT(BlueprintType)
+struct BLACKWOODHOLLOWBETA_API FBH_DeathCause
+{
+	GENERATED_BODY()
+
+	/** True when an enemy landed the killing blow; false = the Blight (or an unknown source). */
+	UPROPERTY(BlueprintReadOnly, Category = "Death")
+	bool bKilledByEnemy = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Death")
+	EBH_EnemyRank Rank = EBH_EnemyRank::Common;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Death")
+	FString KillerName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Death")
+	uint8 Epoch = 0;
+};
 
 UCLASS(Blueprintable)
 class BLACKWOODHOLLOWBETA_API ABH_PlayerState : public APlayerState
@@ -46,7 +75,47 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Progression")
 	UBH_ProgressionComponent* GetProgression() const { return Progression; }
 
+	/** 13G-0. The Player Menu's client-callable equip / unequip / drop requests (server RPCs on this PlayerState). */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|PlayerMenu")
+	UBH_PlayerMenuComponent* GetPlayerMenu() const { return PlayerMenu; }
+
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	// -- Player slot (Phase 13B+) ------------------------------------------------------------------------------
+	/**
+	 * Stable party slot, 1..4 (0 = not assigned yet). The SERVER assigns the lowest free slot when the PlayerState begins play; it replicates
+	 * to every machine, so a player has the same slot (and the same compass colour: P1 Blue, P2 Yellow, P3 Green, P4 Red) for everyone.
+	 * Frees up when the player leaves, so the next joiner takes the lowest free slot.
+	 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "BlackwoodHollow|Party")
+	int32 PlayerSlot = 0;
+
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Party")
+	int32 GetPlayerSlot() const { return PlayerSlot; }
+
+	static constexpr int32 MaxPlayerSlots = 4;
+
+	// -- Partner panel data (13I-1) ----------------------------------------------------------------------------
+	/** Any machine. The replicated summary of this player (health, blight stacks, death state, combat, fracture, level). Always relevant, works beyond net cull distance. */
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Party")
+	const FBH_PartyMemberStatus& GetPartyStatus() const { return PartyStatus; }
+
+	/** Fires on the server when it writes a new status and on clients from the RepNotify. Throttled to at most 5 updates per second. */
+	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|Party")
+	FBH_OnPartyStatusChanged OnPartyStatusChanged;
+
+	/** SERVER. This player is engaged right now (an aggroed enemy targets them, or they took damage): keeps bInCombat on until UBH_PartyStateSubsystem::OutOfCombatGrace passes. Called from the subsystem's Evaluate. */
+	void NotifyCombatEngaged();
+
+	/** Minimum seconds between status recomputes on the server (5 per second). */
+	static constexpr float PartyStatusInterval = 0.2f;
+
+	// -- Cause of death (13C) ------------------------------------------------------------------------------------
+	/** SERVER. Records what just killed this player. Killer null / not an enemy / bBlight = "Overwhelmed by the Blight". */
+	void RecordDeathCause(const AActor* Killer, bool bBlight);
+
+	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Death")
+	const FBH_DeathCause& GetDeathCause() const { return DeathCause; }
 
 	// -- Consumable refusal feedback (Phase 11E) -------------------------------------------------
 
@@ -186,11 +255,29 @@ public:
 	void ServerDebugKillAllEnemies(float RadiusCm);
 
 protected:
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	/** 13I-1. Server-owned summary for the partner panel. */
+	UPROPERTY(ReplicatedUsing = OnRep_PartyStatus)
+	FBH_PartyMemberStatus PartyStatus;
+
+	UFUNCTION()
+	void OnRep_PartyStatus();
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Inventory")
 	TObjectPtr<UNarrativeInventoryComponent> Inventory;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Progression")
 	TObjectPtr<UBH_ProgressionComponent> Progression;
+
+	/** 13E. Server-side first-time hint triggers for this player; sends each hint to the owning client only. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|Hints")
+	TObjectPtr<UBH_PlayerHintComponent> HintComponent;
+
+	/** 13G-0. Server RPCs for the Player Menu (equip / unequip / drop). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BlackwoodHollow|PlayerMenu")
+	TObjectPtr<UBH_PlayerMenuComponent> PlayerMenu;
 
 	/**
 	 * Category restriction per slot (index 0 = key 1). Default {Offensive, Vitality, BlightResist}: Overload Burst (Offensive)
@@ -225,6 +312,10 @@ protected:
 	UFUNCTION()
 	void OnRep_ProgressionGates();
 
+	/** 13C. Last damage source that killed this player. Replicated so the owning client's death prompt can name it. */
+	UPROPERTY(Replicated)
+	FBH_DeathCause DeathCause;
+
 	UFUNCTION(Server, Reliable, WithValidation)
 	void ServerEquipFragment(int32 Slot, TSubclassOf<UAH_GA_FragmentBase> FragmentClass);
 
@@ -233,6 +324,34 @@ protected:
 	void ClientConsumableUseRefused(TSubclassOf<UNarrativeItem> ItemClass, EBH_ConsumableRefusal Reason);
 
 private:
+	// -- 13I-1 status tracking (server) --
+	void MarkPartyStatusDirty() { bPartyStatusDirty = true; }
+	void TickPartyStatus();
+	/** Binds the change sources of StatusPawn's ASC / death component (unbinding the old ones). Marks the status dirty. */
+	void RebindPartyStatusSources(APawn* NewStatusPawn);
+	void UnbindPartyStatusSources();
+	FBH_PartyMemberStatus BuildPartyStatus() const;
+	void HandleStatusAttributeChanged(const FOnAttributeChangeData& ChangeData);
+	void HandleStatusTagChanged(const FGameplayTag ChangedTag, int32 NewCount);
+
+	UFUNCTION()
+	void HandleStatusDeathPhase(EBH_DeathPhase NewPhase, EBH_DeathPhase OldPhase);
+
+	UFUNCTION()
+	void HandleStatusLevelUp(int32 NewLevel);
+
+	FTimerHandle PartyStatusTimer;
+	bool bPartyStatusDirty = true;
+	TWeakObjectPtr<APawn> StatusPawn;
+	TWeakObjectPtr<UAbilitySystemComponent> StatusASC;
+	TWeakObjectPtr<UBH_PlayerDeathComponent> StatusDeathComponent;
+	FDelegateHandle HealthHandle;
+	FDelegateHandle MaxHealthHandle;
+	FDelegateHandle BlightHandle;
+	double CombatEngagedUntil = -1.0e9;
+	bool bReportedInCombat = false;
+	FDelegateHandle FractureTagHandle;
+
 	/** Server: validates (except for null = unequip), writes the slot, notifies the UI and pushes the change to the pawn. */
 	bool ApplyFragmentSlot(int32 Slot, TSubclassOf<UAH_GA_FragmentBase> FragmentClass);
 

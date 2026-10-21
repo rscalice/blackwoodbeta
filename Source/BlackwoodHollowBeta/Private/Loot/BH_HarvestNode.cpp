@@ -76,11 +76,18 @@ void ABH_HarvestNode::BH_OnInteractionCompleted(APawn* InteractingPawn)
 	}
 
 	const int32 MinYield = FMath::Max(1, YieldMin);
-	const int32 Yield = FMath::RandRange(MinYield, FMath::Max(MinYield, YieldMax));
+	const int32 Yield = PendingYield > 0 ? PendingYield : FMath::RandRange(MinYield, FMath::Max(MinYield, YieldMax));
 	if (UClass* RewardClass = RewardItem.LoadSynchronous())
 	{
-		UBH_LootLibrary::GrantItemToPawn(InteractingPawn, RewardClass, Yield);
+		// GrantItem tells the player "Inventory full" when it falls short. Whatever did not fit stays on the node.
+		const int32 Given = UBH_LootLibrary::GrantItemToPawn(InteractingPawn, RewardClass, Yield);
+		if (Given < Yield)
+		{
+			PendingYield = Yield - Given;
+			return;
+		}
 	}
+	PendingYield = 0;
 
 	bDepleted = true;
 	OnRep_Depleted(); // the server does not get the OnRep call
@@ -98,6 +105,7 @@ void ABH_HarvestNode::Regrow()
 	{
 		return;
 	}
+	PendingYield = 0;
 	bDepleted = false;
 	OnRep_Depleted();
 	ForceNetUpdate();

@@ -4,6 +4,7 @@
 #include "Player/BH_PlayerDeathComponent.h"
 #include "Player/BH_GameState.h"
 #include "Player/BH_PartyLibrary.h"
+#include "Player/BH_PlayerState.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "Characters/BH_EnemyBase.h"
 #include "Characters/BH_EnemyResetComponent.h"
@@ -117,8 +118,18 @@ void UBH_PartyStateSubsystem::Evaluate()
 		return;
 	}
 
-	// Engaged = a living enemy whose aggro target is a living player.
+	// Engaged = a living enemy whose aggro target is a living player. Each such target player is also stamped as engaged (13I-1 per-player combat).
 	bool bEngaged = false;
+	const auto StampPlayer = [](const AActor* TargetActor)
+	{
+		if (const APawn* TargetPawn = Cast<APawn>(TargetActor))
+		{
+			if (ABH_PlayerState* TargetState = TargetPawn->GetPlayerState<ABH_PlayerState>())
+			{
+				TargetState->NotifyCombatEngaged();
+			}
+		}
+	};
 	for (auto It = AggroSources.CreateIterator(); It; ++It)
 	{
 		const UBH_CombatIdentityComponent* Source = It->Get();
@@ -134,6 +145,7 @@ void UBH_PartyStateSubsystem::Evaluate()
 		if (bEnemyAlive && UBH_PlayerDeathComponent::IsLivingPlayer(Target))
 		{
 			bEngaged = true;
+			StampPlayer(Target);
 		}
 	}
 
@@ -152,6 +164,7 @@ void UBH_PartyStateSubsystem::Evaluate()
 		if (bEnemyAlive && UBH_PlayerDeathComponent::IsLivingPlayer(Target))
 		{
 			bEngaged = true;
+			StampPlayer(Target);
 		}
 	}
 

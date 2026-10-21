@@ -11,6 +11,6 @@ public class BlackwoodHollowBetaEditorTarget : TargetRules
 		DefaultBuildSettings = BuildSettingsVersion.Latest;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
 
-		ExtraModuleNames.AddRange(new string[] { "BlackwoodHollowBeta" });
+		ExtraModuleNames.AddRange(new string[] { "BlackwoodHollowBeta", "BlackwoodHollowBetaEditor" });
 	}
 }

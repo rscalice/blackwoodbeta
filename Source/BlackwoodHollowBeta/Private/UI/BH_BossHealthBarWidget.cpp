@@ -137,6 +137,17 @@ void UBH_BossHealthBarWidget::PresentBoss(AActor* Boss)
 		Txt_Name->SetText(ShownName);
 	}
 
+	// Phase 13D: rank title and the title-card hook. The viewer is only needed for the level tier, which the boss bar does not show.
+	{
+		const FBH_EnemyReadability Info = UBH_EnemyReadabilityLibrary::Describe(Boss, nullptr);
+		if (Txt_Title)
+		{
+			Txt_Title->SetText(Info.Title);
+			Txt_Title->SetVisibility(Info.Title.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+		}
+		K2_OnBossPresented(Info.Rank, ShownName, Info.Title, bNewBoss);
+	}
+
 	bShown = true;
 	SetVisibility(ESlateVisibility::HitTestInvisible);
 	EnsureActiveTimer();

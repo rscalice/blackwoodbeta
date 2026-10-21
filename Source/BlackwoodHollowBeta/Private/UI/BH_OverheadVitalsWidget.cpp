@@ -2,6 +2,8 @@
 
 #include "UI/BH_OverheadVitalsWidget.h"
 #include "Components/Image.h"
+#include "Components/TextBlock.h"
+#include "Components/Widget.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
 UBH_OverheadVitalsWidget::UBH_OverheadVitalsWidget(const FObjectInitializer& ObjectInitializer)
@@ -37,6 +39,41 @@ void UBH_OverheadVitalsWidget::NativeConstruct()
 
 	SetRenderOpacity(CurrentOpacity);
 	ApplyHealthPercent();
+	PresentedSignature = INT32_MIN; // re-applied by the next PresentEnemy
+}
+
+void UBH_OverheadVitalsWidget::PresentEnemy(const AActor* Enemy, const AActor* Viewer)
+{
+	const FBH_EnemyReadability Info = UBH_EnemyReadabilityLibrary::Describe(Enemy, Viewer);
+	if (!Info.bValid)
+	{
+		return;
+	}
+	const int32 Signature = static_cast<int32>(Info.Rank) | (static_cast<int32>(Info.Archetype) << 4) | (static_cast<int32>(Info.LevelTier) << 8)
+		| (Info.Level << 12) | (static_cast<int32>(GetTypeHash(Info.Name.ToString()) & 0x7FF) << 20);
+	if (Signature == PresentedSignature)
+	{
+		return;
+	}
+	PresentedSignature = Signature;
+
+	const bool bName = UBH_EnemyReadabilityLibrary::RankShowsName(Info.Rank);
+	const bool bTitle = UBH_EnemyReadabilityLibrary::RankShowsTitle(Info.Rank) && !Info.Title.IsEmpty();
+	if (Txt_Name)
+	{
+		Txt_Name->SetText(Info.Name);
+		Txt_Name->SetVisibility(bName ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (Txt_Title)
+	{
+		Txt_Title->SetText(Info.Title);
+		Txt_Title->SetVisibility(bTitle ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (Plate_Title)
+	{
+		Plate_Title->SetVisibility(bTitle ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	K2_OnEnemyPresented(Info.Rank, Info.Archetype, Info.Name, Info.Title, Info.Level, Info.LevelTier);
 }
 
 void UBH_OverheadVitalsWidget::SetOverheadOpacity(float Opacity)

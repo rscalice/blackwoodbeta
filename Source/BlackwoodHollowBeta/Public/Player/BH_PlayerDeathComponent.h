@@ -31,8 +31,9 @@
 //      RespawnHealthPercent of MaxHealth), Posture and Stamina refilled; every machine un-ragdolls (ABH_CharacterBase::StopRagdollLocal:
 //      mesh re-attached, collision and CMC restored), snaps to DeathState.ReviveLocation and plays the GASP get-up montage while movement stays locked.
 //
-// Camera while dead: stays on the own body (the capsule follows the pelvis). TODO(spectate): switching to a partner would be a
-// PlayerController::SetViewTargetWithBlend in EnterDeathLocal / back in ExitDeathLocal.
+// Camera while dead (Phase 13I-2): the local player gets ABH_DeathCameraActor as view target (spring arm orbiting the own pelvis body,
+// Look input orbits). The capsule no longer follows the pelvis each tick; it stays at the death point until the rest point is applied.
+// Spectating a partner was cancelled by design (2026-10-17): the camera always stays on the player's own body.
 //
 // Debug: bh.Player.Kill / bh.Player.Revive (BH_RPGDebugCommands.cpp) go through ServerDebugKill / ServerDebugRevive.
 
@@ -48,6 +49,7 @@
 #include "BH_PlayerDeathComponent.generated.h"
 
 class AActor;
+class ABH_DeathCameraActor;
 class APawn;
 class ACharacter;
 class UAbilitySystemComponent;
@@ -226,6 +228,24 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Death|Ragdoll", meta = (ClampMin = "0.0", ForceUnits = "cm"))
 	float GroundTraceDown = 400.f;
+
+	// -- Tunables: dead camera (local player) -------------------------------------------------
+
+	/** The pivot of the dead camera sits this far above the pelvis body. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Death|Camera", meta = (ClampMin = "0.0", ForceUnits = "cm"))
+	float DeadCameraPivotRaise = 70.f;
+
+	/** Seconds to blend from the gameplay camera to the dead camera. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Death|Camera", meta = (ClampMin = "0.0", ForceUnits = "s"))
+	float DeadCameraBlendInSeconds = 0.6f;
+
+	/** Seconds to blend back to the pawn camera on a revive (a hub respawn snaps). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Death|Camera", meta = (ClampMin = "0.0", ForceUnits = "s"))
+	float DeadCameraBlendOutSeconds = 0.4f;
+
+	/** A return-to-life farther than this from the body (a hub respawn) snaps the camera instead of blending. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BH|Death|Camera", meta = (ClampMin = "0.0", ForceUnits = "cm"))
+	float DeadCameraSnapDistance = 600.f;
 
 	// -- Tunables: get-up ---------------------------------------------------------------------
 
@@ -411,6 +431,11 @@ private:
 	void RefreshTickState();
 	void BroadcastReviveProgress();
 	bool GetPelvisState(FVector& OutLocation, FVector& OutVelocity, FQuat& OutRotation) const;
+	friend class ABH_DeathCameraActor; // reads the pelvis body for the dead camera
+	/** Phase 13I-2: spawns the local dead camera and makes it the view target (locally controlled pawn only). */
+	void BeginDeathCamera();
+	/** Phase 13I-2: blends back to the own pawn (or snaps) and lets the dead camera go. bSnap = no blend. */
+	void EndDeathCamera(bool bSnap);
 	ACharacter* GetCharacterOwner() const;
 	UAbilitySystemComponent* GetOwnerASC() const;
 	USkeletalMeshComponent* GetOwnerMesh() const;
@@ -447,6 +472,9 @@ private:
 	bool bGettingUp = false;
 	bool bDeathPending = false;
 	bool bRootMotionOverridden = false;
+
+	/** Local player: the dead camera currently used as the view target (null otherwise). */
+	TWeakObjectPtr<ABH_DeathCameraActor> DeathCamera;
 
 	double RagdollStartTime = 0.0;
 	float SlowTime = 0.f;

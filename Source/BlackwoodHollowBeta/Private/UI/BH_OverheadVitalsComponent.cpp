@@ -2,6 +2,7 @@
 
 #include "UI/BH_OverheadVitalsComponent.h"
 #include "UI/BH_OverheadVitalsWidget.h"
+#include "UI/BH_EnemyReadabilitySettings.h"
 #include "Combat/BH_LockOnComponent.h"
 #include "Combat/BH_EnemyRank.h"
 #include "Combat/BH_CombatIdentityComponent.h"
@@ -235,7 +236,30 @@ bool UBH_OverheadVitalsComponent::EvaluateWanted() const
 		return false;
 	}
 
-	if (LockOn && LockOn->GetSoftTarget() == Owner)
+	// Phase 13D: the Boss bar (or the Elite's top-centre bar) covers an enemy that is fighting the local pawn.
+	const AActor* AggroTarget = UBH_EnemyRankLibrary::GetAggroTarget(Owner);
+	if (AggroTarget && AggroTarget == LocalPawn && UBH_EnemyRankLibrary::IsBossPresented(Owner))
+	{
+		return false;
+	}
+
+	const UBH_EnemyReadabilitySettings* Readability = UBH_EnemyReadabilitySettings::Get();
+	if (Readability->bOverheadWhenAggroed && AggroTarget)
+	{
+		return true; // aggroed on somebody: every rank shows its bar
+	}
+	if (Readability->bOverheadWhenHurt)
+	{
+		const UAbilitySystemComponent* OwnerASC = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(const_cast<AActor*>(Owner));
+		if (OwnerASC && OwnerASC->HasAttributeSetForAttribute(UAH_AttributeSet::GetHealthAttribute())
+			&& OwnerASC->GetNumericAttribute(UAH_AttributeSet::GetHealthAttribute())
+				< OwnerASC->GetNumericAttribute(UAH_AttributeSet::GetMaxHealthAttribute()) - 0.5f)
+		{
+			return true; // hurt
+		}
+	}
+	// A soft target shows the bar for Veteran and Elite (their name is the point). A Common enemy needs aggro, damage or a hit.
+	if (LockOn && LockOn->GetSoftTarget() == Owner && UBH_EnemyRankLibrary::GetRank(Owner) != EBH_EnemyRank::Common)
 	{
 		return true;
 	}
@@ -262,6 +286,11 @@ void UBH_OverheadVitalsComponent::UpdateVisibility()
 	if (!bBound)
 	{
 		TryBind();
+	}
+
+	if (bBound)
+	{
+		Bar->PresentEnemy(GetOwner(), FindLocalController() ? FindLocalController()->GetPawn() : nullptr); // idempotent
 	}
 
 	bWanted = bBound && EvaluateWanted();

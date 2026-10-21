@@ -1,6 +1,9 @@
 // Blackwood Hollow - player state holding the Narrative inventory (implementation)
 
 #include "Player/BH_PlayerState.h"
+#include "Hints/BH_HintLibrary.h"
+#include "Hints/BH_PlayerHintComponent.h"
+#include "Player/BH_PlayerMenuComponent.h"
 #include "InventoryComponent.h"
 #include "AbilitySystem/Abilities/AH_GA_FragmentBase.h"
 #include "AbilitySystem/Abilities/AH_GA_OverloadBurst.h"
@@ -19,12 +22,18 @@
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
 #include "Player/BH_GameState.h"
+#include "Player/BH_PartyLibrary.h"
+#include "Player/BH_PartyStateSubsystem.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "GameFramework/GameStateBase.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "Net/UnrealNetwork.h"
+#include "AbilitySystemGlobals.h"
+#include "AbilitySystem/StatusEffects/BH_FractureEffects.h"
+#include "TimerManager.h"
 #include "Components/ActorComponent.h"
 #include "UObject/UnrealType.h"
 
@@ -43,6 +52,8 @@ ABH_PlayerState::ABH_PlayerState()
 
 	// Phase 9: XP / level (the component is replicated by default).
 	Progression = CreateDefaultSubobject<UBH_ProgressionComponent>(TEXT("Progression"));
+	HintComponent = CreateDefaultSubobject<UBH_PlayerHintComponent>(TEXT("HintComponent"));
+	PlayerMenu = CreateDefaultSubobject<UBH_PlayerMenuComponent>(TEXT("PlayerMenu"));
 
 	// PlayerState defaults to ~1 Hz; equipment changes should reach the client quickly (we also ForceNetUpdate on changes).
 	SetNetUpdateFrequency(10.f);
@@ -61,6 +72,54 @@ void ABH_PlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(ABH_PlayerState, bOverloadBurstLearned);
 	DOREPLIFETIME(ABH_PlayerState, AttunedHubs);
 	DOREPLIFETIME(ABH_PlayerState, bStarterPointsRetired);
+	DOREPLIFETIME(ABH_PlayerState, PlayerSlot);
+	DOREPLIFETIME(ABH_PlayerState, DeathCause);
+	DOREPLIFETIME(ABH_PlayerState, PartyStatus);
+}
+
+void ABH_PlayerState::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// 13I-1: the server samples the partner-panel summary at most 5 times per second, and only when something marked it dirty.
+	if (HasAuthority())
+	{
+		if (Progression)
+		{
+			Progression->OnLevelUp.AddDynamic(this, &ABH_PlayerState::HandleStatusLevelUp);
+		}
+		bPartyStatusDirty = true;
+		if (const UWorld* StateWorld = GetWorld())
+		{
+			StateWorld->GetTimerManager().SetTimer(PartyStatusTimer, this, &ABH_PlayerState::TickPartyStatus, PartyStatusInterval, true);
+		}
+	}
+
+	// Server only: hand out the lowest free party slot (1..MaxPlayerSlots) among the players currently in the game.
+	if (HasAuthority() && PlayerSlot == 0)
+	{
+		TSet<int32> Taken;
+		if (const AGameStateBase* GS = GetWorld() ? GetWorld()->GetGameState() : nullptr)
+		{
+			for (const APlayerState* Other : GS->PlayerArray)
+			{
+				if (const ABH_PlayerState* BHOther = Cast<ABH_PlayerState>(Other))
+				{
+					if (BHOther != this && BHOther->PlayerSlot > 0)
+					{
+						Taken.Add(BHOther->PlayerSlot);
+					}
+				}
+			}
+		}
+		int32 Slot = 1;
+		while (Slot < MaxPlayerSlots && Taken.Contains(Slot))
+		{
+			++Slot;
+		}
+		PlayerSlot = Slot;
+		ForceNetUpdate();
+	}
 }
 
 // ============================================================================
@@ -106,6 +165,7 @@ bool ABH_PlayerState::GrantOverloadBurst()
 	if (!bOverloadBurstLearned)
 	{
 		bOverloadBurstLearned = true;
+		UBH_HintLibrary::TriggerHintKey(this, TEXT("Skill.OverloadBurst"));
 		ForceNetUpdate();
 		OnRep_ProgressionGates();
 	}
@@ -141,6 +201,28 @@ bool ABH_PlayerState::AttuneHub(FName HubName, bool bRetireStarterPoints)
 void ABH_PlayerState::OnRep_ProgressionGates()
 {
 	OnProgressionGatesChanged.Broadcast();
+}
+
+// ============================================================================
+// Cause of death (13C)
+// ============================================================================
+
+void ABH_PlayerState::RecordDeathCause(const AActor* Killer, bool bBlight)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	FBH_DeathCause Cause;
+	Cause.Epoch = static_cast<uint8>(DeathCause.Epoch + 1);
+	if (!bBlight && Killer && UBH_EnemyRankLibrary::HasRankData(Killer))
+	{
+		Cause.bKilledByEnemy = true;
+		Cause.Rank = UBH_EnemyRankLibrary::GetRank(Killer);
+		Cause.KillerName = UBH_EnemyRankLibrary::GetBossBarName(Killer).ToString();
+	}
+	DeathCause = Cause;
+	ForceNetUpdate();
 }
 
 // ============================================================================
@@ -575,3 +657,176 @@ void ABH_PlayerState::ServerDebugSpawnEnemy_Implementation(const FString&, int32
 bool ABH_PlayerState::ServerDebugKillAllEnemies_Validate(float) { return false; }
 void ABH_PlayerState::ServerDebugKillAllEnemies_Implementation(float) {}
 #endif // !UE_BUILD_SHIPPING
+
+// ============================================================================
+// Partner panel data (13I-1)
+// ============================================================================
+
+void ABH_PlayerState::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (const UWorld* StateWorld = GetWorld())
+	{
+		StateWorld->GetTimerManager().ClearTimer(PartyStatusTimer);
+	}
+	if (Progression)
+	{
+		Progression->OnLevelUp.RemoveDynamic(this, &ABH_PlayerState::HandleStatusLevelUp);
+	}
+	UnbindPartyStatusSources();
+	Super::EndPlay(EndPlayReason);
+}
+
+void ABH_PlayerState::OnRep_PartyStatus()
+{
+	OnPartyStatusChanged.Broadcast(PartyStatus);
+}
+
+void ABH_PlayerState::TickPartyStatus()
+{
+	APawn* CurrentPawn = GetPawn();
+	// A new pawn (respawn), a lost pawn, or a pawn whose ASC was not ready last time: (re)bind the change sources.
+	if (CurrentPawn != StatusPawn.Get() || (CurrentPawn && !StatusASC.IsValid()))
+	{
+		RebindPartyStatusSources(CurrentPawn);
+	}
+
+	// The combat grace expiring is a change too.
+	const UWorld* TickWorld = GetWorld();
+	const bool bNowInCombat = TickWorld && TickWorld->GetTimeSeconds() < CombatEngagedUntil;
+	if (bNowInCombat != bReportedInCombat)
+	{
+		bReportedInCombat = bNowInCombat;
+		bPartyStatusDirty = true;
+	}
+
+	if (!bPartyStatusDirty)
+	{
+		return;
+	}
+	bPartyStatusDirty = false;
+
+	const FBH_PartyMemberStatus NewStatus = BuildPartyStatus();
+	if (NewStatus != PartyStatus)
+	{
+		PartyStatus = NewStatus;
+		ForceNetUpdate();
+		OnPartyStatusChanged.Broadcast(PartyStatus); // the server does not get the RepNotify
+	}
+}
+
+void ABH_PlayerState::UnbindPartyStatusSources()
+{
+	if (UAbilitySystemComponent* BoundASC = StatusASC.Get())
+	{
+		BoundASC->GetGameplayAttributeValueChangeDelegate(UAH_AttributeSet::GetHealthAttribute()).Remove(HealthHandle);
+		BoundASC->GetGameplayAttributeValueChangeDelegate(UAH_AttributeSet::GetMaxHealthAttribute()).Remove(MaxHealthHandle);
+		BoundASC->GetGameplayAttributeValueChangeDelegate(UAH_AttributeSet::GetBlightBuildupAttribute()).Remove(BlightHandle);
+		BoundASC->RegisterGameplayTagEvent(TAG_State_Status_Fracture, EGameplayTagEventType::NewOrRemoved).Remove(FractureTagHandle);
+	}
+	if (UBH_PlayerDeathComponent* BoundDeath = StatusDeathComponent.Get())
+	{
+		BoundDeath->OnDeathPhaseChanged.RemoveDynamic(this, &ABH_PlayerState::HandleStatusDeathPhase);
+	}
+	HealthHandle.Reset();
+	MaxHealthHandle.Reset();
+	BlightHandle.Reset();
+	FractureTagHandle.Reset();
+	StatusASC.Reset();
+	StatusDeathComponent.Reset();
+	StatusPawn.Reset();
+}
+
+void ABH_PlayerState::RebindPartyStatusSources(APawn* NewStatusPawn)
+{
+	UnbindPartyStatusSources();
+	bPartyStatusDirty = true;
+	if (!NewStatusPawn)
+	{
+		return;
+	}
+
+	UAbilitySystemComponent* PawnASC = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(NewStatusPawn);
+	if (!PawnASC)
+	{
+		return; // StatusPawn stays unset, so the next tick retries
+	}
+
+	StatusPawn = NewStatusPawn;
+	StatusASC = PawnASC;
+	HealthHandle = PawnASC->GetGameplayAttributeValueChangeDelegate(UAH_AttributeSet::GetHealthAttribute()).AddUObject(this, &ABH_PlayerState::HandleStatusAttributeChanged);
+	MaxHealthHandle = PawnASC->GetGameplayAttributeValueChangeDelegate(UAH_AttributeSet::GetMaxHealthAttribute()).AddUObject(this, &ABH_PlayerState::HandleStatusAttributeChanged);
+	BlightHandle = PawnASC->GetGameplayAttributeValueChangeDelegate(UAH_AttributeSet::GetBlightBuildupAttribute()).AddUObject(this, &ABH_PlayerState::HandleStatusAttributeChanged);
+	FractureTagHandle = PawnASC->RegisterGameplayTagEvent(TAG_State_Status_Fracture, EGameplayTagEventType::NewOrRemoved).AddUObject(this, &ABH_PlayerState::HandleStatusTagChanged);
+
+	if (UBH_PlayerDeathComponent* PawnDeath = UBH_PlayerDeathComponent::Find(NewStatusPawn))
+	{
+		StatusDeathComponent = PawnDeath;
+		PawnDeath->OnDeathPhaseChanged.AddDynamic(this, &ABH_PlayerState::HandleStatusDeathPhase);
+	}
+}
+
+void ABH_PlayerState::NotifyCombatEngaged()
+{
+	const UWorld* StateWorld = GetWorld();
+	if (!HasAuthority() || !StateWorld)
+	{
+		return;
+	}
+	const UBH_PartyStateSubsystem* PartyState = UBH_PartyStateSubsystem::Get(this);
+	const float Grace = PartyState ? PartyState->OutOfCombatGrace : 3.f;
+	CombatEngagedUntil = StateWorld->GetTimeSeconds() + Grace;
+}
+
+void ABH_PlayerState::HandleStatusAttributeChanged(const FOnAttributeChangeData& ChangeData)
+{
+	// Taking damage engages the player (same grace as the party flag).
+	if (ChangeData.Attribute == UAH_AttributeSet::GetHealthAttribute() && ChangeData.NewValue < ChangeData.OldValue)
+	{
+		NotifyCombatEngaged();
+	}
+	MarkPartyStatusDirty();
+}
+
+void ABH_PlayerState::HandleStatusTagChanged(const FGameplayTag ChangedTag, int32 NewCount)
+{
+	MarkPartyStatusDirty();
+}
+
+void ABH_PlayerState::HandleStatusDeathPhase(EBH_DeathPhase NewPhase, EBH_DeathPhase OldPhase)
+{
+	MarkPartyStatusDirty();
+}
+
+void ABH_PlayerState::HandleStatusLevelUp(int32 NewLevel)
+{
+	MarkPartyStatusDirty();
+}
+
+FBH_PartyMemberStatus ABH_PlayerState::BuildPartyStatus() const
+{
+	FBH_PartyMemberStatus Built = PartyStatus; // values whose source is gone (no pawn yet) keep their last known value
+
+	if (Progression)
+	{
+		Built.Level = FMath::Max(1, Progression->GetLevel());
+	}
+
+	if (const UAbilitySystemComponent* PawnASC = StatusASC.Get())
+	{
+		const float CurrentHealth = PawnASC->GetNumericAttribute(UAH_AttributeSet::GetHealthAttribute());
+		const float CurrentMaxHealth = PawnASC->GetNumericAttribute(UAH_AttributeSet::GetMaxHealthAttribute());
+		const float Fraction = CurrentMaxHealth > 0.f ? FMath::Clamp(CurrentHealth / CurrentMaxHealth, 0.f, 1.f) : 0.f;
+		Built.HealthFraction = FMath::RoundToFloat(Fraction * 100.f) / 100.f;
+		Built.BlightStacks = UBH_PartyLibrary::BlightBuildupToStacks(PawnASC->GetNumericAttribute(UAH_AttributeSet::GetBlightBuildupAttribute()));
+		Built.bFractured = PawnASC->HasMatchingGameplayTag(TAG_State_Status_Fracture);
+	}
+
+	const UWorld* StateWorld = GetWorld();
+	Built.bInCombat = StateWorld && StateWorld->GetTimeSeconds() < CombatEngagedUntil;
+
+	if (const UBH_PlayerDeathComponent* PawnDeath = StatusDeathComponent.Get())
+	{
+		Built.DeathState = PawnDeath->GetPhase();
+	}
+	return Built;
+}

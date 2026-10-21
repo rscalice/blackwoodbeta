@@ -6,6 +6,8 @@
 #include "Player/BH_GameState.h"
 #include "AbilitySystem/StatusEffects/BH_FractureEffects.h"
 #include "Player/BH_RespawnPoint.h"
+#include "Player/BH_DeathCameraActor.h"
+#include "Combat/BH_LockOnComponent.h"
 #include "AbilitySystem/AH_AttributeSet.h"
 #include "AbilitySystem/BH_GameplayTags.h"
 #include "AbilitySystem/Effects/AH_GE_CombatEffects.h"
@@ -175,6 +177,12 @@ void UBH_PlayerDeathComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 	CancelReviveAttempt();
 
+	if (ABH_DeathCameraActor* Cam = DeathCamera.Get())
+	{
+		Cam->Destroy();
+	}
+	DeathCamera.Reset();
+
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ReviveContextTimer);
@@ -295,9 +303,64 @@ void UBH_PlayerDeathComponent::EnterDeathLocal()
 		UE_LOG(LogBHCombat, Warning, TEXT("%s: the death component needs an ABH_CharacterBase owner to ragdoll."), *GetNameSafe(Char));
 	}
 
-	// Camera: stays on the own body (the capsule follows the pelvis in TickRagdoll).
-	// TODO(spectate): switch the view target to a partner here and back in ExitDeathLocal.
+	// Camera: the local player looks at the own body through a dedicated dead camera (the gameplay camera hangs off the capsule root).
+	// Spectating a partner was cancelled by design (2026-10-17): the view never leaves the player's own body.
+	BeginDeathCamera();
 	K2_OnRagdollStarted();
+}
+
+void UBH_PlayerDeathComponent::BeginDeathCamera()
+{
+	if (DeathCamera.IsValid())
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	const APawn* PawnOwner = Cast<APawn>(GetOwner());
+	APlayerController* LocalPC = (PawnOwner && PawnOwner->IsLocallyControlled()) ? Cast<APlayerController>(PawnOwner->GetController()) : nullptr;
+	if (!World || !LocalPC)
+	{
+		return; // remote pawn, dedicated server or not possessed: nothing to show
+	}
+
+	// Lock-on ignores Look input while it holds a target; clearing it releases that (no-op when not locked).
+	if (UBH_LockOnComponent* LockOn = LocalPC->FindComponentByClass<UBH_LockOnComponent>())
+	{
+		LockOn->ClearLockOn();
+	}
+
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ABH_DeathCameraActor* Cam = World->SpawnActor<ABH_DeathCameraActor>(ABH_DeathCameraActor::StaticClass(), FTransform(PawnOwner->GetActorLocation()), Params);
+	if (!Cam)
+	{
+		UE_LOG(LogBHCombat, Warning, TEXT("%s: could not spawn the dead camera, the gameplay camera stays."), *GetNameSafe(GetOwner()));
+		return;
+	}
+	Cam->Initialize(this, LocalPC, DeadCameraPivotRaise);
+	DeathCamera = Cam;
+	LocalPC->SetViewTargetWithBlend(Cam, DeadCameraBlendInSeconds, VTBlend_EaseInOut, 2.f);
+}
+
+void UBH_PlayerDeathComponent::EndDeathCamera(const bool bSnap)
+{
+	ABH_DeathCameraActor* Cam = DeathCamera.Get();
+	DeathCamera.Reset();
+	if (!Cam)
+	{
+		return;
+	}
+	APawn* PawnOwner = Cast<APawn>(GetOwner());
+	APlayerController* LocalPC = PawnOwner ? Cast<APlayerController>(PawnOwner->GetController()) : nullptr;
+	if (!LocalPC || !IsValid(PawnOwner))
+	{
+		Cam->Destroy(); // no controller to hand the view back to: the engine picks the view target
+		return;
+	}
+	const bool bNoBlend = bSnap || DeadCameraBlendOutSeconds <= 0.f;
+	LocalPC->SetViewTargetWithBlend(PawnOwner, bNoBlend ? 0.f : DeadCameraBlendOutSeconds, VTBlend_EaseInOut, 2.f);
+	Cam->SetLifeSpan(bNoBlend ? 0.1f : DeadCameraBlendOutSeconds + 0.1f);
 }
 
 void UBH_PlayerDeathComponent::ExitDeathLocal()
@@ -305,6 +368,26 @@ void UBH_PlayerDeathComponent::ExitDeathLocal()
 	ACharacter* Char = GetCharacterOwner();
 	bRagdolling = false;
 	bBodyCorrected = false;
+
+	// Dead camera: blend back to the own pawn, or snap when the pawn comes back far from the body (hub respawn; HubName is already
+	// cleared in the Alive state, so the distance decides).
+	if (DeathCamera.IsValid())
+	{
+		FVector BodyLocation = FVector::ZeroVector;
+		FVector BodyVelocity = FVector::ZeroVector;
+		FQuat BodyRotation = FQuat::Identity;
+		bool bFarReturn = true;
+		if (Char && GetPelvisState(BodyLocation, BodyVelocity, BodyRotation))
+		{
+			bFarReturn = FVector::DistSquared(BodyLocation, FVector(DeathState.ReviveLocation)) > FMath::Square(DeadCameraSnapDistance);
+		}
+		else if (Char)
+		{
+			bFarReturn = FVector::DistSquared(Char->GetActorLocation(), FVector(DeathState.ReviveLocation)) > FMath::Square(DeadCameraSnapDistance);
+		}
+		EndDeathCamera(/*bSnap*/ bFarReturn);
+	}
+
 	if (!Char)
 	{
 		return;
@@ -358,12 +441,8 @@ void UBH_PlayerDeathComponent::TickRagdoll(float DeltaTime)
 	}
 	const bool bLocallySettled = (Elapsed >= SettleMinSeconds && SlowTime >= SettleHoldSeconds) || Elapsed >= SettleTimeout;
 
-	// Until the rest point is applied the capsule follows the pelvis, so the camera stays on the body. The mesh is detached from the
-	// capsule (StartRagdollLocal), so this only moves the capsule (and the camera on it), never the simulating bodies.
-	if (!bBodyCorrected && bHaveBody)
-	{
-		Char->SetActorLocation(PelvisLocation, false, nullptr, ETeleportType::TeleportPhysics);
-	}
+	// 13I-2: the capsule no longer follows the pelvis every tick. The local dead camera (ABH_DeathCameraActor) tracks the pelvis body itself,
+	// and the capsule snaps to the rest point once (SampleBodyRest on the server, ApplyBodyCorrection on clients).
 
 	if (Char->HasAuthority())
 	{

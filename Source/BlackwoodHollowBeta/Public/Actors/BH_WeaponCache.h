@@ -41,6 +41,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|WeaponCache")
 	TSoftClassPtr<UBH_WeaponItem> WeaponItemClass = TSoftClassPtr<UBH_WeaponItem>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/Items/Weapons/BPI_Weapon_Longsword.BPI_Weapon_Longsword_C")));
 
+	/** Scavenging checklist id (matches ABH_BeatTarget::ChecklistItemId). When set, taking the weapon reports "this player did it" to the beat tracker. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|WeaponCache")
+	FName ChecklistItemId;
+
 	/** The slot of the taker's loadout the weapon is equipped into. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|WeaponCache")
 	EBH_EquipSlot EquipSlot = EBH_EquipSlot::Weapon_Main_A;

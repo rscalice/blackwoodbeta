@@ -9,6 +9,7 @@
 #include "BehaviorTree/BlackboardComponent.h"
 #include "BrainComponent.h"
 #include "NavigationSystem.h"
+#include "NavigationData.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
@@ -368,24 +369,58 @@ EBTNodeResult::Type UBTTask_BH_ChaseTarget::ExecuteTask(UBehaviorTreeComponent& 
 
 	FBTBHChaseMemory* Memory = CastInstanceNodeMemory<FBTBHChaseMemory>(NodeMemory);
 	Memory->Elapsed = 0.f;
+	Memory->bDirectSteering = false;
 
 	FAIMoveRequest MoveRequest(Target);
 	MoveRequest.SetAcceptanceRadius(AcceptanceRadius);
 	MoveRequest.SetCanStrafe(false);
 	MoveRequest.SetUsePathfinding(true);
 
-	const FPathFollowingRequestResult Result = Controller->MoveTo(MoveRequest);
+	FNavPathSharedPtr MovePath;
+	const FPathFollowingRequestResult Result = Controller->MoveTo(MoveRequest, &MovePath);
 	switch (Result.Code)
 	{
 	case EPathFollowingRequestResult::AlreadyAtGoal:
 		return EBTNodeResult::Succeeded;
 	case EPathFollowingRequestResult::RequestSuccessful:
-		// The path following component reports the end of this request (default OnMessage finishes the task with its success flag).
+		if (bDirectMoveFallback && (!MovePath.IsValid() || !MovePath->IsValid() || MovePath->IsPartial()))
+		{
+			// A partial / invalid path would stop short of the target: drop it and walk straight at the target instead.
+			Controller->StopMovement();
+			Memory->bDirectSteering = true;
+			return EBTNodeResult::InProgress;
+		}
+		// The path following component reports the end of this request (OnMessage below finishes the task with its success flag).
 		WaitForMessage(OwnerComp, UBrainComponent::AIMessage_MoveFinished, static_cast<int32>(Result.MoveId.GetID()));
 		return EBTNodeResult::InProgress;
 	default:
+		if (bDirectMoveFallback)
+		{
+			Memory->bDirectSteering = true; // request failed (no nav mesh / unreachable): steer in TickTask
+			return EBTNodeResult::InProgress;
+		}
 		return EBTNodeResult::Failed;
 	}
+}
+
+void UBTTask_BH_ChaseTarget::OnMessage(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, FName Message, int32 RequestID, bool bSuccess)
+{
+	FBTBHChaseMemory* Memory = CastInstanceNodeMemory<FBTBHChaseMemory>(NodeMemory);
+	ABH_CrabAIController* Controller = Cast<ABH_CrabAIController>(OwnerComp.GetAIOwner());
+	const AActor* Target = Controller ? Controller->GetCrabTarget() : nullptr;
+	const APawn* ControlledPawn = Controller ? Controller->GetPawn() : nullptr;
+
+	if (bDirectMoveFallback && Target && ControlledPawn)
+	{
+		const bool bArrived = FVector::Dist2D(ControlledPawn->GetActorLocation(), Target->GetActorLocation()) <= AcceptanceRadius;
+		if (!bArrived)
+		{
+			// The move ended (failed, repath failed or finished on a partial path) short of the target: keep going by direct steering.
+			Memory->bDirectSteering = true;
+			return;
+		}
+	}
+	Super::OnMessage(OwnerComp, NodeMemory, Message, RequestID, bSuccess);
 }
 
 void UBTTask_BH_ChaseTarget::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds)
@@ -401,12 +436,37 @@ void UBTTask_BH_ChaseTarget::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* 
 		{
 			Controller->StopMovement();
 		}
+		Memory->bDirectSteering = false;
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
+		return;
+	}
+
+	if (Memory->bDirectSteering)
+	{
+		// Direct-move fallback: no usable path, so walk straight at the target (character movement handles facing / speed).
+		APawn* ControlledPawn = Controller->GetPawn();
+		const AActor* Target = Controller->GetCrabTarget();
+		if (!ControlledPawn)
+		{
+			Memory->bDirectSteering = false;
+			FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
+			return;
+		}
+		const FVector ToTarget = Target->GetActorLocation() - ControlledPawn->GetActorLocation();
+		if (ToTarget.Size2D() <= AcceptanceRadius)
+		{
+			StopWaitingForMessages(OwnerComp);
+			Memory->bDirectSteering = false;
+			FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
+			return;
+		}
+		ControlledPawn->AddMovementInput(ToTarget.GetSafeNormal2D(), 1.f);
 	}
 }
 
 EBTNodeResult::Type UBTTask_BH_ChaseTarget::AbortTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
 {
+	CastInstanceNodeMemory<FBTBHChaseMemory>(NodeMemory)->bDirectSteering = false; // stop steering
 	StopWaitingForMessages(OwnerComp);
 	if (ABH_CrabAIController* Controller = Cast<ABH_CrabAIController>(OwnerComp.GetAIOwner()))
 	{

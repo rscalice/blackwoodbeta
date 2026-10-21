@@ -1,6 +1,8 @@
 // Blackwood Hollow - the Island 1 weapon cache (implementation)
 
 #include "Actors/BH_WeaponCache.h"
+#include "Beats/BH_BeatTrackerComponent.h"
+#include "Hints/BH_HintLibrary.h"
 #include "Combat/BH_LoadoutComponent.h"
 #include "Interaction/BH_InteractorComponent.h"
 #include "Items/BH_WeaponItem.h"
@@ -84,10 +86,15 @@ void ABH_WeaponCache::BH_OnInteractionCompleted(APawn* InteractingPawn)
 	{
 		// Not spent: the player can try again (a full inventory, for example).
 		UE_LOG(LogBHWeaponCache, Warning, TEXT("%s: %s could not take the weapon: %s"), *GetNameSafe(this), *GetNameSafe(InteractingPawn), *Reason.ToString());
+		if (UBH_InteractorComponent* RefusedInteractor = UBH_InteractorComponent::Find(InteractingPawn))
+		{
+			RefusedInteractor->NotifyInventoryFull(UBH_LootLibrary::GetItemDisplayName(TSubclassOf<UNarrativeItem>(WeaponClass))); // 13C (#14)
+		}
 		return;
 	}
 
 	TakenKeys.Add(UBH_LootLibrary::GetPlayerKey(TakerState));
+	UBH_BeatTrackerComponent::ReportChecklistItem(this, TakerState, ChecklistItemId); // no-op when the id is None
 	ForceNetUpdate();
 	OnRep_TakenKeys(); // the server does not get the RepNotify
 
@@ -96,6 +103,7 @@ void ABH_WeaponCache::BH_OnInteractionCompleted(APawn* InteractingPawn)
 		const TSubclassOf<UNarrativeItem> GrantedClass(WeaponClass);
 		Interactor->NotifyItemGranted(UBH_LootLibrary::GetItemDisplayName(GrantedClass), 1);
 	}
+	UBH_HintLibrary::TriggerHintKey(InteractingPawn, TEXT("Item.WeaponCache")); // 13E: equipping the Sword
 	UE_LOG(LogBHWeaponCache, Log, TEXT("%s: %s took %s."), *GetNameSafe(this), *GetNameSafe(TakerState), *GetNameSafe(WeaponClass));
 }
 
@@ -106,6 +114,7 @@ void ABH_WeaponCache::BH_DebugReset()
 		return;
 	}
 	TakenKeys.Reset();
+	UBH_BeatTrackerComponent::ResetChecklistItem(this, ChecklistItemId);
 	ForceNetUpdate();
 	OnRep_TakenKeys();
 }

@@ -20,18 +20,22 @@ public class BlackwoodHollowBeta : ModuleRules
 			"GameplayTasks",
 			"AssetRegistry",     // editor-only profile asset creation (UBH_StanceMovementProfile::CreateProfileAsset)
 			"UMG",               // HUD widgets (UBH_HUDWidget)
+			"CommonInput",       // Phase 13B: ECommonInputType (UBH_UIFunctionLibrary::GetKeyForInputAction)
+			"CommonUI",          // Phase 13B: primary layout / activatable menu widgets (UBH_PrimaryLayoutWidget, UBH_MenuActivatableWidget)
 			"AIModule",          // IGenericTeamAgentInterface / FGenericTeamId (combat team filtering)
 			"LevelSequence",
 			"MovieScene",
 			"MovieSceneTracks",
 			"Niagara",           // GameplayCue shatter VFX (UBH_GCN_PostureBroken)
 			"EngineCameras",     // code-only camera shakes (UWaveOscillatorCameraShakePattern)
+			"NarrativeNavigator", // Phase 13B+: compass and markers (UNavigationMarkerComponent, UNarrativeNavigationComponent)
 			"NarrativeInventory", // Phase 8C: player inventory (UNarrativeInventoryComponent on the PlayerState)
 			"NarrativeEquipment", // Phase 8C: UEquipmentComponent / UEquippableItem (UBH_WeaponItem)
 			"RadialSelector",     // Phase 8C: stance radial menu (UBH_StanceRadialComponent)
 			"ProceduralMeshComponent", // weapon swing trails (UBH_WeaponTrailComponent)
 			"DeveloperSettings", // Phase 9: UBH_RPGSettings (Project Settings > Game > Blackwood Hollow RPG)
 			"PhysicsCore",       // Phase 10A: EPhysicalSurface / UPhysicalMaterial::DetermineSurfaceType (footstep surfaces)
+			"MotionWarping",     // Phase 13F-1: lunge assist (UMotionWarpingComponent warp target set by UAH_GA_MeleeAttack_Base)
 			"Narrative",         // Phase 11P: UNarrativePartyComponent / UNarrativeComponent (UBH_PartyComponent on ABH_GameState)
 		});
 

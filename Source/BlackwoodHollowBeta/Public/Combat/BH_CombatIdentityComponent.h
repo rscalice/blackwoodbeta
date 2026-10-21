@@ -26,6 +26,7 @@
 #include "Engine/TimerHandle.h"
 #include "Combat/BH_CombatTeam.h"
 #include "Combat/BH_EnemyRank.h"
+#include "Combat/BH_HitFeedback.h"
 #include "Loot/BH_LootTypes.h"
 #include "BH_CombatIdentityComponent.generated.h"
 
@@ -68,6 +69,17 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "BH|Rank")
 	EBH_EnemyArchetype Archetype = EBH_EnemyArchetype::Soldier;
+
+	// -- Hit feedback (Phase 13F-1; cosmetic, read by the HitFeedback event on every machine) ------------------------------------
+	// Class defaults only (the same on every machine), so nothing here replicates. Set them on the enemy Blueprint's identity component.
+
+	/** What this character is made of (picks the impact sound / sparks): Flesh (default), Armour, Shell. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Feedback")
+	EBH_HitSurface SurfaceType = EBH_HitSurface::Flesh;
+
+	/** Blighted enemy: its hits show purple ichor instead of blood (HitFeedback.bIsBlighted). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BH|Feedback")
+	bool bBlighted = false;
 
 	/** Enemy level for the scaling table (and the Level attribute). Set per placed instance, or by the wave spawner / bh.Enemy.Spawn through UBH_EnemyRankLibrary::PrepareSpawn. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "BH|Rank", meta = (ClampMin = "1"))

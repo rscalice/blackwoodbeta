@@ -25,6 +25,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Engine/TimerHandle.h"
+#include "Loot/BH_LootTypes.h"
 #include "BH_EnemyWaveSpawner.generated.h"
 
 class UBillboardComponent;
@@ -48,6 +49,17 @@ struct FBH_WaveEntry
 	/** Level given to every enemy of this entry (ABH_EnemyBase::EnemyLevel; drives the enemy scaling table rows). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Wave", meta = (ClampMin = "1"))
 	int32 EnemyLevel = 1;
+
+	/**
+	 * Scripted drops for story items: appended to the DropTable of the FIRST BonusDropCount enemies spawned from this entry (server, at spawn,
+	 * on top of whatever the enemy class already drops). Use bGrantToWholeParty + bOncePerPlayer so the item is given once per player and a
+	 * party-wipe respawn of the same enemy does not give it again (same pattern as the kite shield).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Wave|Loot")
+	TArray<FBH_DropEntry> BonusDrops;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Wave|Loot", meta = (ClampMin = "1"))
+	int32 BonusDropCount = 1;
 };
 
 /** One enemy still to spawn in the current wave (flattened wave entry). */
@@ -55,6 +67,7 @@ struct FBH_PendingWaveSpawn
 {
 	TSubclassOf<APawn> EnemyClass;
 	int32 EnemyLevel = 1;
+	TArray<FBH_DropEntry> BonusDrops;
 };
 
 /** One enemy of the running wave (server bookkeeping for the party-wipe restart). */
@@ -63,6 +76,7 @@ struct FBH_WaveRosterSlot
 	TSubclassOf<APawn> EnemyClass;
 	int32 EnemyLevel = 1;
 	FTransform SpawnTransform = FTransform::Identity;
+	TArray<FBH_DropEntry> BonusDrops;
 	TWeakObjectPtr<APawn> Pawn;
 };
 
@@ -170,10 +184,10 @@ protected:
 private:
 	void BeginWave(int32 WaveIndex);
 	void SpawnNext();
-	APawn* SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 SpawnIndex, int32 EnemyLevel);
+	APawn* SpawnEnemy(TSubclassOf<APawn> EnemyClass, int32 SpawnIndex, int32 EnemyLevel, const TArray<FBH_DropEntry>& BonusDrops = TArray<FBH_DropEntry>());
 
 	/** Spawns and tracks one enemy at SpawnTransform (shared by the normal spawn and the party-wipe respawn). */
-	APawn* SpawnEnemyAt(TSubclassOf<APawn> EnemyClass, const FTransform& SpawnTransform, int32 EnemyLevel);
+	APawn* SpawnEnemyAt(TSubclassOf<APawn> EnemyClass, const FTransform& SpawnTransform, int32 EnemyLevel, const TArray<FBH_DropEntry>& BonusDrops = TArray<FBH_DropEntry>());
 
 	/** Party wiped: respawn the dead enemies of the current wave in their original slots (the living ones are reset by their own components). */
 	UFUNCTION()

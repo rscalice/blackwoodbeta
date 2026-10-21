@@ -12,6 +12,7 @@
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "Engine/CollisionProfile.h"
+#include "EngineUtils.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -138,6 +139,25 @@ void ABH_WardenSanctuary::UpdateMembers()
 		Inside.Add(Candidate);
 	}
 
+	// Dedupe (#15, 13F-1): overlapping sanctuaries of the same source type never stack. A pawn that a STRONGER sanctuary of this type also
+	// covers is treated as outside this one, so it falls into the leavers below (its reduction source and posture buff are removed) and the
+	// stronger sanctuary applies its own effects on its own update. When the stronger one ends, the next update here picks the pawn up again.
+	for (TActorIterator<ABH_WardenSanctuary> OtherIt(World); OtherIt; ++OtherIt)
+	{
+		const ABH_WardenSanctuary* Rival = *OtherIt;
+		if (Rival == this || !IsValid(Rival) || Rival->IsActorBeingDestroyed() || Rival->SourceType != SourceType || !Rival->IsStrongerThan(*this))
+		{
+			continue;
+		}
+		for (auto PawnIt = Inside.CreateIterator(); PawnIt; ++PawnIt)
+		{
+			if (Rival->CoversPawn(*PawnIt))
+			{
+				PawnIt.RemoveCurrent();
+			}
+		}
+	}
+
 	// Leavers (or the dead / destroyed).
 	TArray<TWeakObjectPtr<APawn>> Leavers;
 	for (const TPair<TWeakObjectPtr<APawn>, FActiveGameplayEffectHandle>& Pair : Members)
@@ -167,6 +187,39 @@ void ABH_WardenSanctuary::UpdateMembers()
 			Heart->ReduceBlightBuildup(Drain);
 		}
 	}
+}
+
+bool ABH_WardenSanctuary::IsStrongerThan(const ABH_WardenSanctuary& Other) const
+{
+	if (!FMath::IsNearlyEqual(BlightReductionFraction, Other.BlightReductionFraction))
+	{
+		return BlightReductionFraction > Other.BlightReductionFraction;
+	}
+	if (!FMath::IsNearlyEqual(PostureRegenMultiplier, Other.PostureRegenMultiplier))
+	{
+		return PostureRegenMultiplier > Other.PostureRegenMultiplier;
+	}
+	if (!FMath::IsNearlyEqual(BlightDrainPerSecond, Other.BlightDrainPerSecond))
+	{
+		return BlightDrainPerSecond > Other.BlightDrainPerSecond;
+	}
+	const float OwnLife = GetLifeSpan();
+	const float OtherLife = Other.GetLifeSpan();
+	if (!FMath::IsNearlyEqual(OwnLife, OtherLife, 0.05f))
+	{
+		return OwnLife > OtherLife;
+	}
+	return GetUniqueID() < Other.GetUniqueID();
+}
+
+bool ABH_WardenSanctuary::CoversPawn(const APawn* Pawn) const
+{
+	if (!Pawn)
+	{
+		return false;
+	}
+	const float Reach = FMath::Max(Radius, 50.f) + Pawn->GetSimpleCollisionRadius();
+	return FVector::DistSquared(GetActorLocation(), Pawn->GetActorLocation()) <= FMath::Square(Reach);
 }
 
 void ABH_WardenSanctuary::AddMember(APawn* Pawn)

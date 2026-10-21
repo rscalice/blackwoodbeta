@@ -18,6 +18,17 @@ class UBH_ArmorItem;
 class UMaterialInterface;
 class USkeletalMesh;
 class UStaticMesh;
+class UTexture2D;
+
+/** Texture parameter names on the visual body's body material (Armor Refit 2 body masking). Each armor slot writes its piece mask into one of them; no mask = black. */
+namespace BH_ArmorMask
+{
+	inline const FName ParamHelm(TEXT("BH_Mask_Helm"));
+	inline const FName ParamChest(TEXT("BH_Mask_Chest"));
+	inline const FName ParamGloves(TEXT("BH_Mask_Gloves"));
+	inline const FName ParamPants(TEXT("BH_Mask_Pants"));
+	inline const FName ParamBoots(TEXT("BH_Mask_Boots"));
+}
 
 /** One material slot replaced on an armor piece. */
 USTRUCT(BlueprintType)
@@ -69,6 +80,11 @@ struct FBH_ArmorVisual
 	/** Material slots of the VISUAL BODY hidden while this piece is worn (stops skin poking through). Aggregated over all worn pieces. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Armor")
 	TArray<int32> HiddenBodyMaterialSlots;
+
+	/** Optional body mask: white where this piece covers the skin. Written to the BH_Mask_* texture parameter of the visual body's material
+	 *  (masked body material fades the skin under the piece). Empty = black = no masking for this slot. Cosmetic, local. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Armor")
+	TSoftObjectPtr<UTexture2D> BodyMask;
 
 	/** The hair groom is hidden while this piece is worn (helmets, caps). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Armor")

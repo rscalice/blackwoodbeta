@@ -6,6 +6,11 @@
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "Engine/Texture2D.h"
+#include "Components/Image.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Sound/SoundBase.h"
+#include "Kismet/GameplayStatics.h"
+#include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 
 void UBH_FragmentBarWidget::NativeConstruct()
@@ -87,6 +92,7 @@ void UBH_FragmentBarWidget::RebuildSlotViews()
 		View.Category = PS->GetSlotCategory(Index);
 		View.Fragment = PS->GetFragmentInSlot(Index);
 		View.bEmpty = (View.Fragment == nullptr);
+		View.bLocked = View.bEmpty;
 		if (const UAH_GA_FragmentBase* CDO = View.Fragment ? View.Fragment->GetDefaultObject<UAH_GA_FragmentBase>() : nullptr)
 		{
 			View.Name = CDO->FragmentName;
@@ -141,6 +147,10 @@ bool UBH_FragmentBarWidget::UpdateCooldowns()
 		{
 			bChanged = true;
 		}
+		if (View.bOnCooldown && !bOnCooldown && !View.bEmpty)
+		{
+			PendingReadySlots.Add(View.SlotIndex); // the cooldown just ended
+		}
 		View.CooldownRemaining = Remaining;
 		View.CooldownDuration = Duration;
 		View.CooldownFraction = Fraction;
@@ -148,6 +158,8 @@ bool UBH_FragmentBarWidget::UpdateCooldowns()
 		bAnyOnCooldown |= bOnCooldown;
 	}
 	bAnyOnCooldownLastPoll = bAnyOnCooldown;
+	UpdateSlotVisuals();
+	FlushReadySlots();
 	return bChanged;
 }
 
@@ -214,4 +226,73 @@ float UBH_FragmentBarWidget::GetSlotCooldownFraction(int32 SlotIndex) const
 bool UBH_FragmentBarWidget::IsSlotOnCooldown(int32 SlotIndex) const
 {
 	return SlotViews.IsValidIndex(SlotIndex) && SlotViews[SlotIndex].bOnCooldown;
+}
+
+bool UBH_FragmentBarWidget::IsSlotLocked(int32 SlotIndex) const
+{
+	return !SlotViews.IsValidIndex(SlotIndex) || SlotViews[SlotIndex].bLocked;
+}
+
+bool UBH_FragmentBarWidget::IsBusy(float ReadyHold) const
+{
+	if (bAnyOnCooldownLastPoll)
+	{
+		return true;
+	}
+	const UWorld* World = GetWorld();
+	return World && (World->GetTimeSeconds() - LastReadyTime) < ReadyHold;
+}
+
+void UBH_FragmentBarWidget::UpdateSlotVisuals()
+{
+	UImage* Sweeps[NumSlots] = { Sweep_Slot0, Sweep_Slot1, Sweep_Slot2 };
+	UWidget* Locks[NumSlots] = { Lock_Slot0, Lock_Slot1, Lock_Slot2 };
+	SweepMIDs.SetNum(NumSlots);
+
+	for (int32 Index = 0; Index < NumSlots && SlotViews.IsValidIndex(Index); ++Index)
+	{
+		const FBH_FragmentSlotView& View = SlotViews[Index];
+		if (Locks[Index])
+		{
+			Locks[Index]->SetVisibility(View.bLocked ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		}
+		if (UImage* Sweep = Sweeps[Index])
+		{
+			if (!SweepMIDs[Index])
+			{
+				SweepMIDs[Index] = Sweep->GetDynamicMaterial();
+			}
+			if (SweepMIDs[Index])
+			{
+				SweepMIDs[Index]->SetScalarParameterValue(SweepProgressParameter, View.CooldownFraction);
+			}
+			Sweep->SetVisibility(View.bOnCooldown ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+		}
+	}
+}
+
+void UBH_FragmentBarWidget::FlushReadySlots()
+{
+	if (PendingReadySlots.IsEmpty())
+	{
+		return;
+	}
+	const TArray<int32> Ready = MoveTemp(PendingReadySlots);
+	PendingReadySlots.Reset();
+	if (!IsVisible())
+	{
+		return;
+	}
+	if (const UWorld* World = GetWorld())
+	{
+		LastReadyTime = World->GetTimeSeconds();
+	}
+	if (USoundBase* Sound = ReadySound.LoadSynchronous())
+	{
+		UGameplayStatics::PlaySound2D(this, Sound, ReadySoundVolume);
+	}
+	for (const int32 SlotIndex : Ready)
+	{
+		K2_OnSlotReady(SlotIndex);
+	}
 }

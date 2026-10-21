@@ -20,7 +20,7 @@ def preflight():
 
 
 def forbid_metahumans_folder():
-    """A MetaHuman build with a blank common folder creates /Game/MetaHumans and a duplicate skeleton."""
+    """The retired common-folder location must not come back (it held a duplicate skeleton; see #108)."""
     if unreal.EditorAssetLibrary.does_directory_exist(config.FORBIDDEN_ROOT):
         raise RuntimeError(
             "%s exists (duplicate MetaHuman common folder). Remove it before continuing." % config.FORBIDDEN_ROOT

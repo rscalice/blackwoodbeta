@@ -4,8 +4,8 @@
 // Parent of WBP_XPBar. Widget Blueprints bind by widget NAME:
 //   XPFill        UProgressBar   (required)  the XP fill, 0..1 toward the next level
 //   LevelText     UTextBlock     (required)  "Lv 3"
-//   XPGainText    UTextBlock     (optional)  "+20 XP" after a gain
-//   Anim_XPGain   UWidgetAnimation (optional) plays on every XP gain; when it is bound the native fade of XPGainText is skipped
+//   XPGainText    UTextBlock     (retired)   collapsed; gains show as a low-priority toast via UBH_NotificationSubsystem::PushExperience
+//   Anim_XPGain   UWidgetAnimation (retired)  no longer played
 //
 // The widget finds the owning player's UBH_ProgressionComponent (PlayerState) by itself: PlayerState may not exist yet when the widget
 // is constructed, so it retries on a short timer until it is found and then keeps checking now and then, so a PlayerState / component
@@ -36,14 +36,6 @@ public:
 	/** Fill tween speed (FInterpTo rate: higher = faster). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|XP", meta = (ClampMin = "0.1"))
 	float InterpSpeed = 6.f;
-
-	/** Seconds the "+N XP" text stays up in the native fallback (no Anim_XPGain). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|XP", meta = (ClampMin = "0.0", ForceUnits = "s"))
-	float GainTextDuration = 1.5f;
-
-	/** Length of the last part of GainTextDuration spent fading the text out (native fallback). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|XP", meta = (ClampMin = "0.0", ForceUnits = "s"))
-	float GainTextFadeTime = 0.35f;
 
 	/** Seconds without an XP change before the widget dims. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BlackwoodHollow|XP", meta = (ClampMin = "0.0", ForceUnits = "s"))
@@ -118,7 +110,4 @@ private:
 	/** Seconds since the last XP change (idle dim) and the opacity currently applied. */
 	float IdleTimer = 0.f;
 	float CurrentOpacity = 1.f;
-
-	/** Native "+N XP" fallback: seconds since it was shown, negative = hidden. */
-	float GainTextAge = -1.f;
 };

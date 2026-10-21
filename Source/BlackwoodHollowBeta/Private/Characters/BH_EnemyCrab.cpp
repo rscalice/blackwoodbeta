@@ -18,6 +18,10 @@ ABH_EnemyCrab::ABH_EnemyCrab()
 	DisplayName = NSLOCTEXT("BlackwoodHollow", "CrabDefaultName", "Hollow Crab");
 	ScalingRowPrefix = TEXT("Crab");
 
+	// Phase 13F-1 hit feedback: every crab (also the armoured Veteran and the Reef Tyrant) is hard-shelled and Blighted.
+	SurfaceType = EBH_HitSurface::Shell;
+	bBlighted = true;
+
 	// Phase 11C drop table (plan 11C / balance.md): Heartwood Sap 15%, Corrupted Coral Shard 30%, one each, rolled per living player in XP range.
 	{
 		FBH_DropEntry SapDrop;

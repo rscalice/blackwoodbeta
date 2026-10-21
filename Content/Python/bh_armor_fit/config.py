@@ -21,10 +21,12 @@ ARMOR_ROOT = EQUIPMENT_ROOT + "/Armor"
 BODY_TYPES_ROOT = "/Game/BlackwoodHollow/Characters/BodyTypes"
 
 CANONICAL_SKELETON = (
-    "/Game/Skeletons/MetaHuman/Built/Common/Female/Medium/NormalWeight/Body/metahuman_base_skel"
+    "/Game/MetaHumans/Common/Female/Medium/NormalWeight/Body/metahuman_base_skel"
 )
-COMMON_FOLDER = "/Game/Skeletons/MetaHuman/Built/Common"
-FORBIDDEN_ROOT = "/Game/MetaHumans"
+# MetaHuman Creator's default common folder is the single canonical copy (2026-10-12, #108).
+COMMON_FOLDER = "/Game/MetaHumans/Common"
+# The retired duplicate location; a build must never recreate it.
+FORBIDDEN_ROOT = "/Game/Skeletons/MetaHuman"
 
 DT_BODY_TYPES = ARMOR_FIT_ROOT + "/DT_BH_BodyTypes"
 DT_ARMOR_PIECES = ARMOR_FIT_ROOT + "/DT_BH_ArmorPieces"
@@ -40,6 +42,32 @@ CONSTRAINT_NAMES = {"height": "Height", "chest": "Chest", "waist": "Waist", "hip
 RIG_NONE = "None"
 RIG_BODY_WEIGHTS = "BodyWeights"
 RIG_RIGID_BONE = "RigidBone"
+
+# Fit settings of the harvest step (Armor Refit 2). Every value is part of the output stamps (weights.TRANSFER_SIGNATURE,
+# clearance.SIGNATURE, mask.SIGNATURE): change one and the next fit_armor() rebuilds the affected pieces. The modules read
+# them at import time, so reload the package (or restart the editor Python) after editing.
+FIT = {
+    # clearance (cm): wanted gap between skin and garment; larger in joint bands (elbow, knee, hip, shoulder, wrist)
+    "clearance_cm": 1.0,
+    "joint_clearance_cm": 1.5,
+    "joint_gain": 2.0,            # joint factor = min(1, gain * min(weight on bone A, weight on bone B) of the joint)
+    # near-skin weight transfer from the body (all bones, incl. twist / corrective), blended into the cleaned weights
+    "transfer": True,
+    # which bones the transfer may use: "core_twist" folds every helper / corrective bone (side, bulge, mcp, pip, palm, Cor, kneeBack ...)
+    # into its nearest core ancestor (twist_01/02 bones are core); "all" keeps the body's weights on every bone (old behaviour)
+    "transfer_keep": "core_twist",
+    "transfer_full_cm": 4.0,      # within this distance of the skin the body's weights are used as they are
+    "transfer_fade_cm": 4.0,      # ... fading out to the cleaned weights over this much further distance
+    "transfer_smooth_rings": 2,   # smoothing passes over the blended zone
+    # body mask bake
+    "mask_size": 512,
+    "mask_reach_cm": 5.0,         # body vertex is covered when the garment is within this distance along its normal
+    "mask_align": 0.5,            # cosine between the skin normal and the direction to the garment
+    "mask_edge_margin_cm": 3.0,   # ... and the garment point is at least this far inside its boundary loops
+    "mask_erode_rings": 1,
+    # posed check (report only): off by default, fit_armor(posed_check=True) turns it on
+    "posed_check": False,
+}
 
 
 def _package(ref):
@@ -126,6 +154,12 @@ class Piece:
         if self.skip_resize:
             return self.rigged_path or self.source_mesh
         return "%s/%s/SKM_%s_%s_%s" % (ARMOR_ROOT, self.set_name, self.set_name, self.slot, body.name)
+
+    def mask_path(self, body):
+        """Body mask texture written next to the final mesh; '' for pieces that get none (rigid helms, never resized)."""
+        if self.skip_resize or self.slot == "Helm":
+            return ""
+        return "%s/%s/T_BHMask_%s_%s_%s" % (ARMOR_ROOT, self.set_name, self.set_name, self.slot, body.name)
 
 
 def _read_table(path):

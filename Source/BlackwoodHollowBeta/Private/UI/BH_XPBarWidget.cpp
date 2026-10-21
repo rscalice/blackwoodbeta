@@ -3,6 +3,7 @@
 #include "UI/BH_XPBarWidget.h"
 #include "Progression/BH_ProgressionComponent.h"
 #include "Progression/BH_RPGSettings.h"
+#include "UI/BH_NotificationSubsystem.h"
 #include "Animation/WidgetAnimation.h"
 #include "Components/ProgressBar.h"
 #include "Components/TextBlock.h"
@@ -31,14 +32,13 @@ void UBH_XPBarWidget::NativeConstruct()
 
 	bInitialised = false;
 	AppliedFill = -1.f;
-	GainTextAge = -1.f;
 	IdleTimer = 0.f;
 	CurrentOpacity = 1.f;
 	SetRenderOpacity(1.f);
 
 	if (XPGainText)
 	{
-		XPGainText->SetRenderOpacity(0.f); // hidden until the first gain (an Anim_XPGain fades it in itself)
+		XPGainText->SetVisibility(ESlateVisibility::Collapsed); // retired: +N XP goes to the notification queue
 	}
 	if (XPFill)
 	{
@@ -220,21 +220,13 @@ void UBH_XPBarWidget::UpdateLevelText(int32 Level)
 
 void UBH_XPBarWidget::ShowGain(int32 Delta)
 {
-	if (XPGainText)
+	// The old in-bar "+N XP" popup is retired: gains go to the notification toast queue as a low-priority, batched entry.
+	if (const APlayerController* PC = GetOwningPlayer())
 	{
-		XPGainText->SetText(FText::Format(NSLOCTEXT("BHXP", "GainFmt", "+{0} XP"), FText::AsNumber(Delta)));
-	}
-
-	if (Anim_XPGain)
-	{
-		// Restart from the beginning on every gain.
-		StopAnimation(Anim_XPGain);
-		PlayAnimation(Anim_XPGain);
-	}
-	else if (XPGainText)
-	{
-		GainTextAge = 0.f;
-		XPGainText->SetRenderOpacity(1.f);
+		if (UBH_NotificationSubsystem* Queue = UBH_NotificationSubsystem::ForController(PC))
+		{
+			Queue->PushExperience(Delta);
+		}
 	}
 }
 
@@ -271,24 +263,6 @@ void UBH_XPBarWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 			bWrapPending = false;
 		}
 		ApplyFill();
-	}
-
-	// Native "+N XP" fallback (an Anim_XPGain drives the text itself).
-	if (!Anim_XPGain && XPGainText && GainTextAge >= 0.f)
-	{
-		GainTextAge += InDeltaTime;
-		if (GainTextAge >= GainTextDuration)
-		{
-			GainTextAge = -1.f;
-			XPGainText->SetRenderOpacity(0.f);
-		}
-		else
-		{
-			const float FadeTime = FMath::Max(GainTextFadeTime, KINDA_SMALL_NUMBER);
-			const float FadeStart = FMath::Max(GainTextDuration - FadeTime, 0.f);
-			const float Alpha = GainTextAge < FadeStart ? 1.f : 1.f - (GainTextAge - FadeStart) / FadeTime;
-			XPGainText->SetRenderOpacity(FMath::Clamp(Alpha, 0.f, 1.f));
-		}
 	}
 
 	// Idle dim: smooth fade down after IdleDelay without a change, back up on any change.

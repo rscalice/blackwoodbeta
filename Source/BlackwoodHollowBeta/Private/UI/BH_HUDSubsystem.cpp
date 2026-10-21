@@ -2,6 +2,15 @@
 
 #include "UI/BH_HUDSubsystem.h"
 #include "UI/BH_HUDWidget.h"
+#include "UI/BH_HUDSettings.h"
+#include "UI/BH_EnemyReadability.h"
+#include "UI/BH_EnemyReadabilitySettings.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
+#include "UI/BH_NotificationSubsystem.h"
+#include "UI/BH_UILayoutSubsystem.h"
+#include "UI/BH_PrimaryLayoutWidget.h"
+#include "Beats/BH_BeatNavigationComponent.h"
 #include "UI/BH_BossHealthBarWidget.h"
 #include "AI/BH_AIController.h"
 #include "AI/BH_CrabAIController.h"
@@ -19,6 +28,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/PlatformTime.h"
 #include "EngineUtils.h"
 #include "TimerManager.h"
 #include "Engine/GameViewportClient.h"
@@ -89,6 +99,50 @@ namespace
 	}
 }
 
+void UBH_HUDSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Collection.InitializeDependency<UBH_UILayoutSubsystem>();
+	Super::Initialize(Collection);
+	const ULocalPlayer* LocalPlayer = GetLocalPlayer();
+	if (UBH_UILayoutSubsystem* LayoutSub = LocalPlayer ? LocalPlayer->GetSubsystem<UBH_UILayoutSubsystem>() : nullptr)
+	{
+		LayoutReadyHandle = LayoutSub->OnLayoutReady.AddUObject(this, &UBH_HUDSubsystem::HandleLayoutReady);
+	}
+}
+
+void UBH_HUDSubsystem::HandleLayoutReady()
+{
+	AttachMainHUDToLayout();
+}
+
+bool UBH_HUDSubsystem::AttachMainHUDToLayout()
+{
+	if (!MainHUD || !UBH_HUDSettings::Get()->bHUDInGameLayer)
+	{
+		return false;
+	}
+	const ULocalPlayer* LocalPlayer = GetLocalPlayer();
+	const UBH_UILayoutSubsystem* LayoutSub = LocalPlayer ? LocalPlayer->GetSubsystem<UBH_UILayoutSubsystem>() : nullptr;
+	UBH_PrimaryLayoutWidget* Layout = LayoutSub ? LayoutSub->GetLayout() : nullptr;
+	if (!Layout)
+	{
+		return false;
+	}
+	// Re-parenting destroys and re-constructs the widget (NativeDestruct unbinds the ASC), so rebind afterwards.
+	UAbilitySystemComponent* ASC = MainHUD->GetHUDAbilitySystem();
+	const bool bWasInViewport = MainHUD->IsInViewport();
+	if (bWasInViewport)
+	{
+		MainHUD->RemoveFromParent();
+	}
+	Layout->AddHUDWidget(MainHUD);
+	if (bWasInViewport && ASC)
+	{
+		MainHUD->InitializeHUD(ASC);
+	}
+	return true;
+}
+
 bool UBH_HUDSubsystem::SetupHUD(APawn* Pawn, TSubclassOf<UBH_HUDWidget> MainHUDClass, TSubclassOf<UUserWidget> DebugHUDClass)
 {
 	ULocalPlayer* LocalPlayer = GetLocalPlayer();
@@ -98,12 +152,15 @@ bool UBH_HUDSubsystem::SetupHUD(APawn* Pawn, TSubclassOf<UBH_HUDWidget> MainHUDC
 		return false;
 	}
 
+	// The compass widget looks the Narrative Navigator component up when it is created, so it must exist first (Phase 13B+).
+	UBH_BeatNavigationComponent::EnsureNavigationComponent(PC);
+
 	if (!MainHUD && MainHUDClass)
 	{
 		MainHUD = CreateWidget<UBH_HUDWidget>(PC, MainHUDClass);
-		if (MainHUD)
+		if (MainHUD && !AttachMainHUDToLayout())
 		{
-			MainHUD->AddToViewport(0);
+			MainHUD->AddToViewport(0); // no layout yet: HandleLayoutReady moves it later
 		}
 	}
 	if (!DebugHUD && DebugHUDClass)
@@ -233,15 +290,71 @@ void UBH_HUDSubsystem::OnAnyAggroChanged(UBH_CombatIdentityComponent* Source, AA
 	// The delegate is process-wide (every PIE world): only react to bosses in this player's world.
 	if (Source && GetLocalPlayer() && Source->GetWorld() == GetLocalPlayer()->GetWorld())
 	{
+		TryPlayAggroCue(Source->GetOwner(), NewTarget);
 		EvaluateBoss();
 	}
 }
 
-void UBH_HUDSubsystem::OnAnyEnemyAggroSeen(ABH_EnemyBase* Enemy, AActor* /*NewTarget*/)
+void UBH_HUDSubsystem::OnAnyEnemyAggroSeen(ABH_EnemyBase* Enemy, AActor* NewTarget)
 {
 	if (Enemy && GetLocalPlayer() && Enemy->GetWorld() == GetLocalPlayer()->GetWorld())
 	{
+		TryPlayAggroCue(Enemy, NewTarget);
 		EvaluateBoss();
+	}
+}
+
+void UBH_HUDSubsystem::TryPlayAggroCue(AActor* Enemy, AActor* NewTarget)
+{
+	UWorld* World = GetLocalPlayer() ? GetLocalPlayer()->GetWorld() : nullptr;
+	const APawn* LocalPawn = GetLocalPawn();
+	if (!World || !Enemy || !NewTarget || NewTarget != LocalPawn)
+	{
+		return; // only a fight with the local pawn is cued, so a partner's far-off fight stays silent
+	}
+	const EBH_EnemyRank Rank = UBH_EnemyRankLibrary::GetRank(Enemy);
+	if (Rank == EBH_EnemyRank::Common)
+	{
+		return;
+	}
+	USoundBase* Sound = UBH_EnemyReadabilityLibrary::GetAggroSound(Rank);
+	if (!Sound)
+	{
+		return;
+	}
+
+	const UBH_EnemyReadabilitySettings* S = UBH_EnemyReadabilitySettings::Get();
+	if (S->AggroCueMaxDistance > 0.f && FVector::DistSquared(LocalPawn->GetActorLocation(), Enemy->GetActorLocation()) > FMath::Square(S->AggroCueMaxDistance))
+	{
+		return;
+	}
+	const double Now = World->GetTimeSeconds();
+	if (const double* Last = AggroCueTimes.Find(Enemy))
+	{
+		if (Now - *Last < S->AggroCueCooldown)
+		{
+			return;
+		}
+	}
+	if (AggroCueTimes.Num() > 64)
+	{
+		for (auto It = AggroCueTimes.CreateIterator(); It; ++It)
+		{
+			if (!It->Key.IsValid() || Now - It->Value > S->AggroCueCooldown)
+			{
+				It.RemoveCurrent();
+			}
+		}
+	}
+	AggroCueTimes.Add(Enemy, Now);
+
+	if (Rank == EBH_EnemyRank::Veteran)
+	{
+		UGameplayStatics::PlaySoundAtLocation(World, Sound, Enemy->GetActorLocation(), S->AggroSoundVolume);
+	}
+	else
+	{
+		UGameplayStatics::PlaySound2D(World, Sound, S->AggroSoundVolume);
 	}
 }
 
@@ -346,11 +459,20 @@ void UBH_HUDSubsystem::ShowBossBar(AActor* Boss)
 		BossBar->SetPositionInViewport(FVector2D(0.0, BossBarFallbackTopOffset), /*bRemoveDPIScale*/ false);
 	}
 
+	if (PresentedBoss.Get() != Boss)
+	{
+		BossPresentedAt = FPlatformTime::Seconds();
+	}
 	BossBar->PresentBoss(Boss);
 	PresentedBoss = Boss;
 	MainHUD->SetPresentedBoss(Boss);
 	BindBossHealth(Boss);
 	ApplyVisibility();
+}
+
+bool UBH_HUDSubsystem::IsBossIntroActive(float WindowSeconds) const
+{
+	return PresentedBoss.IsValid() && (FPlatformTime::Seconds() - BossPresentedAt) < WindowSeconds;
 }
 
 void UBH_HUDSubsystem::HideBossBar()
@@ -407,13 +529,21 @@ void UBH_HUDSubsystem::ShowLevelUp(int32 NewLevel)
 void UBH_HUDSubsystem::ShowLevelUpDetailed(const FBH_LevelUpInfo& Info)
 {
 	const int32 NewLevel = Info.NewLevel;
+	// Phase 13C: the level-up is a queue toast when the HUD has a queue widget (the old banner and plain text stay off).
+	const ULocalPlayer* QueuePlayer = GetLocalPlayer();
+	UBH_NotificationSubsystem* Queue = QueuePlayer ? QueuePlayer->GetSubsystem<UBH_NotificationSubsystem>() : nullptr;
+	const bool bQueued = Queue && Queue->HasPresenter();
+	if (bQueued)
+	{
+		Queue->PushLevelUp(Info);
+	}
 	if (MainHUD)
 	{
 		MainHUD->NotifyLevelUp(Info);
 	}
 
 	// A bound LevelUpBanner replaces the plain Slate text.
-	const bool bNativeText = !MainHUD || (MainHUD->bShowNativeLevelUpText && !MainHUD->HasLevelUpBanner());
+	const bool bNativeText = !bQueued && (!MainHUD || (MainHUD->bShowNativeLevelUpText && !MainHUD->HasLevelUpBanner()));
 	const ULocalPlayer* LocalPlayer = GetLocalPlayer();
 	UWorld* World = LocalPlayer ? LocalPlayer->GetWorld() : nullptr;
 	UGameViewportClient* Viewport = World ? World->GetGameViewport() : nullptr;
@@ -458,6 +588,15 @@ void UBH_HUDSubsystem::HideLevelUpText()
 
 void UBH_HUDSubsystem::Deinitialize()
 {
+	if (LayoutReadyHandle.IsValid())
+	{
+		const ULocalPlayer* LocalPlayer = GetLocalPlayer();
+		if (UBH_UILayoutSubsystem* LayoutSub = LocalPlayer ? LocalPlayer->GetSubsystem<UBH_UILayoutSubsystem>() : nullptr)
+		{
+			LayoutSub->OnLayoutReady.Remove(LayoutReadyHandle);
+		}
+		LayoutReadyHandle.Reset();
+	}
 	HideLevelUpText();
 	StopBossWatch();
 	if (BossBar)

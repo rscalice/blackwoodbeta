@@ -630,6 +630,13 @@ void ABH_CrabAIController::OnTargetAttackingChanged(const FGameplayTag Tag, int3
 
 void ABH_CrabAIController::UpdateBlackboard()
 {
+	// This controller does not tick, so nothing else turns the crab toward its focus (the target): without this it kept its spawn heading while
+	// chasing. Runs on the 0.1 s blackboard timer; the movement component then turns the body toward the control rotation at its yaw rate.
+	if (GetPawn())
+	{
+		UpdateControlRotation(BlackboardInterval, true);
+	}
+
 	UBlackboardComponent* BB = GetBlackboardComponent();
 	if (!BB)
 	{

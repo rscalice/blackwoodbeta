@@ -34,6 +34,9 @@ class UPrimitiveComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnLockedTargetChanged, AActor*, OldTarget, AActor*, NewTarget);
 
+/** SERVER only (native): a remote client's combo-step target passed validation in Server_ApplyMeleeFacing (13F-1 lunge assist listens to it). */
+DECLARE_MULTICAST_DELEGATE_OneParam(FBH_OnMeleeTargetValidated, AActor* /*Target*/);
+
 UCLASS(ClassGroup = (BlackwoodHollow), meta = (BlueprintSpawnableComponent))
 class BLACKWOODHOLLOWBETA_API UBH_LockOnComponent : public UActorComponent
 {
@@ -82,6 +85,19 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "LockOn|Soft")
 	bool FaceMeleeTarget(bool bAllowHard, bool bAllowSoft, bool bNotifyServer, bool& bOutUsedSoftTarget);
+
+	/**
+	 * The target the last FaceMeleeTarget call (or, on the server, the last validated Server_ApplyMeleeFacing) turned toward: the hard
+	 * target or the soft target. Null when the last call did not turn toward anything (nothing in range, or a soft target behind the player).
+	 * Valid on the owning client and on the server. The lunge assist (UAH_GA_MeleeAttack_Base) reads it right after facing.
+	 */
+	AActor* GetLastMeleeTarget() const { return LastMeleeTarget.Get(); }
+
+	/** Unsigned yaw (degrees) the last melee facing turned the pawn by to face GetLastMeleeTarget (0 if it did not turn). */
+	float GetLastMeleeTurnDegrees() const { return LastMeleeTurnDeg; }
+
+	/** Server only: fires after a remote client's combo-step target was validated and the pawn turned toward it. */
+	FBH_OnMeleeTargetValidated OnMeleeTargetValidated;
 
 	/**
 	 * GASP rotates the pawn to the control (camera) yaw every tick (CMC controller desired rotation, re-enabled by its own
@@ -230,7 +246,7 @@ protected:
 
 	/** Combo-step facing from a remote client: the server turns its pawn toward Target (validated). */
 	UFUNCTION(Server, Reliable)
-	void Server_ApplyMeleeFacing(AActor* Target);
+	void Server_ApplyMeleeFacing(AActor* Target, float ClientTurnDeg);
 
 	UFUNCTION()
 	void OnRep_LockedTarget(AActor* OldTarget);
@@ -316,6 +332,10 @@ private:
 
 	TWeakObjectPtr<AActor> SoftTarget;
 	double SoftTargetTime = -1000.0;
+
+	// Last melee-facing result (see GetLastMeleeTarget)
+	TWeakObjectPtr<AActor> LastMeleeTarget;
+	float LastMeleeTurnDeg = 0.f;
 	FTimerHandle SoftLockTimer;
 	TWeakObjectPtr<AActor> SoftIndicatorTarget;
 

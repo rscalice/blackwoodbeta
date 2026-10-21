@@ -46,6 +46,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Loot")
 	TObjectPtr<UStaticMesh> OpenedMesh;
 
+	/** Scavenging checklist id (matches ABH_BeatTarget::ChecklistItemId). When set, a successful open reports "this player did it" to the beat tracker. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Loot")
+	FName ChecklistItemId;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "BH|Loot")
 	FText OpenedPromptAction = NSLOCTEXT("BlackwoodHollow", "LootContainerOpen", "Open");
 

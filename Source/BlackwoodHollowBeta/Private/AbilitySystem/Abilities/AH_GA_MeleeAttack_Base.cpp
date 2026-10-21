@@ -18,7 +18,9 @@
 #include "Combat/BH_LockOnComponent.h"
 #include "Combat/BH_CombatFeel.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/Character.h"
 #include "GameFramework/Controller.h"
+#include "MotionWarpingComponent.h"
 
 UAH_GA_MeleeAttack_Base::UAH_GA_MeleeAttack_Base()
 {
@@ -78,7 +80,18 @@ void UAH_GA_MeleeAttack_Base::ActivateAbility(const FGameplayAbilitySpecHandle H
 		}
 	}
 
+	// Lunge assist (13F-1): on the server, also listen for a remote client's combo-step targets (the server never sees that input).
+	if (bEnableLungeAssist && K2_HasAuthority() && !LungeTargetHandle.IsValid())
+	{
+		if (UBH_LockOnComponent* LungeLockOn = FindLockOn())
+		{
+			BoundLockOn = LungeLockOn;
+			LungeTargetHandle = LungeLockOn->OnMeleeTargetValidated.AddUObject(this, &UAH_GA_MeleeAttack_Base::OnServerMeleeTargetValidated);
+		}
+	}
+
 	// The server computes its own target here (activation reaches it with the same movement state); no RPC needed.
+	// This also sets the lunge warp target for step 0 (before the montage starts below).
 	FaceMeleeTarget(false);
 
 	LocalComboStep = 0;
@@ -143,6 +156,15 @@ void UAH_GA_MeleeAttack_Base::EndAbility(const FGameplayAbilitySpecHandle Handle
 		}
 	}
 	bHyperArmorGranted = false;
+
+	// Lunge assist (13F-1): stop listening and drop the warp target so the next swing starts clean.
+	if (UBH_LockOnComponent* BoundLockOnComp = BoundLockOn.Get())
+	{
+		BoundLockOnComp->OnMeleeTargetValidated.Remove(LungeTargetHandle);
+	}
+	LungeTargetHandle.Reset();
+	BoundLockOn.Reset();
+	ClearLungeWarp();
 
 	// Give the pawn back to the camera yaw (a soft-lock turn suspends controller rotation for the swing).
 	if (ActorInfo)
@@ -230,7 +252,100 @@ void UAH_GA_MeleeAttack_Base::FaceMeleeTarget(bool bNotifyServer)
 	{
 		bool bUsedSoftTarget = false;
 		LockOn->FaceMeleeTarget(bFaceLockedTargetOnActivate, bFaceSoftTargetOnActivate, bNotifyServer, bUsedSoftTarget);
+
+		// Lunge assist: the target the facing just picked (hard or soft) and how far it had to turn; null = no target, so any old warp target is dropped.
+		ApplyLungeWarp(LockOn->GetLastMeleeTarget(), LockOn->GetLastMeleeTurnDegrees());
 	}
+}
+
+// ============================================================================
+// Lunge assist (13F-1, #12)
+// ============================================================================
+
+UBH_LockOnComponent* UAH_GA_MeleeAttack_Base::FindLockOn() const
+{
+	const APawn* AvatarPawn = Cast<APawn>(GetAvatarActorFromActorInfo());
+	const AController* Controller = AvatarPawn ? AvatarPawn->GetController() : nullptr;
+	return Controller ? Controller->FindComponentByClass<UBH_LockOnComponent>() : nullptr;
+}
+
+UMotionWarpingComponent* UAH_GA_MeleeAttack_Base::EnsureMotionWarping() const
+{
+	ACharacter* AvatarCharacter = Cast<ACharacter>(GetAvatarActorFromActorInfo());
+	if (!AvatarCharacter)
+	{
+		return nullptr;
+	}
+	if (UMotionWarpingComponent* Existing = AvatarCharacter->FindComponentByClass<UMotionWarpingComponent>())
+	{
+		return Existing;
+	}
+	// The character Blueprints have no Motion Warping component: add one at runtime (not replicated; every machine adds its own on its first swing,
+	// before the montage whose warp window looks it up has started).
+	UMotionWarpingComponent* Created = NewObject<UMotionWarpingComponent>(AvatarCharacter, TEXT("BH_LungeMotionWarping"));
+	Created->RegisterComponent();
+	return Created;
+}
+
+void UAH_GA_MeleeAttack_Base::ApplyLungeWarp(AActor* Target, float TurnDeg)
+{
+	if (!bEnableLungeAssist)
+	{
+		return;
+	}
+	const ACharacter* AvatarCharacter = Cast<ACharacter>(GetAvatarActorFromActorInfo());
+	if (!AvatarCharacter)
+	{
+		return;
+	}
+	if (!IsValid(Target) || TurnDeg > LungeMaxAngleDegrees)
+	{
+		ClearLungeWarp(); // no target, or it needed a bigger turn than the cap: let the clip's own root motion play
+		return;
+	}
+	UMotionWarpingComponent* Warping = EnsureMotionWarping();
+	if (!Warping)
+	{
+		return;
+	}
+
+	// Flat direction and distance to the target from where the step starts.
+	const FVector Origin = AvatarCharacter->GetActorLocation();
+	FVector ToTarget = Target->GetActorLocation() - Origin;
+	ToTarget.Z = 0.f;
+	const float Distance = ToTarget.Size();
+	if (Distance < KINDA_SMALL_NUMBER)
+	{
+		ClearLungeWarp();
+		return;
+	}
+	const FVector Direction = ToTarget / Distance;
+
+	// Where the lunge should end: in front of the target, capsule edge to capsule edge plus LungeStopGap. The warp scales the clip's root motion
+	// (LungeExpectedReach) to that travel, but never by more than LungeMaxCorrection either way.
+	const float StopDistance = AvatarCharacter->GetSimpleCollisionRadius() + Target->GetSimpleCollisionRadius() + LungeStopGap;
+	const float DesiredTravel = FMath::Max(0.f, Distance - StopDistance);
+	const float MinTravel = FMath::Max(0.f, LungeExpectedReach - LungeMaxCorrection);
+	const float MaxTravel = LungeExpectedReach + LungeMaxCorrection;
+	const float Travel = FMath::Clamp(DesiredTravel, MinTravel, MaxTravel);
+
+	const FVector WarpLocation = Origin + Direction * Travel; // Z stays at the start height (the warp window ignores Z)
+	Warping->AddOrUpdateWarpTargetFromLocationAndRotation(LungeWarpTargetName, WarpLocation, Direction.Rotation());
+}
+
+void UAH_GA_MeleeAttack_Base::ClearLungeWarp() const
+{
+	const ACharacter* AvatarCharacter = Cast<ACharacter>(GetAvatarActorFromActorInfo());
+	if (UMotionWarpingComponent* Warping = AvatarCharacter ? AvatarCharacter->FindComponentByClass<UMotionWarpingComponent>() : nullptr)
+	{
+		Warping->RemoveWarpTarget(LungeWarpTargetName);
+	}
+}
+
+void UAH_GA_MeleeAttack_Base::OnServerMeleeTargetValidated(AActor* Target)
+{
+	const UBH_LockOnComponent* LockOn = BoundLockOn.Get();
+	ApplyLungeWarp(Target, LockOn ? LockOn->GetLastMeleeTurnDegrees() : 0.f);
 }
 
 bool UAH_GA_MeleeAttack_Base::AdvanceCombo()
@@ -590,6 +705,12 @@ void UAH_GA_MeleeAttack_Base::OnHitDealt(FGameplayEventData Payload)
 		{
 			// Lets the cue pick the blocked (metal on metal) FX instead of the flesh FX.
 			CueParams.AggregatedSourceTags.AddTag(TAG_Combat_HitResult_Blocked);
+		}
+		// Final step of a multi-step combo: the cue plays at least the Heavy feel tier (tap, tap, BANG). Server-stamped like Fatal, so
+		// every machine agrees. Cosmetic only: damage, posture and pushback are not touched.
+		else if (UBH_CombatFeelLibrary::IsFinisherStep(ComboStep, ComboSectionNames.Num()))
+		{
+			CueParams.AggregatedSourceTags.AddTag(TAG_Combat_HitResult_Finisher);
 		}
 		// Server-evaluated after the damage GE ran: clients' copy of the victim's Health may not have replicated when the cue fires.
 		if (TargetASC->HasMatchingGameplayTag(TAG_State_Combat_Dead)

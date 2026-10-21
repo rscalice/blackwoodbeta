@@ -27,6 +27,7 @@
 #include "GenericTeamAgentInterface.h"
 #include "Combat/BH_CombatTeam.h"
 #include "Combat/BH_EnemyRank.h"
+#include "Combat/BH_HitFeedback.h"
 #include "Loot/BH_LootTypes.h"
 #include "BH_EnemyBase.generated.h"
 
@@ -118,6 +119,17 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Replicated, Category = "BlackwoodHollow|Enemy|Rank", meta = (ExposeOnSpawn = true))
 	EBH_EnemyArchetype Archetype = EBH_EnemyArchetype::Skirmisher;
+
+	// -- Hit feedback (Phase 13F-1; cosmetic, read by the HitFeedback event on every machine) ------------------------------------
+	// Class defaults only (the same on every machine), so nothing here replicates. ABH_EnemyCrab sets Shell + Blighted.
+
+	/** What this enemy is made of (picks the impact sound / sparks): Flesh (default), Armour, Shell. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BlackwoodHollow|Enemy|Feedback")
+	EBH_HitSurface SurfaceType = EBH_HitSurface::Flesh;
+
+	/** Blighted enemy: its hits show purple ichor instead of blood (HitFeedback.bIsBlighted). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BlackwoodHollow|Enemy|Feedback")
+	bool bBlighted = false;
 
 	/**
 	 * SERVER. Writes EnemyLevel into the Level attribute and, for every row that exists in the enemy scaling table, sets the BASE

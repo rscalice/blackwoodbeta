@@ -45,6 +45,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Telegraph|Visuals")
 	TSoftObjectPtr<UNiagaraSystem> NiagaraSystem;
 
+	/** Phase 13D: vector (decal material) / colour (Niagara) parameter that receives the owner's ARCHETYPE telegraph colour
+	 *  (UBH_EnemyReadabilityLibrary::GetArchetypeTelegraphColor, from the 13A palette). None = leave the visuals as authored. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Telegraph|Visuals")
+	FName ColorParameterName = TEXT("TelegraphColor");
+
 	/** Material scalar / Niagara float parameter that receives the 0..1 fill. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Telegraph|Visuals")
 	FName FillAlphaParameterName = TEXT("FillAlpha");
