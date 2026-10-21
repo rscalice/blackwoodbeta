@@ -194,8 +194,10 @@ bool UBH_PlayerMenuComponent::ExecuteEquip(UNarrativeItem* Item, EBH_EquipSlot S
 			{
 				return false;
 			}
-			UE_LOG(LogBHPlayerMenu, Log, TEXT("Equip %s: %s redirected to %s (off hand locked by a two-handed main weapon)"), *Weapon->GetFriendlyName(),
-				*UBH_PlayerMenuLibrary::GetEquipSlotDisplayName(Slot).ToString(), *UBH_PlayerMenuLibrary::GetEquipSlotDisplayName(ResolvedSlot).ToString());
+			const bool bOpenSet = UBH_EquipmentLibrary::GetSlotLoadoutSet(ResolvedSlot) != UBH_EquipmentLibrary::GetSlotLoadoutSet(Slot);
+			UE_LOG(LogBHPlayerMenu, Log, TEXT("Equip %s: %s redirected to %s (%s)"), *Weapon->GetFriendlyName(),
+				*UBH_PlayerMenuLibrary::GetEquipSlotDisplayName(Slot).ToString(), *UBH_PlayerMenuLibrary::GetEquipSlotDisplayName(ResolvedSlot).ToString(),
+				bOpenSet ? TEXT("off hand locked by a two-hander; open weapon set used") : TEXT("off hand locked by a two-hander; no open set, replacing it"));
 		}
 		return UBH_EquipmentLibrary::EquipWeaponToSlot(PlayerPawn, Weapon, ResolvedSlot, OutReason);
 	}

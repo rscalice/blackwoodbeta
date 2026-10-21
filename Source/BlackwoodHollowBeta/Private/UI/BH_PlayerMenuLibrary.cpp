@@ -103,20 +103,27 @@ EBH_EquipSlot UBH_PlayerMenuLibrary::ResolveWeaponEquipSlot(const APawn* Pawn, c
 		return RequestedSlot;
 	}
 
+	// Open weapon set first (the same rule the menu applies to a Greatsword: an empty, unlocked main hand in the other set).
+	const EBH_LoadoutSet OtherSet = (Set == EBH_LoadoutSet::A) ? EBH_LoadoutSet::B : EBH_LoadoutSet::A;
+	const ABH_PlayerState* PlayerState = Cast<ABH_PlayerState>(Pawn->GetPlayerState());
+	FText Unused;
+
 	if (Weapon->GripType == EBH_WeaponGripType::OneHanded)
 	{
-		return UBH_EquipmentLibrary::GetMainSlot(Set); // the sword takes the main hand over from the two-hander
+		const EBH_EquipSlot OtherMain = UBH_EquipmentLibrary::GetMainSlot(OtherSet);
+		if (CanEquipToSlot(PlayerState, OtherMain, Unused) && !Loadout->GetItemInSlot(OtherMain))
+		{
+			return OtherMain; // open set: the sword starts its own set, the two-hander keeps this one
+		}
+		return UBH_EquipmentLibrary::GetMainSlot(Set); // no open set: the sword takes the main hand over from the two-hander
 	}
 
 	if (Weapon->GripType == EBH_WeaponGripType::OffHand)
 	{
-		const EBH_LoadoutSet OtherSet = (Set == EBH_LoadoutSet::A) ? EBH_LoadoutSet::B : EBH_LoadoutSet::A;
-		const ABH_PlayerState* PlayerState = Cast<ABH_PlayerState>(Pawn->GetPlayerState());
-		FText Unused;
 		const EBH_EquipSlot OtherOff = UBH_EquipmentLibrary::GetOffSlot(OtherSet);
 		if (CanEquipToSlot(PlayerState, OtherOff, Unused) && !Loadout->IsOffHandLocked(OtherSet))
 		{
-			return OtherOff;
+			return OtherOff; // the other set's off hand is free (its main is empty or one-handed)
 		}
 	}
 	return RequestedSlot; // nowhere better: the server refuses it with the "off hand is locked" reason

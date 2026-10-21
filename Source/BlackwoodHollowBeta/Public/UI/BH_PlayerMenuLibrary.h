@@ -102,7 +102,8 @@ public:
 	 * The slot a weapon really goes to when the menu asks for RequestedSlot. The Inventory page picks the first empty compatible slot,
 	 * which is the off hand of a set whose main hand holds a two-handed weapon (Greatsword in Main A -> Longsword / Kite Shield "to Off A").
 	 * The loadout rule refuses that (off hand locked), so the equip did nothing. Resolution, in order:
-	 *   * one-handed weapon into a locked off hand -> the main slot of that set (it replaces the two-hander),
+	 *   * one-handed weapon into a locked off hand -> the other set's main hand when that set is unlocked and its main hand is empty
+	 *     (an open set, the same rule the menu applies to a Greatsword), else the main slot of that set (it replaces the two-hander),
 	 *   * off-hand item into a locked off hand -> the other set's off hand when that set is unlocked and not locked by a two-hander,
 	 *   * anything else -> RequestedSlot unchanged (armor, non-weapon slots, no pawn / loadout).
 	 * Pure: reads the replicated loadout, so the UI can preview the same slot the server will use.
