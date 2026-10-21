@@ -89,3 +89,15 @@ Content/BlackwoodHollow/Characters/BodyTypes/*/Built_Fit/
 _to_delete/
 
 _to_delete_13z/
+
+# Fab pack demo/showcase maps - kept locally, never tracked (Hivemind LI_Buildings Level Instances ARE tracked)
+/Content/Fab/Barrels_Boxes/Maps/
+/Content/Fab/DaybytheBeach/Level/
+/Content/Fab/DEKO_VFX/VOL1_Water/Maps/
+/Content/Fab/Hivemind/Medieval_Docks/Levels/PL_Medieval_Docks.umap
+/Content/Fab/Hivemind/Medieval_Docks/Levels/Sub_Levels/
+/Content/Fab/Hivemind/Medieval_Docks/Scanned_Foliage/Maps/
+/Content/Fab/Hivemind/Medieval_Docks/Water/FluidSimulation/*.umap
+/Content/Fab/M5VFXVOL2/Maps/
+/Content/Fab/Medieval_Campfire/Map/
+/Content/Fab/TorchFire/Map/
