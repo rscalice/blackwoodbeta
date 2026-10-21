@@ -42,6 +42,9 @@ BLACKWOODHOLLOWBETA_API DECLARE_LOG_CATEGORY_EXTERN(LogBHLoadout, Log, All);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBH_OnAvailableStancesChanged, const TArray<FName>&, AvailableStances);
 
+/** Issue #119: the set of equipped (active) weapons / armor pieces changed. Fires on every machine where the component runs (server, listen-server host, owning and remote clients). */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnEquipmentChanged);
+
 /** One starter item: granted into the inventory and (optionally) equipped into Slot. */
 USTRUCT(BlueprintType)
 struct FBH_StarterLoadoutEntry
@@ -84,6 +87,13 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|Loadout")
 	FBH_OnAvailableStancesChanged OnAvailableStancesChanged;
+
+	/**
+	 * Issue #119. Fires whenever the equipped weapons / armor change (equip, unequip, slot move, or the replicated inventory catching up on a client).
+	 * Driven by Narrative's equip events plus the 0.1 s reconcile that diffs the active items, so it also fires on clients. Replaces UI polling.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "BlackwoodHollow|Loadout")
+	FBH_OnEquipmentChanged OnEquipmentChanged;
 
 	UFUNCTION(BlueprintPure, Category = "BlackwoodHollow|Loadout")
 	static UBH_LoadoutComponent* FindLoadoutComponent(const AActor* Actor);
@@ -182,6 +192,11 @@ private:
 	void HandleItemUnequipped(const EEquippableSlot Slot, UEquippableItem* Equippable);
 
 	void Reconcile();
+
+	/** Order-independent hash of the active weapons (with their slot) and armor pieces; broadcasts OnEquipmentChanged when it differs from the last one. */
+	void RefreshEquipmentSignature();
+	uint32 EquipmentSignature = 0;
+
 	void TryGrantStarterLoadout();
 	bool CommitPreset(const TArray<TPair<TWeakObjectPtr<UBH_WeaponItem>, EBH_EquipSlot>>& Plan, FText& OutReason);
 	void ActivateDeferred(TWeakObjectPtr<UBH_WeaponItem> Item);

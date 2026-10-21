@@ -690,12 +690,40 @@ void UBH_LoadoutComponent::HandleItemEquipped(const EEquippableSlot Slot, UEquip
 {
 	EvaluateAvailableStances();
 	RefreshStatMods();
+	RefreshEquipmentSignature();
 }
 
 void UBH_LoadoutComponent::HandleItemUnequipped(const EEquippableSlot Slot, UEquippableItem* Equippable)
 {
 	EvaluateAvailableStances();
 	RefreshStatMods();
+	RefreshEquipmentSignature();
+}
+
+void UBH_LoadoutComponent::RefreshEquipmentSignature()
+{
+	uint32 NewSignature = 0;
+	if (const UNarrativeInventoryComponent* Inventory = GetInventory())
+	{
+		for (const UNarrativeItem* Item : Inventory->GetItems())
+		{
+			if (!Item || !Item->bCanActivate || !Item->bActive)
+			{
+				continue;
+			}
+			uint32 ItemHash = PointerHash(Item);
+			if (const UBH_WeaponItem* Weapon = Cast<UBH_WeaponItem>(Item))
+			{
+				ItemHash = HashCombine(ItemHash, static_cast<uint32>(Weapon->GetTargetSlot()));
+			}
+			NewSignature += ItemHash; // addition: independent of the inventory order
+		}
+	}
+	if (NewSignature != EquipmentSignature)
+	{
+		EquipmentSignature = NewSignature;
+		OnEquipmentChanged.Broadcast();
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -873,6 +901,7 @@ void UBH_LoadoutComponent::Reconcile()
 		TryGrantStarterLoadout();
 	}
 	EvaluateAvailableStances();
+	RefreshEquipmentSignature(); // issue #119: also catches the replicated inventory catching up on clients
 	if (UBH_StanceComponent* Stance = UBH_StanceComponent::FindStanceComponent(GetOwner()))
 	{
 		Stance->RefreshWeaponVariant(); // Phase 12F-2: the Sword variant follows the off hand, on every machine
