@@ -14,6 +14,11 @@
 #include "NarrativeDataTask.h"
 #include "Player/BH_GameState.h"
 #include "Player/BH_PartyComponent.h"
+#include "Player/BH_PartyLibrary.h"
+#include "Progression/BH_ProgressionComponent.h"
+#include "GameFramework/PlayerState.h"
+#include "HAL/IConsoleManager.h"
+#include "Misc/PackageName.h"
 #include "TimerManager.h"
 #include "UObject/UnrealType.h"
 
@@ -61,6 +66,8 @@ UBH_QuestDirector::UBH_QuestDirector()
 	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
 	QuestTargetTable = TSoftObjectPtr<UDataTable>(FSoftObjectPath(TEXT("/Game/BlackwoodHollow/Quests/DT_BH_QuestTargets.DT_BH_QuestTargets")));
+	QuestChain = MakeDefaultQuestChain();
+	AutoStartLevels.Add(FName(TEXT("L_WreckageShallows")));
 }
 
 void UBH_QuestDirector::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -97,6 +104,7 @@ void UBH_QuestDirector::BeginPlay()
 		bBoundGameState = true;
 	}
 	BindParty();
+	TryAutoStartChain();
 
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
@@ -134,7 +142,7 @@ void UBH_QuestDirector::BindParty()
 	Party->OnQuestNewState.AddUniqueDynamic(this, &UBH_QuestDirector::HandleQuestNewState);
 	Party->OnQuestTaskProgressChanged.AddUniqueDynamic(this, &UBH_QuestDirector::HandleTaskProgress);
 	Party->OnQuestTaskCompleted.AddUniqueDynamic(this, &UBH_QuestDirector::HandleTaskCompleted);
-	Party->OnQuestSucceeded.AddUniqueDynamic(this, &UBH_QuestDirector::HandleQuestEnded);
+	Party->OnQuestSucceeded.AddUniqueDynamic(this, &UBH_QuestDirector::HandleQuestSucceeded);
 	Party->OnQuestFailed.AddUniqueDynamic(this, &UBH_QuestDirector::HandleQuestEnded);
 	bBoundParty = true;
 }
@@ -153,7 +161,7 @@ void UBH_QuestDirector::UnbindParty()
 		Party->OnQuestNewState.RemoveDynamic(this, &UBH_QuestDirector::HandleQuestNewState);
 		Party->OnQuestTaskProgressChanged.RemoveDynamic(this, &UBH_QuestDirector::HandleTaskProgress);
 		Party->OnQuestTaskCompleted.RemoveDynamic(this, &UBH_QuestDirector::HandleTaskCompleted);
-		Party->OnQuestSucceeded.RemoveDynamic(this, &UBH_QuestDirector::HandleQuestEnded);
+		Party->OnQuestSucceeded.RemoveDynamic(this, &UBH_QuestDirector::HandleQuestSucceeded);
 		Party->OnQuestFailed.RemoveDynamic(this, &UBH_QuestDirector::HandleQuestEnded);
 	}
 	bBoundParty = false;
@@ -659,4 +667,267 @@ void UBH_QuestDirector::HandleQuestEnded(const UQuest* /*Quest*/, const FText& /
 void UBH_QuestDirector::HandleWorldFlagChanged(FName /*Flag*/, bool /*bIsSet*/)
 {
 	ScheduleObjectiveRefresh(true); // gate flags change what a marker may show
+}
+
+// ============================================================================
+// Quest chain (Phase 14A-2b): auto-start, chaining, quest XP (server)
+// ============================================================================
+
+TArray<FBH_QuestChainEntry> UBH_QuestDirector::MakeDefaultQuestChain()
+{
+	struct FDefault
+	{
+		const TCHAR* Path;
+		int32 XP;
+	};
+	static const FDefault Defaults[] = {
+		{ TEXT("/Game/BlackwoodHollow/Quests/Q_AmongTheWrack.Q_AmongTheWrack_C"), 60 },
+		{ TEXT("/Game/BlackwoodHollow/Quests/Q_KingsRoad.Q_KingsRoad_C"), 150 },
+		{ TEXT("/Game/BlackwoodHollow/Quests/Q_GuardiansOfTheSpan.Q_GuardiansOfTheSpan_C"), 100 },
+	};
+	TArray<FBH_QuestChainEntry> Chain;
+	for (const FDefault& Default : Defaults)
+	{
+		FBH_QuestChainEntry Entry;
+		Entry.QuestClass = TSoftClassPtr<UQuest>(FSoftObjectPath(Default.Path));
+		Entry.XPReward = Default.XP;
+		Entry.bMain = true;
+		Chain.Add(Entry);
+	}
+	return Chain;
+}
+
+int32 UBH_QuestDirector::SelectNextChainIndex(const TArray<bool>& Handled, int32 AfterIndex)
+{
+	for (int32 Index = FMath::Max(0, AfterIndex + 1); Index < Handled.Num(); ++Index)
+	{
+		if (!Handled[Index])
+		{
+			return Index;
+		}
+	}
+	return INDEX_NONE;
+}
+
+int32 UBH_QuestDirector::FindChainIndex(const TArray<FBH_QuestChainEntry>& Chain, const FSoftObjectPath& QuestClassPath)
+{
+	if (QuestClassPath.IsNull())
+	{
+		return INDEX_NONE;
+	}
+	for (int32 Index = 0; Index < Chain.Num(); ++Index)
+	{
+		if (Chain[Index].QuestClass.ToSoftObjectPath() == QuestClassPath)
+		{
+			return Index;
+		}
+	}
+	return INDEX_NONE;
+}
+
+bool UBH_QuestDirector::IsAutoStartLevel(const TArray<FName>& Levels, const FString& MapName)
+{
+	const FString Stripped = FPackageName::GetShortName(UWorld::RemovePIEPrefix(MapName));
+	return !Stripped.IsEmpty() && Levels.Contains(FName(*Stripped));
+}
+
+void UBH_QuestDirector::TryAutoStartChain()
+{
+	const AActor* OwnerActor = GetOwner();
+	const UWorld* ComponentWorld = GetWorld();
+	if (!bAutoStartQuestChain || !OwnerActor || !OwnerActor->HasAuthority() || !ComponentWorld)
+	{
+		return;
+	}
+	if (!IsAutoStartLevel(AutoStartLevels, ComponentWorld->GetMapName()))
+	{
+		return;
+	}
+	BeginNextChainEntry(-1);
+}
+
+void UBH_QuestDirector::BeginNextChainEntry(int32 AfterIndex)
+{
+	const AActor* OwnerActor = GetOwner();
+	UBH_PartyComponent* Party = GetParty();
+	if (!bAutoStartQuestChain || !OwnerActor || !OwnerActor->HasAuthority() || !Party)
+	{
+		return;
+	}
+
+	// Handled = the party already started / finished it (only classes that are loaded can have an instance).
+	TArray<bool> Handled;
+	Handled.Init(false, QuestChain.Num());
+	for (int32 Index = 0; Index < QuestChain.Num(); ++Index)
+	{
+		if (const UClass* Loaded = QuestChain[Index].QuestClass.Get())
+		{
+			Handled[Index] = Party->GetQuestInstance(const_cast<UClass*>(Loaded)) != nullptr;
+		}
+	}
+	// One chain quest at a time: if one is still running (a restart / a reload of the level), leave it alone.
+	for (const UQuest* Running : Party->GetInProgressQuests())
+	{
+		if (Running && FindChainIndex(QuestChain, FSoftObjectPath(Running->GetClass())) != INDEX_NONE)
+		{
+			return;
+		}
+	}
+
+	int32 Next = SelectNextChainIndex(Handled, AfterIndex);
+	while (Next != INDEX_NONE)
+	{
+		const FBH_QuestChainEntry& Entry = QuestChain[Next];
+		TSubclassOf<UQuest> LoadedClass = Entry.QuestClass.IsNull() ? nullptr : Entry.QuestClass.LoadSynchronous();
+		if (!LoadedClass)
+		{
+			UE_LOG(LogBHQuestDirector, Warning, TEXT("Quest chain: entry %d (%s) could not be loaded (asset not created yet?), skipping it."), Next, *Entry.QuestClass.ToString());
+			Handled[Next] = true;
+			Next = SelectNextChainIndex(Handled, Next);
+			continue;
+		}
+		UE_LOG(LogBHQuestDirector, Log, TEXT("Quest chain: beginning entry %d (%s)."), Next, *GetNameSafe(LoadedClass.Get()));
+		BeginPartyQuest(LoadedClass, Entry.bMain);
+		return;
+	}
+	UE_LOG(LogBHQuestDirector, Log, TEXT("Quest chain: nothing left to begin after entry %d."), AfterIndex);
+}
+
+void UBH_QuestDirector::GrantChainXP(int32 Amount)
+{
+	if (Amount <= 0)
+	{
+		return;
+	}
+	// Same path as kill XP: UBH_ProgressionComponent::AddXP on each member's progression (the XP toast listens there).
+	for (APlayerState* MemberState : UBH_PartyLibrary::GetPartyPlayerStates(this))
+	{
+		if (UBH_ProgressionComponent* Progression = UBH_ProgressionComponent::FindProgression(MemberState))
+		{
+			Progression->AddXP(Amount);
+		}
+	}
+}
+
+void UBH_QuestDirector::HandleQuestSucceeded(const UQuest* Quest, const FText& /*Message*/)
+{
+	ScheduleObjectiveRefresh(false);
+
+	const AActor* OwnerActor = GetOwner();
+	if (!bAutoStartQuestChain || !Quest || !OwnerActor || !OwnerActor->HasAuthority())
+	{
+		return; // clients replay this delegate from the replicated history: only the server grants and chains
+	}
+	const int32 Index = FindChainIndex(QuestChain, FSoftObjectPath(Quest->GetClass()));
+	if (Index == INDEX_NONE)
+	{
+		return;
+	}
+	bool bAlreadyGranted = false;
+	ChainXPGranted.Add(Quest->GetClass(), &bAlreadyGranted);
+	if (bAlreadyGranted)
+	{
+		return;
+	}
+	UE_LOG(LogBHQuestDirector, Log, TEXT("Quest chain: %s succeeded, +%d XP to the party."), *GetNameSafe(Quest->GetClass()), QuestChain[Index].XPReward);
+	GrantChainXP(QuestChain[Index].XPReward);
+
+	// Begin the next one on the next tick, outside Narrative's success callback.
+	if (UWorld* ComponentWorld = GetWorld())
+	{
+		ComponentWorld->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this, Index]()
+		{
+			BeginNextChainEntry(Index);
+		}));
+	}
+}
+
+bool UBH_QuestDirector::DebugSkipCurrentQuest()
+{
+	const AActor* OwnerActor = GetOwner();
+	UBH_PartyComponent* Party = GetParty();
+	if (!OwnerActor || !OwnerActor->HasAuthority() || !Party)
+	{
+		return false;
+	}
+	UQuest* Target = nullptr;
+	for (UQuest* Running : Party->GetInProgressQuests())
+	{
+		if (Running && FindChainIndex(QuestChain, FSoftObjectPath(Running->GetClass())) != INDEX_NONE)
+		{
+			Target = Running;
+			break;
+		}
+	}
+	if (!Target)
+	{
+		Target = PickTrackedQuest(*Party);
+	}
+	if (!Target)
+	{
+		return false;
+	}
+	UE_LOG(LogBHQuestDirector, Log, TEXT("bh.Quest.Skip: succeeding %s."), *GetNameSafe(Target->GetClass()));
+	Target->SucceedQuest(NSLOCTEXT("BlackwoodHollow", "QuestSkipped", "Quest skipped (debug)."));
+	return true;
+}
+
+// ============================================================================
+// Console commands (server only; testing)
+// ============================================================================
+
+namespace
+{
+	UBH_QuestDirector* ResolveServerQuestDirector(UWorld* World, const TCHAR* CommandName)
+	{
+		if (!World || World->GetNetMode() == NM_Client)
+		{
+			UE_LOG(LogBHQuestDirector, Warning, TEXT("%s: server only (run it on the host / in standalone)."), CommandName);
+			return nullptr;
+		}
+		UBH_QuestDirector* Director = UBH_QuestDirector::Get(World);
+		if (!Director)
+		{
+			UE_LOG(LogBHQuestDirector, Warning, TEXT("%s: no game state / quest director in this world."), CommandName);
+		}
+		return Director;
+	}
+
+	static FAutoConsoleCommandWithWorldAndArgs CmdQuestEvent(
+		TEXT("bh.Quest.Event"),
+		TEXT("bh.Quest.Event <TaskName> <Argument> [Quantity] - server: reports one quest event (placeholder testing). Quote an argument with spaces."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			UBH_QuestDirector* Director = ResolveServerQuestDirector(World, TEXT("bh.Quest.Event"));
+			if (!Director)
+			{
+				return;
+			}
+			if (Args.Num() < 2)
+			{
+				UE_LOG(LogBHQuestDirector, Warning, TEXT("Usage: bh.Quest.Event <TaskName> <Argument> [Quantity]"));
+				return;
+			}
+			const int32 Quantity = Args.Num() > 2 ? FCString::Atoi(*Args[2]) : 1;
+			if (Quantity <= 0)
+			{
+				UE_LOG(LogBHQuestDirector, Warning, TEXT("bh.Quest.Event: Quantity must be 1 or more."));
+				return;
+			}
+			Director->ReportEvent(FName(*Args[0]), Args[1], Quantity);
+		}));
+
+	static FAutoConsoleCommandWithWorld CmdQuestSkip(
+		TEXT("bh.Quest.Skip"),
+		TEXT("bh.Quest.Skip - server: succeeds the whole current chain quest (XP and the next chain quest follow as in normal play)."),
+		FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
+		{
+			if (UBH_QuestDirector* Director = ResolveServerQuestDirector(World, TEXT("bh.Quest.Skip")))
+			{
+				if (!Director->DebugSkipCurrentQuest())
+				{
+					UE_LOG(LogBHQuestDirector, Warning, TEXT("bh.Quest.Skip: no quest in progress."));
+				}
+			}
+		}));
 }

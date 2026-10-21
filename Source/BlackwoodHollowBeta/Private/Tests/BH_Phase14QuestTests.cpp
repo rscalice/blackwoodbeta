@@ -90,4 +90,54 @@ bool FBH_P14Q_DirectorDefaultsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBH_P14Q_ChainDefaultsTest, "BlackwoodHollow.Phase14.Quest.ChainDefaults", BH_P14Q_FLAGS)
+bool FBH_P14Q_ChainDefaultsTest::RunTest(const FString& Parameters)
+{
+	const UBH_QuestDirector* Defaults = GetDefault<UBH_QuestDirector>();
+	TestTrue(TEXT("Chain auto-starts"), Defaults->bAutoStartQuestChain);
+	TestEqual(TEXT("One auto-start level"), Defaults->AutoStartLevels.Num(), 1);
+	TestTrue(TEXT("Auto-start level is L_WreckageShallows"), Defaults->AutoStartLevels.Contains(FName(TEXT("L_WreckageShallows"))));
+
+	const TArray<FBH_QuestChainEntry>& Chain = Defaults->QuestChain;
+	if (!TestEqual(TEXT("Three chain entries"), Chain.Num(), 3))
+	{
+		return false;
+	}
+	const TCHAR* Paths[] = {
+		TEXT("/Game/BlackwoodHollow/Quests/Q_AmongTheWrack.Q_AmongTheWrack_C"),
+		TEXT("/Game/BlackwoodHollow/Quests/Q_KingsRoad.Q_KingsRoad_C"),
+		TEXT("/Game/BlackwoodHollow/Quests/Q_GuardiansOfTheSpan.Q_GuardiansOfTheSpan_C") };
+	const int32 XP[] = { 60, 150, 100 };
+	for (int32 Index = 0; Index < 3; ++Index)
+	{
+		TestEqual(*FString::Printf(TEXT("Entry %d path"), Index), Chain[Index].QuestClass.ToSoftObjectPath().ToString(), FString(Paths[Index]));
+		TestEqual(*FString::Printf(TEXT("Entry %d XP"), Index), Chain[Index].XPReward, XP[Index]);
+		TestTrue(*FString::Printf(TEXT("Entry %d is a main quest"), Index), Chain[Index].bMain);
+	}
+	TestEqual(TEXT("FindChainIndex finds the second entry"), UBH_QuestDirector::FindChainIndex(Chain, FSoftObjectPath(Paths[1])), 1);
+	TestEqual(TEXT("FindChainIndex misses an unknown path"), UBH_QuestDirector::FindChainIndex(Chain, FSoftObjectPath(TEXT("/Game/X.X_C"))), static_cast<int32>(INDEX_NONE));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBH_P14Q_ChainSelectionTest, "BlackwoodHollow.Phase14.Quest.ChainSelection", BH_P14Q_FLAGS)
+bool FBH_P14Q_ChainSelectionTest::RunTest(const FString& Parameters)
+{
+	TestEqual(TEXT("Nothing handled: first entry"), UBH_QuestDirector::SelectNextChainIndex({ false, false, false }, -1), 0);
+	TestEqual(TEXT("First handled: second entry"), UBH_QuestDirector::SelectNextChainIndex({ true, false, false }, -1), 1);
+	TestEqual(TEXT("After entry 0: second entry"), UBH_QuestDirector::SelectNextChainIndex({ true, false, false }, 0), 1);
+	TestEqual(TEXT("Skips handled entries after the index"), UBH_QuestDirector::SelectNextChainIndex({ true, true, false }, 0), 2);
+	TestEqual(TEXT("Never goes back before the index"), UBH_QuestDirector::SelectNextChainIndex({ false, true, true }, 1), static_cast<int32>(INDEX_NONE));
+	TestEqual(TEXT("All handled: none"), UBH_QuestDirector::SelectNextChainIndex({ true, true, true }, -1), static_cast<int32>(INDEX_NONE));
+	TestEqual(TEXT("Empty chain: none"), UBH_QuestDirector::SelectNextChainIndex({}, -1), static_cast<int32>(INDEX_NONE));
+	TestEqual(TEXT("Index past the end: none"), UBH_QuestDirector::SelectNextChainIndex({ false }, 5), static_cast<int32>(INDEX_NONE));
+
+	const TArray<FName> Levels = { FName(TEXT("L_WreckageShallows")) };
+	TestTrue(TEXT("Plain map name"), UBH_QuestDirector::IsAutoStartLevel(Levels, TEXT("L_WreckageShallows")));
+	TestTrue(TEXT("PIE-prefixed map name"), UBH_QuestDirector::IsAutoStartLevel(Levels, TEXT("UEDPIE_0_L_WreckageShallows")));
+	TestTrue(TEXT("Package path with PIE prefix"), UBH_QuestDirector::IsAutoStartLevel(Levels, TEXT("/Game/Maps/UEDPIE_1_L_WreckageShallows")));
+	TestFalse(TEXT("Other level"), UBH_QuestDirector::IsAutoStartLevel(Levels, TEXT("UEDPIE_0_L_Other")));
+	TestFalse(TEXT("Empty name"), UBH_QuestDirector::IsAutoStartLevel(Levels, FString()));
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

@@ -86,6 +86,25 @@ class UDataTable;
 /** Any machine: the party's current quest objective (quest, state, task progress, targets or gate state) changed. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnQuestObjectiveChanged);
 
+/** One link of the quest chain the director runs by itself (Phase 14A-2b). Quests are Blueprint assets, so the class is a soft reference. */
+USTRUCT(BlueprintType)
+struct BLACKWOODHOLLOWBETA_API FBH_QuestChainEntry
+{
+	GENERATED_BODY()
+
+	/** The quest asset's generated class (e.g. /Game/BlackwoodHollow/Quests/Q_KingsRoad.Q_KingsRoad_C). A missing asset logs a warning and the chain skips it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quest")
+	TSoftClassPtr<UQuest> QuestClass;
+
+	/** XP given to every party member when the quest succeeds (through UBH_ProgressionComponent::AddXP, like kill XP). 0 = none. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quest", meta = (ClampMin = "0"))
+	int32 XPReward = 0;
+
+	/** Begin it as the party's main quest (the one the tracker shows first). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quest")
+	bool bMain = true;
+};
+
 UCLASS(ClassGroup = "BlackwoodHollow", meta = (BlueprintSpawnableComponent))
 class BLACKWOODHOLLOWBETA_API UBH_QuestDirector : public UActorComponent
 {
@@ -113,6 +132,18 @@ public:
 	/** Upper bound of the replicated list of distinct reported events. Beyond it new events are still forwarded to Narrative, just not remembered. */
 	UPROPERTY(EditDefaultsOnly, Category = "Quest", meta = (ClampMin = "16"))
 	int32 MaxRecordedEvents = 512;
+
+	/** The quests the director runs in order, with no Blueprint wiring: the first not-yet-started one begins on an auto-start level, each success begins the next and grants its XP. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Quest|Chain")
+	TArray<FBH_QuestChainEntry> QuestChain;
+
+	/** Master switch for the chain (auto-start, chaining and quest XP). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Quest|Chain")
+	bool bAutoStartQuestChain = true;
+
+	/** Levels (map name without the PIE prefix) on which the chain starts by itself when play begins on the server. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Quest|Chain")
+	TArray<FName> AutoStartLevels;
 
 	// -- Statics -------------------------------------------------------------------------------------------------
 
@@ -150,6 +181,18 @@ public:
 	/** True when two objectives look the same to the UI: quest, title, text, counts, targets and gate state of every line. */
 	static bool AreObjectivesEqual(const FBH_QuestObjective& A, const FBH_QuestObjective& B);
 
+	/** The default chain: Q_AmongTheWrack (60 XP), Q_KingsRoad (150), Q_GuardiansOfTheSpan (100), all main quests. */
+	static TArray<FBH_QuestChainEntry> MakeDefaultQuestChain();
+
+	/** The first index greater than AfterIndex (-1 = from the start) whose Handled flag is false (started / finished / unloadable). INDEX_NONE when there is none. */
+	static int32 SelectNextChainIndex(const TArray<bool>& Handled, int32 AfterIndex);
+
+	/** The index of the entry whose class path equals QuestClassPath, or INDEX_NONE. */
+	static int32 FindChainIndex(const TArray<FBH_QuestChainEntry>& Chain, const FSoftObjectPath& QuestClassPath);
+
+	/** True when MapName (the PIE prefix "UEDPIE_n_" and any package path are ignored) is one of Levels. */
+	static bool IsAutoStartLevel(const TArray<FName>& Levels, const FString& MapName);
+
 	// -- Server ----------------------------------------------------------------------------------------------------
 
 	/**
@@ -159,6 +202,13 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Quest")
 	bool BeginPartyQuest(TSubclassOf<UQuest> QuestClass, bool bMainQuest = false, FName StartFromID = NAME_None);
+
+	/**
+	 * SERVER, testing (bh.Quest.Skip). Succeeds the WHOLE current quest: the in-progress chain quest, else the tracked quest. Narrative has no clean
+	 * "complete this branch" call (branches complete from their tasks), so the whole quest is succeeded; the normal success path runs (XP, next chain quest).
+	 * @return true if a quest was succeeded.
+	 */
+	bool DebugSkipCurrentQuest();
 
 	/** SERVER. See ReportQuestEvent (the instance form). */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Quest")
@@ -228,6 +278,9 @@ protected:
 	void HandleQuestEnded(const UQuest* Quest, const FText& Message);
 
 	UFUNCTION()
+	void HandleQuestSucceeded(const UQuest* Quest, const FText& Message);
+
+	UFUNCTION()
 	void HandleWorldFlagChanged(FName Flag, bool bIsSet);
 
 	UFUNCTION()
@@ -242,6 +295,12 @@ private:
 	const FBH_QuestTargetRow* FindRow(const FString& TaskName, const FString& Argument) const;
 	UQuest* PickTrackedQuest(const UBH_PartyComponent& Party) const;
 	void RecordEvent(const FString& TaskString);
+
+	// Quest chain (server).
+	void TryAutoStartChain();
+	/** Begins the first unhandled chain entry after AfterIndex; entries that fail to load are skipped with a warning. */
+	void BeginNextChainEntry(int32 AfterIndex);
+	void GrantChainXP(int32 Amount);
 
 	/** Queues one objective re-check for the next tick (a quest state change and its task resets happen inside one call). */
 	void ScheduleObjectiveRefresh(bool bForceBroadcast);
@@ -263,4 +322,7 @@ private:
 	bool bForceBroadcast = false;
 	bool bBoundParty = false;
 	bool bBoundGameState = false;
+
+	/** Server: quest classes whose chain XP was already given (once per quest per party). */
+	TSet<const UClass*> ChainXPGranted;
 };
