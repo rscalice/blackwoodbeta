@@ -27,7 +27,6 @@ void UBH_BeatTrackerComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProper
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UBH_BeatTrackerComponent, CurrentBeat);
-	DOREPLIFETIME(UBH_BeatTrackerComponent, PartnerPings);
 	DOREPLIFETIME(UBH_BeatTrackerComponent, ChecklistDone);
 }
 
@@ -76,6 +75,11 @@ void UBH_BeatTrackerComponent::BeginPlay()
 		bBoundFlags = true;
 	}
 
+	if (UBH_PartyStatusComponent* Status = GetOwner() ? GetOwner()->FindComponentByClass<UBH_PartyStatusComponent>() : nullptr)
+	{
+		Status->OnPartnersChanged.AddUniqueDynamic(this, &UBH_BeatTrackerComponent::HandlePartyPartnersChanged);
+	}
+
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
 		if (!CurrentBeat.IsValid() && Rows.Num() > 0)
@@ -83,15 +87,15 @@ void UBH_BeatTrackerComponent::BeginPlay()
 			SetCurrentBeatInternal(Rows[0].BeatId);
 		}
 		CompleteBeatsForSetFlags();
-		if (UWorld* World = GetWorld())
-		{
-			World->GetTimerManager().SetTimer(PartnerTimer, this, &UBH_BeatTrackerComponent::UpdatePartnerPings, PartnerUpdateInterval, true);
-		}
 	}
 }
 
 void UBH_BeatTrackerComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (UBH_PartyStatusComponent* Status = GetOwner() ? GetOwner()->FindComponentByClass<UBH_PartyStatusComponent>() : nullptr)
+	{
+		Status->OnPartnersChanged.RemoveDynamic(this, &UBH_BeatTrackerComponent::HandlePartyPartnersChanged);
+	}
 	if (bBoundFlags)
 	{
 		if (ABH_GameState* GameState = Cast<ABH_GameState>(GetOwner()))
@@ -99,10 +103,6 @@ void UBH_BeatTrackerComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 			GameState->OnWorldFlagChanged.RemoveDynamic(this, &UBH_BeatTrackerComponent::HandleWorldFlagChanged);
 		}
 		bBoundFlags = false;
-	}
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(PartnerTimer);
 	}
 	Super::EndPlay(EndPlayReason);
 }
@@ -475,67 +475,15 @@ bool UBH_BeatTrackerComponent::ShouldShowWorldMarker(const FVector& ViewerLocati
 	return FVector::DistSquared(ViewerLocation, Info.TargetLocation) > FMath::Square(WorldMarkerHideDistance);
 }
 
-bool UBH_BeatTrackerComponent::SamePings(const TArray<FBH_PartnerPing>& Other) const
+const TArray<FBH_PartnerPing>& UBH_BeatTrackerComponent::GetPartnerPings() const
 {
-	if (Other.Num() != PartnerPings.Num())
-	{
-		return false;
-	}
-	for (int32 Index = 0; Index < Other.Num(); ++Index)
-	{
-		const FBH_PartnerPing& A = PartnerPings[Index];
-		const FBH_PartnerPing& B = Other[Index];
-		if (A.Player != B.Player || A.DeathPhase != B.DeathPhase || FVector::DistSquared(FVector(A.Location), FVector(B.Location)) > FMath::Square(50.0))
-		{
-			return false;
-		}
-	}
-	return true;
+	// DEPRECATED forwarder (14A-3 prep): the pings live on UBH_PartyStatusComponent.
+	static const TArray<FBH_PartnerPing> Empty;
+	const UBH_PartyStatusComponent* Status = GetOwner() ? GetOwner()->FindComponentByClass<UBH_PartyStatusComponent>() : nullptr;
+	return Status ? Status->GetPartnerPings() : Empty;
 }
 
-void UBH_BeatTrackerComponent::UpdatePartnerPings()
-{
-	const UWorld* World = GetWorld();
-	const AGameStateBase* GameState = World ? World->GetGameState() : nullptr;
-	if (!GameState)
-	{
-		return;
-	}
-	TArray<FBH_PartnerPing> Fresh;
-	for (APlayerState* PlayerState : GameState->PlayerArray)
-	{
-		if (!PlayerState)
-		{
-			continue;
-		}
-		FBH_PartnerPing Ping;
-		Ping.Player = PlayerState;
-		if (const APawn* Pawn = PlayerState->GetPawn())
-		{
-			Ping.Location = Pawn->GetActorLocation();
-			const UBH_PlayerDeathComponent* Death = UBH_PlayerDeathComponent::Find(Pawn);
-			Ping.DeathPhase = Death ? static_cast<uint8>(Death->GetPhase()) : 0;
-		}
-		else
-		{
-			// No pawn right now (respawning): keep the last known entry rather than dropping the marker.
-			const FBH_PartnerPing* Last = PartnerPings.FindByPredicate([PlayerState](const FBH_PartnerPing& Existing) { return Existing.Player == PlayerState; });
-			if (!Last)
-			{
-				continue;
-			}
-			Ping = *Last;
-		}
-		Fresh.Add(Ping);
-	}
-	if (!SamePings(Fresh))
-	{
-		PartnerPings = MoveTemp(Fresh);
-		OnPartnersChanged.Broadcast();
-	}
-}
-
-void UBH_BeatTrackerComponent::OnRep_PartnerPings()
+void UBH_BeatTrackerComponent::HandlePartyPartnersChanged()
 {
 	OnPartnersChanged.Broadcast();
 }

@@ -12,6 +12,9 @@
 #include "AbilitySystem/Abilities/AH_GA_OverloadBurst.h"
 #include "Combat/BH_LoadoutComponent.h"
 #include "Items/BH_ArmorItem.h"
+#include "Beats/BH_BeatTrigger.h"
+#include "Party/BH_PartyStatusComponent.h"
+#include "Player/BH_GameState.h"
 #include "Player/BH_PlayerState.h"
 #include "Player/BH_RespawnPoint.h"
 #include "UI/BH_PlayerMenuLibrary.h"
@@ -120,6 +123,53 @@ bool FBH_P14_DelegatesTest::RunTest(const FString& Parameters)
 	{
 		TestTrue(TEXT("bOverloadBurstLearned replicates with a RepNotify"), LearnedFlag->HasAllPropertyFlags(CPF_Net | CPF_RepNotify));
 	}
+	return true;
+}
+
+// -- 14A-3 prep: partner pings live on UBH_PartyStatusComponent --------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBH_P14_PartyStatusPingsTest, "BlackwoodHollow.Phase14.PartyStatus.Pings", BH_P14_FLAGS)
+bool FBH_P14_PartyStatusPingsTest::RunTest(const FString& Parameters)
+{
+	// Pure list comparison: drives whether the server replicates / broadcasts.
+	TArray<FBH_PartnerPing> A;
+	TArray<FBH_PartnerPing> B;
+	TestTrue(TEXT("Two empty lists are equal"), UBH_PartyStatusComponent::ArePingListsEqual(A, B));
+
+	A.AddDefaulted();
+	TestFalse(TEXT("Different counts differ"), UBH_PartyStatusComponent::ArePingListsEqual(A, B));
+	B.AddDefaulted();
+	TestTrue(TEXT("Identical defaults are equal"), UBH_PartyStatusComponent::ArePingListsEqual(A, B));
+
+	B[0].Location = FVector_NetQuantize10(30.0, 0.0, 0.0);
+	TestTrue(TEXT("A move under 50 cm is not a change"), UBH_PartyStatusComponent::ArePingListsEqual(A, B));
+	B[0].Location = FVector_NetQuantize10(120.0, 0.0, 0.0);
+	TestFalse(TEXT("A move over 50 cm is a change"), UBH_PartyStatusComponent::ArePingListsEqual(A, B));
+	B[0].Location = A[0].Location;
+	B[0].DeathPhase = 2;
+	TestFalse(TEXT("A death phase change is a change"), UBH_PartyStatusComponent::ArePingListsEqual(A, B));
+
+	// Replication contract: replicated with a RepNotify, delegate assignable from Blueprint, accessor callable.
+	const UClass* Class = UBH_PartyStatusComponent::StaticClass();
+	const FProperty* Pings = Class->FindPropertyByName(TEXT("PartnerPings"));
+	if (TestNotNull(TEXT("PartnerPings"), Pings))
+	{
+		TestTrue(TEXT("PartnerPings replicates with a RepNotify"), Pings->HasAllPropertyFlags(CPF_Net | CPF_RepNotify));
+	}
+	const FProperty* Changed = Class->FindPropertyByName(TEXT("OnPartnersChanged"));
+	if (TestNotNull(TEXT("OnPartnersChanged"), Changed))
+	{
+		TestTrue(TEXT("OnPartnersChanged is BlueprintAssignable"), Changed->HasAnyPropertyFlags(CPF_BlueprintAssignable));
+	}
+	TestNotNull(TEXT("GetPartnerPings is reflected"), Class->FindFunctionByName(TEXT("GetPartnerPings")));
+	TestTrue(TEXT("A fresh component has no pings"), GetDefault<UBH_PartyStatusComponent>()->GetPartnerPings().IsEmpty());
+
+	// The game state owns it.
+	const ABH_GameState* GameStateCDO = GetDefault<ABH_GameState>();
+	TestNotNull(TEXT("ABH_GameState has a party status component"), GameStateCDO->GetPartyStatus());
+
+	// The beat trigger keeps its quest area id (EnterArea event) next to the beat.
+	TestNotNull(TEXT("ABH_BeatTrigger::QuestAreaId"), ABH_BeatTrigger::StaticClass()->FindPropertyByName(TEXT("QuestAreaId")));
 	return true;
 }
 

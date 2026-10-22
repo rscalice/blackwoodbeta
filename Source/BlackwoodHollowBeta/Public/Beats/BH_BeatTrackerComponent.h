@@ -10,7 +10,7 @@
 //  * DATA: DT_BH_Beats (FBH_BeatRow), one row per beat IN ORDER.
 //  * OBJECTIVE: GetCurrentObjective gives the text, the target location (an ABH_BeatTarget found by tag, cached) and whether the gate is open.
 //    While the gate flag is unset the direction is withheld, so the marker never points through a locked gate.
-//  * PARTNERS: the server samples every player pawn's location and death phase at about 4 Hz into a replicated array (a far partner's pawn
+//  * PARTNERS: moved to UBH_PartyStatusComponent (Phase 14A-3 prep); GetPartnerPings / OnPartnersChanged here are deprecated forwarders. Original note: the server samples every player pawn's location and death phase at about 4 Hz into a replicated array (a far partner's pawn
 //    is not net-relevant, so a client could not read it directly). The compass reads GetPartnerPings.
 //
 // The UI is local per player: nothing here knows about widgets. OnBeatChanged / OnObjectiveChanged / OnPartnersChanged fire on every machine.
@@ -21,6 +21,7 @@
 #include "Components/ActorComponent.h"
 #include "GameplayTagContainer.h"
 #include "Beats/BH_BeatTypes.h"
+#include "Party/BH_PartyStatusComponent.h"
 #include "BH_BeatTrackerComponent.generated.h"
 
 class UDataTable;
@@ -30,7 +31,6 @@ class APlayerState;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FBH_OnBeatChanged, FGameplayTag, NewBeat, FGameplayTag, OldBeat);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnObjectiveChanged);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FBH_OnPartnersChanged);
 
 UCLASS(ClassGroup = "BlackwoodHollow", meta = (BlueprintSpawnableComponent))
 class BLACKWOODHOLLOWBETA_API UBH_BeatTrackerComponent : public UActorComponent
@@ -49,10 +49,6 @@ public:
 	/** The in-world marker hides inside this distance of the viewer (cm). 1500 = 15 m. Recorded in claude/balance.md. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Beat", meta = (ClampMin = "0", ForceUnits = "cm"))
 	float WorldMarkerHideDistance = 1500.f;
-
-	/** Seconds between partner samples on the server. */
-	UPROPERTY(EditDefaultsOnly, Category = "Beat", meta = (ClampMin = "0.05", ForceUnits = "s"))
-	float PartnerUpdateInterval = 0.25f;
 
 	/** Any machine. The tracker of Context's world, or null (no game state yet). */
 	UFUNCTION(BlueprintPure, Category = "Beat", meta = (WorldContext = "WorldContext"))
@@ -111,9 +107,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Beat|Checklist")
 	bool IsTargetActive(const ABH_BeatTarget* Target);
 
-	/** Any machine. Every player as last sampled by the server (includes the local player; filter it out in the widget). */
+	/** DEPRECATED (14A-3 prep): forwards to UBH_PartyStatusComponent::GetPartnerPings. Kept so Blueprints keep compiling; deleted with the tracker. */
 	UFUNCTION(BlueprintPure, Category = "Beat")
-	const TArray<FBH_PartnerPing>& GetPartnerPings() const { return PartnerPings; }
+	const TArray<FBH_PartnerPing>& GetPartnerPings() const;
 
 	/** Any machine, when CurrentBeat changed. */
 	UPROPERTY(BlueprintAssignable, Category = "Beat")
@@ -123,7 +119,7 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Beat")
 	FBH_OnObjectiveChanged OnObjectiveChanged;
 
-	/** Any machine, when the partner list changed. */
+	/** DEPRECATED (14A-3 prep): re-broadcast of UBH_PartyStatusComponent::OnPartnersChanged. Bind that one instead; deleted with the tracker. */
 	UPROPERTY(BlueprintAssignable, Category = "Beat")
 	FBH_OnPartnersChanged OnPartnersChanged;
 
@@ -134,14 +130,11 @@ protected:
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentBeat)
 	FGameplayTag CurrentBeat;
 
-	UPROPERTY(ReplicatedUsing = OnRep_PartnerPings)
-	TArray<FBH_PartnerPing> PartnerPings;
-
 	UFUNCTION()
 	void OnRep_CurrentBeat(FGameplayTag OldBeat);
 
 	UFUNCTION()
-	void OnRep_PartnerPings();
+	void HandlePartyPartnersChanged();
 
 	/** "<player key>|<item id>" per finished checklist item. */
 	UPROPERTY(ReplicatedUsing = OnRep_ChecklistDone)
@@ -161,8 +154,6 @@ private:
 	void EvaluateChecklistCompletion();
 	void SetCurrentBeatInternal(FGameplayTag NewBeat);
 	void CompleteBeatsForSetFlags();
-	void UpdatePartnerPings();
-	bool SamePings(const TArray<FBH_PartnerPing>& Other) const;
 	AActor* ResolveTarget(const FBH_BeatRow& Row);
 	const ABH_GameState* GetBeatGameState() const;
 
@@ -177,6 +168,5 @@ private:
 	TWeakObjectPtr<AActor> CachedTarget;
 	double LastTargetSearchTime = -100.0;
 
-	FTimerHandle PartnerTimer;
 	bool bBoundFlags = false;
 };

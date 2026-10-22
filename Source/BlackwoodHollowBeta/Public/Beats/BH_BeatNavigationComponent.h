@@ -34,6 +34,7 @@ class APlayerState;
 class ABH_BeatTarget;
 class ABH_QuestTarget;
 class UBH_BeatTrackerComponent;
+class UBH_PartyStatusComponent;
 class UBH_QuestDirector;
 class UNarrativeNavigationComponent;
 class UNavigationMarkerComponent;
@@ -124,7 +125,7 @@ private:
 
 	void Refresh();
 	void RefreshObjective(const APlayerController* PlayerController, UBH_BeatTrackerComponent* Tracker, UBH_QuestDirector* Director);
-	void RefreshPartners(const APlayerController* PlayerController, const UBH_BeatTrackerComponent* Tracker);
+	void RefreshPartners(const APlayerController* PlayerController, const UBH_PartyStatusComponent* PartyStatus);
 	UNavigationMarkerComponent* CreateMarker(AActor* Owner, const FText& Name, const FLinearColor& Tint, const TSoftObjectPtr<UTexture2D>& Icon) const;
 	FLinearColor GetPaletteColor(FName Token, const FLinearColor& Fallback) const;
 	/** The palette colour of a player slot (tokens PlayerSlot1..4). */

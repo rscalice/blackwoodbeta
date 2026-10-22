@@ -5,6 +5,7 @@
 #include "Player/BH_PlayerState.h"
 #include "Beats/BH_BeatTrackerComponent.h"
 #include "Beats/BH_BeatNavigationComponent.h"
+#include "Party/BH_PartyStatusComponent.h"
 #include "Quests/BH_QuestDirector.h"
 #include "Quests/BH_QuestEvents.h"
 #include "NarrativeComponent.h"
@@ -21,6 +22,7 @@ ABH_GameState::ABH_GameState()
 	// AGameStateBase is replicated and always relevant, so the party component (and its replicated member list) reaches every client.
 	PartyComponent = CreateDefaultSubobject<UBH_PartyComponent>(TEXT("PartyComponent"));
 	BeatTracker = CreateDefaultSubobject<UBH_BeatTrackerComponent>(TEXT("BeatTracker"));
+	PartyStatus = CreateDefaultSubobject<UBH_PartyStatusComponent>(TEXT("PartyStatus"));
 	BeatNavigation = CreateDefaultSubobject<UBH_BeatNavigationComponent>(TEXT("BeatNavigation"));
 	QuestDirector = CreateDefaultSubobject<UBH_QuestDirector>(TEXT("QuestDirector"));
 }

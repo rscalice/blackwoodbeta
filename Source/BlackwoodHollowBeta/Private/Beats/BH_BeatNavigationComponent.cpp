@@ -4,6 +4,7 @@
 #include "Beats/BH_BeatTarget.h"
 #include "Beats/BH_BeatTrackerComponent.h"
 #include "Beats/BH_BeatTypes.h"
+#include "Party/BH_PartyStatusComponent.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/SceneComponent.h"
 #include "Engine/Texture2D.h"
@@ -181,12 +182,15 @@ void UBH_BeatNavigationComponent::Refresh()
 		return;
 	}
 	UBH_BeatTrackerComponent* Tracker = GetOwner() ? GetOwner()->FindComponentByClass<UBH_BeatTrackerComponent>() : nullptr;
-	if (!Tracker)
+	const UBH_PartyStatusComponent* PartyStatus = GetOwner() ? GetOwner()->FindComponentByClass<UBH_PartyStatusComponent>() : nullptr;
+	if (Tracker)
 	{
-		return;
+		RefreshObjective(PlayerController, Tracker, UBH_QuestDirector::Get(this));
 	}
-	RefreshObjective(PlayerController, Tracker, UBH_QuestDirector::Get(this));
-	RefreshPartners(PlayerController, Tracker);
+	if (PartyStatus)
+	{
+		RefreshPartners(PlayerController, PartyStatus);
+	}
 }
 
 FLinearColor UBH_BeatNavigationComponent::GetPaletteColor(const FName Token, const FLinearColor& Fallback) const
@@ -366,13 +370,13 @@ void UBH_BeatNavigationComponent::RefreshObjective(const APlayerController* Play
 	}
 }
 
-void UBH_BeatNavigationComponent::RefreshPartners(const APlayerController* PlayerController, const UBH_BeatTrackerComponent* Tracker)
+void UBH_BeatNavigationComponent::RefreshPartners(const APlayerController* PlayerController, const UBH_PartyStatusComponent* PartyStatus)
 {
 	UWorld* World = GetWorld();
 	const APlayerState* LocalPlayerState = PlayerController->PlayerState;
 	TSet<TWeakObjectPtr<APlayerState>> Seen;
 
-	for (const FBH_PartnerPing& Ping : Tracker->GetPartnerPings())
+	for (const FBH_PartnerPing& Ping : PartyStatus->GetPartnerPings())
 	{
 		APlayerState* Player = Ping.Player;
 		if (!Player || Player == LocalPlayerState)
